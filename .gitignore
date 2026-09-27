@@ -361,3 +361,7 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Hero Chess local secrets and persisted development keys
+.env
+HeroChess.Api/keys/

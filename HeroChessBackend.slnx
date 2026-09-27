@@ -1,3 +1,7 @@
 <Solution>
+  <Project Path="HeroChess.Contracts/HeroChess.Contracts.csproj" />
+  <Project Path="HeroChess.Rules/HeroChess.Rules.csproj" />
   <Project Path="HeroChess.Api/HeroChess.Api.csproj" />
+  <Project Path="tests/HeroChess.Rules.Tests/HeroChess.Rules.Tests.csproj" />
+  <Project Path="tests/HeroChess.IntegrationTests/HeroChess.IntegrationTests.csproj" />
 </Solution>

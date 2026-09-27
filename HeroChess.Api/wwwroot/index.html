@@ -1,0 +1,31 @@
+<!-- Vai trò file: DOM trang demo, các nút/input có ID được app.js tham chiếu; không phải UI Unity. -->
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hero Chess Backend Console</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+<main>
+  <h1>Hero Chess prototype</h1>
+  <section class="toolbar">
+    <input id="email" type="email" placeholder="email"><input id="password" type="password" placeholder="password">
+    <button id="register">Register</button><button id="login">Login</button><span id="identity">Chưa đăng nhập</span>
+  </section>
+  <section class="toolbar">
+    <button id="catalog">Load catalog</button><button id="lineup">Tạo lineup fixture</button>
+    <select id="mode"><option value="ranked">ranked</option><option value="bot">bot</option></select>
+    <button id="queue">Queue</button><button id="poll">Poll ticket</button><button id="select">Select lineup</button><button id="confirm">Confirm</button><button id="cancelSelection">Cancel selection</button>
+  </section>
+  <section class="toolbar">
+    <input id="matchId" placeholder="match id"><button id="connect">Connect / subscribe</button><button id="state">Reload state</button><button id="legal">Legal moves</button>
+    <button id="resign">Resign</button><select id="undoTarget"></select><button id="undo">Undo</button>
+  </section>
+  <section class="statusbar"><span id="socketStatus">socket: offline</span><span id="matchStatus">match: -</span><span id="timer">timer: -</span><span id="settlement">settlement: -</span></section>
+  <div id="skills" class="notice">Team skills: chưa tải. Fixture skill hiện chưa có gameplay handler.</div>
+  <div class="layout"><div><div id="turn"></div><div id="board" class="board"></div></div><pre id="log"></pre></div>
+  <section class="history">
+    <div class="toolbar"><button id="history">Load history</button><button id="historyMore">Next history page</button></div>
+    <div id="historyList"></div>
+    <div class="toolbar"><button id="replayFirst">Replay first</button><button id="replayPrev">Previous</button><span id="replayPosition">Replay: -</span><button id="replayNext">Next</button><button id="replayLast">Last</button></div>
+  </section>
+</main><script src="app.js"></script>
+</body></html>
+

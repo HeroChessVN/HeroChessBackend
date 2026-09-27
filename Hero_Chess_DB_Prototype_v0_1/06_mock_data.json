@@ -1,0 +1,883 @@
+{
+  "_note": "Development fixture, not final content. The match UUID is an example, not inserted by the dev seed. Replace timestamps at runtime. Skill fixtures cannot be executed. isValid refers to technical lineup shape only; production catalog readiness is separate.",
+  "saveLineupRequest": {
+    "name": "DEV 43 SP A",
+    "rulesetId": "10000000-0000-4000-8000-000000000001",
+    "entries": [
+      {
+        "slotNo": 1,
+        "heroId": "60000000-0000-4000-8000-000000000001",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 2,
+        "heroId": "60000000-0000-4000-8000-000000000002",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 3,
+        "heroId": "60000000-0000-4000-8000-000000000003",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 4,
+        "heroId": "60000000-0000-4000-8000-000000000004",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 5,
+        "heroId": "60000000-0000-4000-8000-000000000005",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 6,
+        "heroId": "60000000-0000-4000-8000-000000000006",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 7,
+        "heroId": "60000000-0000-4000-8000-000000000007",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 8,
+        "heroId": "60000000-0000-4000-8000-000000000008",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 9,
+        "heroId": "60000000-0000-4000-8000-000000000009",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 10,
+        "heroId": "60000000-0000-4000-8000-000000000010",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 11,
+        "heroId": "60000000-0000-4000-8000-000000000011",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 12,
+        "heroId": "60000000-0000-4000-8000-000000000012",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 13,
+        "heroId": "60000000-0000-4000-8000-000000000013",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 14,
+        "heroId": "60000000-0000-4000-8000-000000000014",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 15,
+        "heroId": "60000000-0000-4000-8000-000000000015",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 16,
+        "heroId": "60000000-0000-4000-8000-000000000016",
+        "cosmeticId": null
+      }
+    ],
+    "skills": [
+      {
+        "slotNo": 1,
+        "skillId": "70000000-0000-4000-8000-000000000001"
+      },
+      {
+        "slotNo": 2,
+        "skillId": "70000000-0000-4000-8000-000000000002"
+      },
+      {
+        "slotNo": 3,
+        "skillId": "70000000-0000-4000-8000-000000000003"
+      }
+    ]
+  },
+  "lineupResponse": {
+    "id": "80000000-0000-4000-8000-000000000001",
+    "revision": 1,
+    "name": "DEV 43 SP A",
+    "rulesetId": "10000000-0000-4000-8000-000000000001",
+    "entries": [
+      {
+        "slotNo": 1,
+        "heroId": "60000000-0000-4000-8000-000000000001",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 2,
+        "heroId": "60000000-0000-4000-8000-000000000002",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 3,
+        "heroId": "60000000-0000-4000-8000-000000000003",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 4,
+        "heroId": "60000000-0000-4000-8000-000000000004",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 5,
+        "heroId": "60000000-0000-4000-8000-000000000005",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 6,
+        "heroId": "60000000-0000-4000-8000-000000000006",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 7,
+        "heroId": "60000000-0000-4000-8000-000000000007",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 8,
+        "heroId": "60000000-0000-4000-8000-000000000008",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 9,
+        "heroId": "60000000-0000-4000-8000-000000000009",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 10,
+        "heroId": "60000000-0000-4000-8000-000000000010",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 11,
+        "heroId": "60000000-0000-4000-8000-000000000011",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 12,
+        "heroId": "60000000-0000-4000-8000-000000000012",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 13,
+        "heroId": "60000000-0000-4000-8000-000000000013",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 14,
+        "heroId": "60000000-0000-4000-8000-000000000014",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 15,
+        "heroId": "60000000-0000-4000-8000-000000000015",
+        "cosmeticId": null
+      },
+      {
+        "slotNo": 16,
+        "heroId": "60000000-0000-4000-8000-000000000016",
+        "cosmeticId": null
+      }
+    ],
+    "skills": [
+      {
+        "slotNo": 1,
+        "skillId": "70000000-0000-4000-8000-000000000001"
+      },
+      {
+        "slotNo": 2,
+        "skillId": "70000000-0000-4000-8000-000000000002"
+      },
+      {
+        "slotNo": 3,
+        "skillId": "70000000-0000-4000-8000-000000000003"
+      }
+    ],
+    "totalSp": 43,
+    "budget": 50,
+    "isValid": true,
+    "validationErrors": []
+  },
+  "initialMatchState": {
+    "matchId": "90000000-0000-4000-8000-000000000001",
+    "mode": "ranked",
+    "status": "active",
+    "version": 0,
+    "stateSchemaVersion": 1,
+    "rulesetCode": "prototype-v0.1",
+    "turn": {
+      "side": "red",
+      "turnIndex": 0,
+      "countedActions": 0,
+      "deadlineAt": "2026-09-21T14:01:30Z",
+      "serverNow": "2026-09-21T14:00:00Z"
+    },
+    "board": {
+      "width": 9,
+      "height": 10,
+      "pieces": [
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000001",
+          "heroId": "60000000-0000-4000-8000-000000000001",
+          "side": "red",
+          "classCode": "ROOK",
+          "setupPoints": 7,
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 0,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000002",
+          "heroId": "60000000-0000-4000-8000-000000000002",
+          "side": "red",
+          "classCode": "HORSE",
+          "setupPoints": 4,
+          "position": {
+            "x": 1,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 1,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000003",
+          "heroId": "60000000-0000-4000-8000-000000000003",
+          "side": "red",
+          "classCode": "ELEPHANT",
+          "setupPoints": 1,
+          "position": {
+            "x": 2,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 2,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000004",
+          "heroId": "60000000-0000-4000-8000-000000000004",
+          "side": "red",
+          "classCode": "ADVISOR",
+          "setupPoints": 1,
+          "position": {
+            "x": 3,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 3,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000005",
+          "heroId": "60000000-0000-4000-8000-000000000005",
+          "side": "red",
+          "classCode": "GENERAL",
+          "setupPoints": 0,
+          "position": {
+            "x": 4,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 4,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000006",
+          "heroId": "60000000-0000-4000-8000-000000000006",
+          "side": "red",
+          "classCode": "ADVISOR",
+          "setupPoints": 1,
+          "position": {
+            "x": 5,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 5,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000007",
+          "heroId": "60000000-0000-4000-8000-000000000007",
+          "side": "red",
+          "classCode": "ELEPHANT",
+          "setupPoints": 1,
+          "position": {
+            "x": 6,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 6,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000008",
+          "heroId": "60000000-0000-4000-8000-000000000008",
+          "side": "red",
+          "classCode": "HORSE",
+          "setupPoints": 4,
+          "position": {
+            "x": 7,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 7,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000009",
+          "heroId": "60000000-0000-4000-8000-000000000009",
+          "side": "red",
+          "classCode": "ROOK",
+          "setupPoints": 7,
+          "position": {
+            "x": 8,
+            "y": 0
+          },
+          "startPosition": {
+            "x": 8,
+            "y": 0
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000010",
+          "heroId": "60000000-0000-4000-8000-000000000010",
+          "side": "red",
+          "classCode": "CANNON",
+          "setupPoints": 6,
+          "position": {
+            "x": 1,
+            "y": 2
+          },
+          "startPosition": {
+            "x": 1,
+            "y": 2
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000011",
+          "heroId": "60000000-0000-4000-8000-000000000011",
+          "side": "red",
+          "classCode": "CANNON",
+          "setupPoints": 6,
+          "position": {
+            "x": 7,
+            "y": 2
+          },
+          "startPosition": {
+            "x": 7,
+            "y": 2
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000012",
+          "heroId": "60000000-0000-4000-8000-000000000012",
+          "side": "red",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 0,
+            "y": 3
+          },
+          "startPosition": {
+            "x": 0,
+            "y": 3
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000013",
+          "heroId": "60000000-0000-4000-8000-000000000013",
+          "side": "red",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 2,
+            "y": 3
+          },
+          "startPosition": {
+            "x": 2,
+            "y": 3
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000014",
+          "heroId": "60000000-0000-4000-8000-000000000014",
+          "side": "red",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 4,
+            "y": 3
+          },
+          "startPosition": {
+            "x": 4,
+            "y": 3
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000015",
+          "heroId": "60000000-0000-4000-8000-000000000015",
+          "side": "red",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 6,
+            "y": 3
+          },
+          "startPosition": {
+            "x": 6,
+            "y": 3
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000016",
+          "heroId": "60000000-0000-4000-8000-000000000016",
+          "side": "red",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 8,
+            "y": 3
+          },
+          "startPosition": {
+            "x": 8,
+            "y": 3
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000017",
+          "heroId": "60000000-0000-4000-8000-000000000001",
+          "side": "black",
+          "classCode": "ROOK",
+          "setupPoints": 7,
+          "position": {
+            "x": 8,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 8,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000018",
+          "heroId": "60000000-0000-4000-8000-000000000002",
+          "side": "black",
+          "classCode": "HORSE",
+          "setupPoints": 4,
+          "position": {
+            "x": 7,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 7,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000019",
+          "heroId": "60000000-0000-4000-8000-000000000003",
+          "side": "black",
+          "classCode": "ELEPHANT",
+          "setupPoints": 1,
+          "position": {
+            "x": 6,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 6,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000020",
+          "heroId": "60000000-0000-4000-8000-000000000004",
+          "side": "black",
+          "classCode": "ADVISOR",
+          "setupPoints": 1,
+          "position": {
+            "x": 5,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 5,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000021",
+          "heroId": "60000000-0000-4000-8000-000000000005",
+          "side": "black",
+          "classCode": "GENERAL",
+          "setupPoints": 0,
+          "position": {
+            "x": 4,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 4,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000022",
+          "heroId": "60000000-0000-4000-8000-000000000006",
+          "side": "black",
+          "classCode": "ADVISOR",
+          "setupPoints": 1,
+          "position": {
+            "x": 3,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 3,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000023",
+          "heroId": "60000000-0000-4000-8000-000000000007",
+          "side": "black",
+          "classCode": "ELEPHANT",
+          "setupPoints": 1,
+          "position": {
+            "x": 2,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 2,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000024",
+          "heroId": "60000000-0000-4000-8000-000000000008",
+          "side": "black",
+          "classCode": "HORSE",
+          "setupPoints": 4,
+          "position": {
+            "x": 1,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 1,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000025",
+          "heroId": "60000000-0000-4000-8000-000000000009",
+          "side": "black",
+          "classCode": "ROOK",
+          "setupPoints": 7,
+          "position": {
+            "x": 0,
+            "y": 9
+          },
+          "startPosition": {
+            "x": 0,
+            "y": 9
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000026",
+          "heroId": "60000000-0000-4000-8000-000000000010",
+          "side": "black",
+          "classCode": "CANNON",
+          "setupPoints": 6,
+          "position": {
+            "x": 7,
+            "y": 7
+          },
+          "startPosition": {
+            "x": 7,
+            "y": 7
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000027",
+          "heroId": "60000000-0000-4000-8000-000000000011",
+          "side": "black",
+          "classCode": "CANNON",
+          "setupPoints": 6,
+          "position": {
+            "x": 1,
+            "y": 7
+          },
+          "startPosition": {
+            "x": 1,
+            "y": 7
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000028",
+          "heroId": "60000000-0000-4000-8000-000000000012",
+          "side": "black",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 8,
+            "y": 6
+          },
+          "startPosition": {
+            "x": 8,
+            "y": 6
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000029",
+          "heroId": "60000000-0000-4000-8000-000000000013",
+          "side": "black",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 6,
+            "y": 6
+          },
+          "startPosition": {
+            "x": 6,
+            "y": 6
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000030",
+          "heroId": "60000000-0000-4000-8000-000000000014",
+          "side": "black",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 4,
+            "y": 6
+          },
+          "startPosition": {
+            "x": 4,
+            "y": 6
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000031",
+          "heroId": "60000000-0000-4000-8000-000000000015",
+          "side": "black",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 2,
+            "y": 6
+          },
+          "startPosition": {
+            "x": 2,
+            "y": 6
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        },
+        {
+          "pieceId": "a0000000-0000-4000-8000-000000000032",
+          "heroId": "60000000-0000-4000-8000-000000000016",
+          "side": "black",
+          "classCode": "SOLDIER",
+          "setupPoints": 1,
+          "position": {
+            "x": 0,
+            "y": 6
+          },
+          "startPosition": {
+            "x": 0,
+            "y": 6
+          },
+          "status": "alive",
+          "effects": [],
+          "traitState": {}
+        }
+      ],
+      "obstacles": []
+    },
+    "players": {
+      "red": {
+        "playerId": "50000000-0000-4000-8000-000000000001",
+        "displayName": "DEV Player A",
+        "skillStates": [
+          {
+            "slotNo": 1,
+            "skillId": "70000000-0000-4000-8000-000000000001",
+            "usesRemaining": null,
+            "cooldownRemaining": 0,
+            "implementationStatus": "not_implemented"
+          },
+          {
+            "slotNo": 2,
+            "skillId": "70000000-0000-4000-8000-000000000002",
+            "usesRemaining": null,
+            "cooldownRemaining": 0,
+            "implementationStatus": "not_implemented"
+          },
+          {
+            "slotNo": 3,
+            "skillId": "70000000-0000-4000-8000-000000000003",
+            "usesRemaining": null,
+            "cooldownRemaining": 0,
+            "implementationStatus": "not_implemented"
+          }
+        ]
+      },
+      "black": {
+        "playerId": "50000000-0000-4000-8000-000000000002",
+        "displayName": "DEV Player B",
+        "skillStates": [
+          {
+            "slotNo": 1,
+            "skillId": "70000000-0000-4000-8000-000000000001",
+            "usesRemaining": null,
+            "cooldownRemaining": 0,
+            "implementationStatus": "not_implemented"
+          },
+          {
+            "slotNo": 2,
+            "skillId": "70000000-0000-4000-8000-000000000002",
+            "usesRemaining": null,
+            "cooldownRemaining": 0,
+            "implementationStatus": "not_implemented"
+          },
+          {
+            "slotNo": 3,
+            "skillId": "70000000-0000-4000-8000-000000000003",
+            "usesRemaining": null,
+            "cooldownRemaining": 0,
+            "implementationStatus": "not_implemented"
+          }
+        ]
+      }
+    },
+    "pendingEffects": [],
+    "result": null,
+    "endReason": null
+  },
+  "moveCommand": {
+    "type": "match.command",
+    "requestId": "req-02",
+    "payload": {
+      "matchId": "90000000-0000-4000-8000-000000000001",
+      "commandId": "b0000000-0000-4000-8000-000000000001",
+      "expectedVersion": 0,
+      "action": {
+        "type": "move",
+        "pieceId": "a0000000-0000-4000-8000-000000000012",
+        "to": {
+          "x": 0,
+          "y": 4
+        }
+      }
+    }
+  }
+}

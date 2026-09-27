@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: hero_chess
+      POSTGRES_USER: hero_chess
+      POSTGRES_PASSWORD: ${HERO_CHESS_DB_PASSWORD:?Set HERO_CHESS_DB_PASSWORD in .env}
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hero_chess -d hero_chess"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - hero_chess_pgdata:/var/lib/postgresql
+
+volumes:
+  hero_chess_pgdata:

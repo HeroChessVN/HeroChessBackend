@@ -15,11 +15,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="DTOs\" />
-    <Folder Include="Models\" />
-    <Folder Include="GameLogic\" />
-    <Folder Include="Repositories\" />
-    <Folder Include="Services\" />
+    <ProjectReference Include="..\HeroChess.Contracts\HeroChess.Contracts.csproj" />
+    <ProjectReference Include="..\HeroChess.Rules\HeroChess.Rules.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\Hero_Chess_DB_Prototype_v0_1\01_schema.sql" Link="Database\01_schema.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Hero_Chess_DB_Prototype_v0_1\02_seed_catalog.sql" Link="Database\02_seed_catalog.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Hero_Chess_DB_Prototype_v0_1\03_seed_dev_only.sql" Link="Database\03_seed_dev_only.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\04_identity_schema.sql" Link="Database\04_identity_schema.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\05_app_extensions.sql" Link="Database\05_app_extensions.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\06_user_inheritance.sql" Link="Database\06_user_inheritance.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\07_exclusive_hero_traits.sql" Link="Database\07_exclusive_hero_traits.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
