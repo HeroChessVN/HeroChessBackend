@@ -57,7 +57,7 @@ public sealed class PieceState
 // EffectState: Dữ liệu hiệu ứng trên quân; chưa đồng nghĩa có engine xử lý hiệu ứng.
 public sealed record EffectState(string Code, Guid? SourcePieceId, int? RemainingTurns);
 // ObstacleState: Vật cản tại một ô trong state.
-public sealed record ObstacleState(Guid ObstacleId, BoardPoint Position, string Kind);
+public sealed record ObstacleState(Guid ObstacleId, BoardPoint Position, string Kind, int? RemainingLifetime = null);
 // PendingEffectState: Dữ liệu hiệu ứng chờ, chưa có cơ chế resolution hoàn chỉnh.
 public sealed record PendingEffectState(string Code, Side Owner, int? ExpiresAtTurn);
 // SkillState: Charge/cooldown của một skill theo bên; hiện chủ yếu là dữ liệu snapshot.
@@ -70,7 +70,7 @@ public sealed record MoveAction(Guid PieceId, BoardPoint To);
 // GameState: Bàn cờ runtime dùng cho tính luật/serialize; không phải EF entity.
 public sealed class GameState
 {
-    public int StateSchemaVersion { get; init; } = 3;
+    public int StateSchemaVersion { get; init; } = 4;
     public string RulesetCode { get; init; } = "prototype-v0.1";
     public string ContentVersion { get; init; } = "development";
     public Side SideToMove { get; set; } = Side.Red;
@@ -93,6 +93,25 @@ public sealed class GameState
         [Side.Black] = new()
     };
 
+    // --- Phase 2: Effect system (v4 schema) ---
+    // All active EffectInstances in the match.
+    public List<Effects.EffectInstance> EffectInstances { get; set; } = new();
+    // Monotonic counter for EffectInstance.CreationOrder. Incremented each time a new
+    // Effect is created. Never reset during a match.
+    public int NextCreationOrder { get; set; }
+    // Tracks which turns have been processed for each side.
+    // Used by TurnLifecycle to implement exactly-once turn-start processing.
+    // Key = side, Value = list of TurnIndex values that have been processed for that side.
+    public Dictionary<Side, List<int>> ProcessedTurns { get; set; } = new()
+    {
+        [Side.Red] = new List<int>(),
+        [Side.Black] = new List<int>()
+    };
+    // Metadata for physical stake obstacles (Vạn Cọc). Key = ObstacleId, Value = StakeMetadata.
+    // Used by TurnLifecycle to determine which stakes to decrement per turn.
+    // This is the selected architecture for A1 (stake lifetime storage).
+    public Dictionary<Guid, StakeMetadata> StakeMetadata { get; set; } = new();
+
     // Clone: Sao chép state và các collection mutable; mô phỏng nước đi/undo không được sửa chung object gốc.
     public GameState Clone()
     {
@@ -106,7 +125,8 @@ public sealed class GameState
             TurnIndex = TurnIndex,
             CountedActions = CountedActions,
             Result = Result,
-            EndReason = EndReason
+            EndReason = EndReason,
+            NextCreationOrder = NextCreationOrder
         };
         copy.Pieces.AddRange(Pieces.Select(x => x.Clone()));
         copy.Obstacles.AddRange(Obstacles.Select(x => x with { }));
@@ -114,6 +134,14 @@ public sealed class GameState
         foreach (var entry in ConsecutiveTimeouts) copy.ConsecutiveTimeouts[entry.Key] = entry.Value;
         copy.SkillStates[Side.Red].AddRange(SkillStates[Side.Red].Select(x => x with { }));
         copy.SkillStates[Side.Black].AddRange(SkillStates[Side.Black].Select(x => x with { }));
+        // v4: Clone EffectInstances (deep clone each effect)
+        copy.EffectInstances.AddRange(EffectInstances.Select(x => x.Clone()));
+        // v4: Clone ProcessedTurns
+        copy.ProcessedTurns[Side.Red].AddRange(ProcessedTurns[Side.Red]);
+        copy.ProcessedTurns[Side.Black].AddRange(ProcessedTurns[Side.Black]);
+        // v4: Clone StakeMetadata
+        foreach (var kvp in StakeMetadata)
+            copy.StakeMetadata[kvp.Key] = kvp.Value;
         return copy;
     }
 }

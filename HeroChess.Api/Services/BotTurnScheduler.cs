@@ -37,6 +37,8 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
                 var botSide = await db.MatchParticipants.AsNoTracking().Where(x => x.MatchId == work.MatchId && x.ParticipantType == "bot").Select(x => x.Side).SingleAsync(stoppingToken);
                 if (row.SideToMove != botSide) continue;
                 var state = GameJson.Read<GameState>(row.State);
+                // Phase 3.4: v3 → v4 state schema upgrade. Idempotent.
+                state = StateSchemaUpgrade.UpgradeToCurrent(state);
                 var started = Stopwatch.GetTimestamp();
                 var moves = new XiangqiRulesEngine().GenerateLegalActions(state);
                 if (moves.Count == 0) continue;

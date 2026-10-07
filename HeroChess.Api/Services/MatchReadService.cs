@@ -25,6 +25,8 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock)
     {
         var dto = await StateAsync(playerId, matchId, ct);
         var state = dto.State.Deserialize<GameState>(GameJson.Options) ?? throw new InvalidOperationException("Invalid stored state.");
+        // Phase 3.4: v3 → v4 state schema upgrade. Idempotent. Ensures GenerateLegalActions works with v3 state.
+        state = StateSchemaUpgrade.UpgradeToCurrent(state);
         return new XiangqiRulesEngine().GenerateLegalActions(state).Select(x => new LegalMoveDto(x.PieceId, x.From.X, x.From.Y, x.To.X, x.To.Y, x.CapturedPieceId)).ToArray();
     }
 

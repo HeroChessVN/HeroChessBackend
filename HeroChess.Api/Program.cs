@@ -71,6 +71,18 @@ builder.Services.AddSingleton<RatingPolicy>();
 builder.Services.AddScoped<MatchSelectionService>();
 builder.Services.AddScoped<MatchSelectionLifetime>();
 builder.Services.AddScoped<MatchReadService>();
+builder.Services.AddSingleton<HeroChess.Rules.Skills.CommandSkillRegistry>(sp =>
+    new HeroChess.Rules.Skills.CommandSkillRegistry(new HeroChess.Rules.Skills.ICommandSkillHandler[]
+    {
+        new HeroChess.Rules.Skills.VanCocTranGiangHandler(),
+        new HeroChess.Rules.Skills.PhanKyDoatTheHandler(),
+        new HeroChess.Rules.Skills.PhaTranDoatPhongHandler(),
+        new HeroChess.Rules.Skills.BinhLamThuyHienHandler(),
+        // NOTE: Stolen effect cancellation is NOT a Command Skill.
+        // It is an internal Phản Kỳ Đoạt Thế resolution mechanism handled by TurnLifecycle.
+        // See: TurnLifecycle.Apply(..., resolveCreatorCancellation: true)
+    }));
+builder.Services.AddScoped<HeroChess.Rules.Skills.CommandSkillDispatcher>();
 builder.Services.AddScoped<MatchCommandService>();
 builder.Services.AddScoped<SettlementService>();
 builder.Services.AddScoped<MatchHistoryService>();

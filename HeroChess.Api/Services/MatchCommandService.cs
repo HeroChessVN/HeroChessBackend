@@ -4,12 +4,15 @@ using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
 using HeroChess.Rules;
+using HeroChess.Rules.Skills;
 using Microsoft.EntityFrameworkCore;
+using TurnLifecycle = HeroChess.Rules.TurnLifecycle;
 
 namespace HeroChess.Api.Services;
 
 public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks, SettlementService settlement,
-    MatchConnectionHub hub, TimeProvider clock, BotTurnScheduler bots, ILogger<MatchCommandService> logger)
+    MatchConnectionHub hub, TimeProvider clock, BotTurnScheduler bots, ILogger<MatchCommandService> logger,
+    HeroChess.Rules.Skills.CommandSkillDispatcher dispatcher)
 {
     // ExecuteAsync: Điểm vào cho player; ghi thời điểm server nhận command để xét deadline.
     public Task<MatchCommandResultDto> ExecuteAsync(Guid playerId, Guid matchId, MatchCommandRequest request, DateTimeOffset? receivedAt, CancellationToken ct) =>
@@ -55,7 +58,48 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 throw new ApiException(409, "TURN_DEADLINE_PASSED", "The turn deadline has passed.", new { currentVersion = row.Version, deadlineAt = row.TurnDeadlineAt });
 
             var state = GameJson.Read<GameState>(row.State);
+            // Phase 3.4: v3 → v4 state schema upgrade.
+            // Upgrade is idempotent: already-v4 state returns immediately, no mutation.
+            // Must happen before any TurnLifecycle call to ensure all v4 fields exist.
+            state = StateSchemaUpgrade.UpgradeToCurrent(state);
             var actorSide = participant.Side == "red" ? Side.Red : Side.Black;
+
+            // Phase 3.1 + 3.3: TurnLifecycle integration
+            // Run lifecycle at the START of the authoritative player's turn (before they can act).
+            // Exactly-once: use ProcessedTurns[(actorSide, state.TurnIndex)] as the key.
+            // Lifecycle processes cooldowns, effect durations, stake lifetimes, pending steals,
+            // and Creator Cancellation (internal Phản Kỳ resolution).
+            //
+            // REFACTORED: Apply() now executes core lifecycle (Steps 1-4) exactly once,
+            // then applies Step 5 (Creator Cancellation) if resolveCreatorCancellation is true.
+            // This eliminates the double-Apply pattern and ensures no double mutation.
+            var lifecycleEvents = new List<object>();
+            if (!TurnLifecycle.IsTurnProcessed(state, actorSide, state.TurnIndex))
+            {
+                // Single Apply() call handles all 5 steps:
+                // 1. Cooldown decrement
+                // 2. Effect duration decrement
+                // 3. Stake lifetime decrement
+                // 4. Pending steal finalization
+                // 5. Creator Cancellation (resolveCreatorCancellation: true)
+                var lifecycle = TurnLifecycle.Apply(state, actorSide, resolveCreatorCancellation: true);
+                state = lifecycle.State;
+                TurnLifecycle.MarkTurnProcessed(state, actorSide, state.TurnIndex);
+
+                // Collect lifecycle events for broadcast
+                lifecycleEvents.Add(new { type = "turn.started", side = actorSide.ToString().ToLowerInvariant() });
+                foreach (var e in lifecycle.ExpiredEffects)
+                    lifecycleEvents.Add(new { type = "effect.expired", effectId = e.EffectId, code = e.Code });
+                foreach (var s in lifecycle.RemovedStakes)
+                    lifecycleEvents.Add(new { type = "stake.removed", obstacleId = s.ObstacleId, position = new { x = s.Position.X, y = s.Position.Y } });
+                foreach (var c in lifecycle.DecrementedCooldowns)
+                    lifecycleEvents.Add(new { type = "skill.cooldown_decremented", side = c.Side.ToString().ToLowerInvariant(), slotNo = c.SlotNo, newCooldown = c.NewCooldown });
+                foreach (var f in lifecycle.FinalizedSteals)
+                    lifecycleEvents.Add(new { type = "phan_ky.finalized", effectId = f.EffectId, newController = f.NewController.ToString().ToLowerInvariant() });
+                foreach (var r in lifecycle.RemovedEffects)
+                    lifecycleEvents.Add(new { type = "phan_ky.cancelled", effectId = r.EffectId, removedBy = r.RemovedBy.ToString().ToLowerInvariant() });
+            }
+
             var type = request.Action.TryGetProperty("type", out var typeValue) ? typeValue.GetString() : null;
             GameState next;
             object[] events;
@@ -80,13 +124,40 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     if (target < 0 || target >= row.Version) throw new ApiException(422, "INVALID_UNDO_TARGET", "Undo must target an earlier snapshot.");
                     var action = await db.MatchActions.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId && x.SequenceNo == target, ct)
                         ?? throw new ApiException(422, "INVALID_UNDO_TARGET", "The target snapshot does not exist.");
-                    next = GameJson.Read<GameState>(action.StateAfter); next.Version = row.Version + 1; next.Result = null; next.EndReason = null;
+                    next = GameJson.Read<GameState>(action.StateAfter);
+                    // Phase 3.4: v3 → v4 upgrade for undo target state. Idempotent.
+                    next = StateSchemaUpgrade.UpgradeToCurrent(next);
+                    next.Version = row.Version + 1; next.Result = null; next.EndReason = null;
                     events = new object[] { new { type = "match.undone", targetSequence = target } }; break;
                 case "hero_active": throw new ApiException(422, "SKILL_NOT_IMPLEMENTED", "Hero active skills are not implemented.");
-                case "team_skill": throw new ApiException(422, "SKILL_NOT_IMPLEMENTED", "Team skills are not implemented.");
+                case "team_skill":
+                    // Extract slot from action (required field).
+                    if (!request.Action.TryGetProperty("slot", out var slotProp) || !slotProp.TryGetInt32(out var slotNo))
+                        throw new ApiException(400, "INVALID_ACTION", "team_skill requires a slot number.");
+                    // Resolve the skill from the actor's current SkillStates.
+                    var actorSkill = state.SkillStates.TryGetValue(actorSide, out var actorSkillList)
+                        ? actorSkillList.FirstOrDefault(s => s.SlotNo == slotNo)
+                        : null;
+                    if (actorSkill == null)
+                        throw new ApiException(422, "SKILL_NOT_IN_LINEUP", $"No skill found in slot {slotNo} for this lineup.");
+                    var frozen = FrozenSkillSnapshotFactory.FromSkillState(actorSkill);
+                    var skillResult = dispatcher.Dispatch(state, actorSide, frozen, request.Action);
+                    if (!skillResult.Accepted)
+                        throw new ApiException(422, skillResult.Error!.Code, skillResult.Error.Message);
+                    next = skillResult.State;
+                    events = new object[]
+                    {
+                        new { type = "team_skill.activated", code = frozen.ImplementationKey, slot = slotNo, side = participant.Side }
+                    }.Concat(skillResult.Events).ToArray();
+                    break;
                 case "start" or "timeout" or "cancel": throw new ApiException(400, "SERVER_ACTION_ONLY", "This action can only be created by the server.");
                 default: throw new ApiException(400, "INVALID_ACTION", "Unknown match action.");
             }
+            // Phase 3.1: Merge lifecycle events with action events for broadcast.
+            // Lifecycle events are prepended so they appear first in the event stream.
+            if (lifecycleEvents.Count > 0)
+                events = lifecycleEvents.Concat(events).ToArray();
+
             var now = clock.GetUtcNow();
             var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
             row.Version = next.Version; row.SideToMove = next.SideToMove.ToString().ToLowerInvariant(); row.TurnIndex = next.TurnIndex;
@@ -126,12 +197,48 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             var row = await db.MatchStates.FromSqlInterpolated($"SELECT * FROM hero_chess.match_state WHERE match_id={matchId} FOR UPDATE").SingleOrDefaultAsync(ct);
             if (match?.Status != "active" || row is null || row.Version != expectedVersion || row.TurnDeadlineAt is null || receivedAt < row.TurnDeadlineAt) { await transaction.CommitAsync(ct); return false; }
             var state = GameJson.Read<GameState>(row.State); var engine = new XiangqiRulesEngine(); var now = clock.GetUtcNow();
+            // Phase 3.4: v3 → v4 state schema upgrade. Idempotent.
+            state = StateSchemaUpgrade.UpgradeToCurrent(state);
             var timedOut = state.SideToMove;
             var inCheck = engine.IsInCheck(state, timedOut);
             state.ConsecutiveTimeouts.TryGetValue(timedOut, out var streak);
             state.ConsecutiveTimeouts[timedOut] = ++streak;
             state.Version++; state.TurnIndex++; state.CountedActions++;
-            state.SideToMove = timedOut == Side.Red ? Side.Black : Side.Red;
+            var nextSide = timedOut == Side.Red ? Side.Black : Side.Red;
+            state.SideToMove = nextSide;
+
+            // Phase 3.2 + 3.3: Run TurnLifecycle for the new authoritative player.
+            // This ensures cooldowns/effects/stakes are processed when a turn starts via timeout.
+            // Exactly-once: use ProcessedTurns[(nextSide, state.TurnIndex)] as the key.
+            //
+            // REFACTORED: Apply() now executes core lifecycle (Steps 1-4) exactly once,
+            // then applies Step 5 (Creator Cancellation) if resolveCreatorCancellation is true.
+            var lifecycleEvents = new List<object>();
+            if (!TurnLifecycle.IsTurnProcessed(state, nextSide, state.TurnIndex))
+            {
+                // Single Apply() call handles all 5 steps:
+                // 1. Cooldown decrement
+                // 2. Effect duration decrement
+                // 3. Stake lifetime decrement
+                // 4. Pending steal finalization
+                // 5. Creator Cancellation (resolveCreatorCancellation: true)
+                var lifecycle = TurnLifecycle.Apply(state, nextSide, resolveCreatorCancellation: true);
+                state = lifecycle.State;
+                TurnLifecycle.MarkTurnProcessed(state, nextSide, state.TurnIndex);
+                // Collect lifecycle events for broadcast
+                lifecycleEvents.Add(new { type = "turn.started", side = nextSide.ToString().ToLowerInvariant() });
+                foreach (var e in lifecycle.ExpiredEffects)
+                    lifecycleEvents.Add(new { type = "effect.expired", effectId = e.EffectId, code = e.Code });
+                foreach (var s in lifecycle.RemovedStakes)
+                    lifecycleEvents.Add(new { type = "stake.removed", obstacleId = s.ObstacleId, position = new { x = s.Position.X, y = s.Position.Y } });
+                foreach (var c in lifecycle.DecrementedCooldowns)
+                    lifecycleEvents.Add(new { type = "skill.cooldown_decremented", side = c.Side.ToString().ToLowerInvariant(), slotNo = c.SlotNo, newCooldown = c.NewCooldown });
+                foreach (var f in lifecycle.FinalizedSteals)
+                    lifecycleEvents.Add(new { type = "phan_ky.finalized", effectId = f.EffectId, newController = f.NewController.ToString().ToLowerInvariant() });
+                foreach (var r in lifecycle.RemovedEffects)
+                    lifecycleEvents.Add(new { type = "phan_ky.cancelled", effectId = r.EffectId, removedBy = r.RemovedBy.ToString().ToLowerInvariant() });
+            }
+
             if (inCheck || streak >= 2)
             {
                 state.Result = timedOut == Side.Red ? "black_win" : "red_win";
@@ -139,7 +246,10 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             }
             // A direct loss takes priority over SP comparison on action 150.
             ApplyActionLimit(match, state);
-            object[] events = { new { type = "turn.timeout", side = timedOut.ToString().ToLowerInvariant(), consecutiveTimeouts = streak } };
+            var events = new List<object> { new { type = "turn.timeout", side = timedOut.ToString().ToLowerInvariant(), consecutiveTimeouts = streak } };
+            // Merge lifecycle events so they appear first in the event stream
+            if (lifecycleEvents.Count > 0)
+                events.InsertRange(0, lifecycleEvents);
             if (state.Result is not null) CompleteMatch(match, state, now);
             var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
             row.Version = state.Version; row.SideToMove = state.SideToMove.ToString().ToLowerInvariant(); row.TurnIndex = state.TurnIndex; row.CountedActions = state.CountedActions;

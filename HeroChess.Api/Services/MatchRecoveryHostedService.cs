@@ -23,7 +23,11 @@ public sealed class MatchRecoveryHostedService(IServiceProvider services, TimePr
             if (match.Status == "active")
             {
                 var stateRow = await db.MatchStates.FromSqlInterpolated($"SELECT * FROM hero_chess.match_state WHERE match_id={id} FOR UPDATE").SingleAsync(ct);
-                var state = GameJson.Read<GameState>(stateRow.State); state.Version++; state.EndReason = "server_restart";
+                var state = GameJson.Read<GameState>(stateRow.State);
+                // Phase 3.4: v3 → v4 state schema upgrade. Idempotent.
+                // This ensures the cancelled state snapshot is v4 so the match can be resumed.
+                state = StateSchemaUpgrade.UpgradeToCurrent(state);
+                state.Version++; state.EndReason = "server_restart";
                 stateRow.Version = state.Version; stateRow.State = GameJson.Document(state); stateRow.TurnDeadlineAt = null; stateRow.UpdatedAt = now;
                 db.MatchActions.Add(new MatchAction { Id = Guid.NewGuid(), MatchId = id, SequenceNo = state.Version, CommandId = Guid.NewGuid(), Kind = "cancel",
                     RequestPayload = GameJson.Document(new { reason = "server_restart" }), ResolvedEvents = GameJson.Document(new[] { new { type = "match.cancelled", reason = "server_restart" } }),

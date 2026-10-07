@@ -122,7 +122,7 @@ public sealed partial class MatchFlowTests
                 sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MatchRuntimeOptions>>());
             var command = new MatchCommandService(sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<MatchLockRegistry>(),
                 sp.GetRequiredService<SettlementService>(), sp.GetRequiredService<MatchConnectionHub>(), TimeProvider.System, stoppedBot,
-                sp.GetRequiredService<ILogger<MatchCommandService>>());
+                sp.GetRequiredService<ILogger<MatchCommandService>>(), sp.GetRequiredService<HeroChess.Rules.Skills.CommandSkillDispatcher>());
             await command.ExecuteAsync(me.PlayerId!.Value, id, Command(0, moves[0]), null, CancellationToken.None);
         }
         await _factory.Services.GetRequiredService<MatchMaintenanceHostedService>().SweepAsync(CancellationToken.None);
@@ -169,7 +169,8 @@ public sealed partial class MatchFlowTests
         var hub = sp.GetRequiredService<MatchConnectionHub>(); var matchmaking = sp.GetRequiredService<MatchmakingService>();
         var settlement = new SettlementService(db, TimeProvider.System, matchmaking, sp.GetRequiredService<RewardPolicy>(), sp.GetRequiredService<RatingPolicy>(), hub);
         var service = new MatchCommandService(db, sp.GetRequiredService<MatchLockRegistry>(), settlement, hub, TimeProvider.System,
-            sp.GetRequiredService<BotTurnScheduler>(), sp.GetRequiredService<ILogger<MatchCommandService>>());
+            sp.GetRequiredService<BotTurnScheduler>(), sp.GetRequiredService<ILogger<MatchCommandService>>(),
+            sp.GetRequiredService<HeroChess.Rules.Skills.CommandSkillDispatcher>());
         var request = new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(new { type = "resign" }));
         await service.ExecuteAsync(blackMe.PlayerId!.Value, id, request, null, requestCancellation.Token);
         Assert.True(requestCancellation.IsCancellationRequested);
