@@ -112,6 +112,15 @@ public sealed class GameState
     // This is the selected architecture for A1 (stake lifetime storage).
     public Dictionary<Guid, StakeMetadata> StakeMetadata { get; set; } = new();
 
+    // Step 6: General obstacle metadata. Key = ObstacleId, Value = ObstacleMetadata.
+    // Stores the placer Side for any obstacle (Thành, Rào, THD Cọc, etc.).
+    // Used by TurnLifecycle to determine whose turn decrements the obstacle's lifetime.
+    public Dictionary<Guid, ObstacleMetadata> ObstacleMetadata { get; set; } = new();
+
+    // Step 6: THD Tượng Cọc stakes. Key = PieceId of the THD Tượng piece, Value = ObstacleId of the placed Cọc.
+    // Used to track which stake belongs to which piece for recall/duration management.
+    public Dictionary<Guid, Guid> ThdTuongCocStakes { get; set; } = new();
+
     // Clone: Sao chép state và các collection mutable; mô phỏng nước đi/undo không được sửa chung object gốc.
     public GameState Clone()
     {
@@ -142,6 +151,12 @@ public sealed class GameState
         // v4: Clone StakeMetadata
         foreach (var kvp in StakeMetadata)
             copy.StakeMetadata[kvp.Key] = kvp.Value;
+        // Step 6: Clone ObstacleMetadata
+        foreach (var kvp in ObstacleMetadata)
+            copy.ObstacleMetadata[kvp.Key] = kvp.Value;
+        // Step 6: Clone THD Tượng Cọc stakes
+        foreach (var kvp in ThdTuongCocStakes)
+            copy.ThdTuongCocStakes[kvp.Key] = kvp.Value;
         return copy;
     }
 }

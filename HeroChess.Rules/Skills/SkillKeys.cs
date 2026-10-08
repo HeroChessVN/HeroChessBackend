@@ -8,6 +8,7 @@ namespace HeroChess.Rules.Skills;
 /// </summary>
 public static class SkillKeys
 {
+    // ---- Command Skills ----
     /// <summary>Vạn Cọc Trấn Giang.</summary>
     public const string VanCocTranGiang = "van_coc_tran_giang";
 
@@ -19,4 +20,51 @@ public static class SkillKeys
 
     /// <summary>Binh Lâm Thủy Hiểm.</summary>
     public const string BinhLamThuyHien = "binh_lam_thuy_hien";
+
+    // ---- Hero Skills ----
+    // Quang Trung cooldown-ready special movement.
+    public const string QuangTrungHoanhSoc = "quang_trung.hoanh_soc";
+    // Quang Trung: cooldown starts at this value when cooldown resets.
+    public const int QuangTrungCooldownTurns = 3;
+    // TraitState key for Quang Trung cooldown-ready indicator.
+    public const string QuangTrungCooldownKey = "cooldownReady";
+
+    // Phạm Ngũ Lão "hoành sóc giang sơn" — charge granted after capture.
+    public const string HoanhSoc = "rook.hoanh_soc";
+    // TraitState key for hoành sóc charge.
+    public const string HoanhSocChargedKey = "hoanhSocCharged";
+
+    // ---- New Command Skills (Step 6) ----
+    /// <summary>Thành — Command Skill: temporary fortification, only destroyed by Cannon.</summary>
+    public const string Thanh = "thanh";
+
+    /// <summary>Rào — Command Skill: temporary barrier behaving like a Soldier for destruction.</summary>
+    public const string Rao = "rao";
+
+    /// <summary>Trần Hưng Đạo — Tượng Hero Skill: place a Cọc on the river.</summary>
+    public const string ThDTuongCoc = "tran_hung_dao_tuong.coc";
+
+    /// <summary>Trần Hưng Đạo — Tượng Hero Skill cooldown: 3 turns.</summary>
+    public const int ThDTuongCocCooldownTurns = 3;
+
+    // ---- New Hero Trait Keys (Step 6) ----
+    /// <summary>
+    /// Lý Thường Kiệt — Xe passive: bypass Thành / Rào / Cọc obstacles.
+    /// Stored as MovementImplementationKey on the piece.
+    /// </summary>
+    public const string LyThuongKietXe = "rook.ly_thuong_kiet";
+
+    /// <summary>
+    /// Lý Thường Kiệt — Pháo passive: can destroy Thành without moving.
+    /// Stored as MovementImplementationKey on the piece.
+    /// </summary>
+    public const string LyThuongKietPhao = "cannon.ly_thuong_kiet";
+
+    // Obstacle kinds introduced in Step 6.
+    /// <summary>ObstacleKind for a Thành fortification.</summary>
+    public const string ObstacleKindThanh = "than_h";
+    /// <summary>ObstacleKind for a Rào barrier.</summary>
+    public const string ObstacleKindRao = "rao";
+    /// <summary>ObstacleKind for a Trần Hưng Đạo — Tượng Cọc stake.</summary>
+    public const string ObstacleKindThDTuongCoc = "thd_tuong_coc";
 }

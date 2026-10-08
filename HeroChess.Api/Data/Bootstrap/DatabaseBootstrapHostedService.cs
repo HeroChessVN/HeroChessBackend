@@ -9,6 +9,7 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
     IOptions<DatabaseBootstrapOptions> options, ILogger<DatabaseBootstrapHostedService> logger) : IHostedService
 {
     // StartAsync: Khi bật cờ: kiểm tra schema, chạy identity/extensions/catalog và dev overlay; schema không đúng 25 bảng thì dừng.
+    // Safety: dev fixtures bị từ chối nếu kết nối trỏ tới production database.
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         if (!options.Value.Enabled) { logger.LogInformation("Database bootstrap is disabled."); return; }
@@ -20,6 +21,17 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
         {
             advisoryLock.CommandText = "SELECT pg_advisory_lock(hashtext('hero_chess_bootstrap'))";
             await advisoryLock.ExecuteScalarAsync(cancellationToken);
+        }
+        // Safety: từ chối dev fixtures nếu đang kết nối production DB.
+        if (options.Value.SeedDevelopmentFixtures && options.Value.IsProductionDatabase)
+        {
+            logger.LogError(
+                "Development fixture bootstrap refused: the configured database is marked as production. " +
+                "SeedDevelopmentFixtures=true is not allowed against a production database. " +
+                "To use dev fixtures, set IsProductionDatabase=false in the configuration or use a local/test database connection.");
+            throw new InvalidOperationException(
+                "Development fixtures are disabled: the current database is marked as production. " +
+                "Use a local or test PostgreSQL database for development fixture bootstrapping.");
         }
         await using (var check = connection.CreateCommand())
         {

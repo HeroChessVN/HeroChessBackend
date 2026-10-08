@@ -1,5 +1,6 @@
 namespace HeroChess.Rules;
 using HeroChess.Rules.Effects;
+using HeroChess.Rules.Skills;
 
 /// <summary>
 /// Turn-start lifecycle processing.
@@ -96,6 +97,10 @@ public static class TurnLifecycle
     /// - Cancellation: does NOT change Creator, EffectId, CreationOrder, or Duration.
     /// - Cancellation: does NOT trigger a new steal or cooldown.
     /// - Cancellation: recorded as "phan_ky.cancelled" event.
+    ///
+    /// Hero Skill — Quang Trung cooldown:
+    /// - When a Quang Trung hero skill's cooldown reaches 0, set cooldownReady = 1 on
+    ///   the piece's TraitState so the special movement becomes available this turn.
     /// </summary>
     /// <param name="state">The current game state (will be cloned internally).</param>
     /// <param name="sideToMove">The side whose turn is starting.</param>
@@ -124,7 +129,7 @@ public static class TurnLifecycle
 
     /// <summary>
     /// Applies core lifecycle (Steps 1-4) exactly once:
-    /// 1. Cooldown decrement
+    /// 1. Cooldown decrement (and hero-skill sync for Quang Trung)
     /// 2. Effect duration decrement
     /// 3. Physical stake lifetime decrement
     /// 4. Pending Phản Kỳ finalization
@@ -150,6 +155,9 @@ public static class TurnLifecycle
                     var newCooldown = skill.CooldownRemaining - 1;
                     // Replace with a new SkillState (record is immutable after construction).
                     skillList[i] = skill with { CooldownRemaining = newCooldown };
+                    // Hero Skill — Quang Trung: when cooldown expires (1 → 0), make special movement available.
+                    if (newCooldown == 0)
+                        SetQuangTrungCooldownReady(next, sideToMove);
                     // Only emit event if the cooldown didn't expire (newCooldown > 0).
                     // If it expired, the next turn it will simply be 0 and won't decrement further.
                     if (newCooldown > 0)
@@ -181,33 +189,34 @@ public static class TurnLifecycle
             }
         }
 
-        // Step 3: Decrement physical stake lifetime for obstacles created by sideToMove.
-        // Physical stakes have their own independent lifetime tracked in obstacle metadata.
-        // Lifetime is measured in the original placer's turns (§13.3).
-        // Counter/control transfer does NOT reset this lifetime.
-        // Stake removal is independent of the blocking Effect's state.
+        // Step 3: Decrement obstacle lifetime for all obstacles placed by sideToMove.
+        // Applies to: Vạn Cọc stakes ("stake"), Thành, Rào, THD Tượng Cọc.
+        // Lifetime is measured in the original placer's turns.
         var j = 0;
         while (j < next.Obstacles.Count)
         {
             var obstacle = next.Obstacles[j];
-            if (obstacle.Kind == "stake" && obstacle.RemainingLifetime is > 0)
+            if (obstacle.RemainingLifetime is null or <= 0)
             {
-                // Decrement remaining lifetime for stakes placed by sideToMove.
-                var placer = GetStakePlacer(next, obstacle);
-                if (placer == sideToMove)
+                j++;
+                continue;
+            }
+
+            // Determine the placer of this obstacle.
+            var placer = GetObstaclePlacer(next, obstacle);
+            if (placer == sideToMove)
+            {
+                var newLifetime = obstacle.RemainingLifetime!.Value - 1;
+                next.Obstacles[j] = obstacle with { RemainingLifetime = newLifetime };
+                if (newLifetime == 0)
                 {
-                    var newLifetime = obstacle.RemainingLifetime!.Value - 1;
-                    next.Obstacles[j] = obstacle with { RemainingLifetime = newLifetime };
-                    if (newLifetime == 0)
-                    {
-                        var removed = next.Obstacles[j];
-                        removedStakes.Add(new ObstacleRemovedEvent(
-                            removed.ObstacleId, removed.Position, removed.Kind,
-                            GetStakeEffectId(next, removed)));
-                        next.Obstacles.RemoveAt(j);
-                        // Don't increment j — the next element slides into current position.
-                        continue;
-                    }
+                    var removed = next.Obstacles[j];
+                    removedStakes.Add(new ObstacleRemovedEvent(
+                        removed.ObstacleId, removed.Position, removed.Kind,
+                        GetStakeEffectId(next, removed)));
+                    next.Obstacles.RemoveAt(j);
+                    // Don't increment j — the next element slides into current position.
+                    continue;
                 }
             }
             j++;
@@ -290,19 +299,62 @@ public static class TurnLifecycle
             state.ProcessedTurns[side].Add(turnIndex);
     }
 
-    // Helper: retrieves the original placer side for a stake obstacle.
-    // The placer is stored in the ObstacleState's record but ObstacleState is a simple
-    // record — we store it in a companion lookup to avoid making ObstacleState depend
-    // on a complex type. For v1 implementation, we embed the placer in a separate
-    // dictionary on GameState keyed by ObstacleId.
-    private static Side GetStakePlacer(GameState state, ObstacleState stake) =>
-        state.StakeMetadata.TryGetValue(stake.ObstacleId, out var meta) ? meta.Placer : sideToMove_Unknown;
+    // Helper: retrieves the original placer side for an obstacle.
+    // Checks ObstacleMetadata first (Thành, Rào, THD Cọc), then StakeMetadata (Vạn Cọc).
+    private static Side GetObstaclePlacer(GameState state, ObstacleState obstacle)
+    {
+        if (state.ObstacleMetadata.TryGetValue(obstacle.ObstacleId, out var meta))
+            return meta.Placer;
+        if (state.StakeMetadata.TryGetValue(obstacle.ObstacleId, out var stakeMeta))
+            return stakeMeta.Placer;
+        return sideToMove_Unknown;
+    }
 
     private static Guid? GetStakeEffectId(GameState state, ObstacleState stake) =>
         state.StakeMetadata.TryGetValue(stake.ObstacleId, out var meta) ? meta.EffectId : null;
 
     // Marker for unknown placer — should not occur for valid stake obstacles.
     private static readonly Side sideToMove_Unknown = (Side)255;
+
+    // ============================================================
+    // Hero Skill integration
+    // ============================================================
+
+    /// <summary>
+    /// Hero Skill — Quang Trung cooldown-ready sync.
+    ///
+    /// When Quang Trung's team skill cooldown expires (1 → 0), the special movement
+    /// becomes available. This is done by setting cooldownReady = 1 on the Quang Trung
+    /// piece's TraitState.
+    ///
+    /// The piece is identified by:
+    /// - MovementImplementationKey == "general.orthogonal_range_3" AND
+    /// - Either TraitImplementationKey contains "quang_trung" or "quang-trung" OR
+    ///   TraitKind == "special_move" (fallback — Quang Trung is the only General with
+    ///   special_move on the current roster).
+    /// </summary>
+    private static void SetQuangTrungCooldownReady(GameState state, Side side)
+    {
+        foreach (var piece in state.Pieces)
+        {
+            if (piece.Side != side) continue;
+            if (piece.MovementImplementationKey != "general.orthogonal_range_3") continue;
+            if (piece.TraitImplementationKey is not null &&
+                (piece.TraitImplementationKey.Contains("quang_trung", StringComparison.OrdinalIgnoreCase) ||
+                 piece.TraitImplementationKey.Contains("quang-trung", StringComparison.OrdinalIgnoreCase)))
+            {
+                piece.TraitState[SkillKeys.QuangTrungCooldownKey] = 1;
+                return; // Exactly one Quang Trung piece per side.
+            }
+            if (piece.TraitKind == "special_move")
+            {
+                // Fallback: any General with special_move is treated as Quang Trung.
+                // (No other General on the current roster has special_move.)
+                piece.TraitState[SkillKeys.QuangTrungCooldownKey] = 1;
+                return;
+            }
+        }
+    }
 }
 
 /// <summary>
@@ -326,4 +378,17 @@ public sealed class StakeMetadata
     /// May be null if the Effect has already expired.
     /// </summary>
     public Guid? EffectId { get; init; }
+}
+
+/// <summary>
+/// Step 6: General obstacle metadata.
+/// Tracks the original placer Side for any obstacle (Thành, Rào, THD Cọc).
+/// Used by TurnLifecycle to determine whose turn decrements the obstacle's lifetime.
+/// </summary>
+public sealed class ObstacleMetadata
+{
+    /// <summary>
+    /// The Side that originally placed this obstacle. Immutable — never changes.
+    /// </summary>
+    public Side Placer { get; init; }
 }

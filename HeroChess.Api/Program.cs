@@ -78,6 +78,11 @@ builder.Services.AddSingleton<HeroChess.Rules.Skills.CommandSkillRegistry>(sp =>
         new HeroChess.Rules.Skills.PhanKyDoatTheHandler(),
         new HeroChess.Rules.Skills.PhaTranDoatPhongHandler(),
         new HeroChess.Rules.Skills.BinhLamThuyHienHandler(),
+        // Step 6: Thành and Rào Command Skills
+        new HeroChess.Rules.Skills.ThanhHandler(),
+        new HeroChess.Rules.Skills.RaoHandler(),
+        // Step 6: Trần Hưng Đạo — Tượng Hero Skill
+        new HeroChess.Rules.Skills.ThDTuongCocHandler(),
         // NOTE: Stolen effect cancellation is NOT a Command Skill.
         // It is an internal Phản Kỳ Đoạt Thế resolution mechanism handled by TurnLifecycle.
         // See: TurnLifecycle.Apply(..., resolveCreatorCancellation: true)

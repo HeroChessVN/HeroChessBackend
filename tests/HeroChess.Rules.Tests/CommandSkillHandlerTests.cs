@@ -1557,3 +1557,408 @@ public sealed class PhanKyPendingStealLifecycleTests
         Assert.Equal("EFFECT_NOT_STEALABLE", result.Error!.Code);
     }
 }
+
+// =============================================================================
+// Step 6: Tests for Thành, Rào, and THD Tượng Cọc Command Skill Handlers
+// =============================================================================
+
+/// <summary>
+/// Tests for ThanhHandler (Thành Command Skill).
+/// </summary>
+public sealed class ThanhHandlerTests
+{
+    private static GameState MakeState() => new()
+    {
+        StateSchemaVersion = 4,
+        SideToMove = Side.Red,
+        EffectInstances = new List<EffectInstance>(),
+        ProcessedTurns = new Dictionary<Side, List<int>> { [Side.Red] = new(), [Side.Black] = new() },
+        StakeMetadata = new Dictionary<Guid, StakeMetadata>(),
+        SkillStates = new Dictionary<Side, List<SkillState>>
+        {
+            [Side.Red] = new() { new(1, Guid.NewGuid(), null, 0, SkillKeys.Thanh) },
+            [Side.Black] = new()
+        },
+        ObstacleMetadata = new Dictionary<Guid, ObstacleMetadata>()
+    };
+
+    private static JsonElement Target(int x, int y) =>
+        JsonSerializer.SerializeToElement(new { position = new { x, y } });
+
+    private static CommandSkillContext Context(GameState state, Side side = Side.Red) =>
+        new(state, side, 1, Guid.NewGuid(), SkillKeys.Thanh, 2, Target(0, 0));
+
+    private static ThanhHandler Handler() => new();
+
+    [Fact]
+    public void Execute_creates_Thanh_obstacle()
+    {
+        var state = MakeState();
+        var ctx = Context(state);
+        var result = Handler().Execute(ctx);
+
+        Assert.True(result.Accepted);
+        Assert.Single(result.State.Obstacles, o => o.Kind == SkillKeys.ObstacleKindThanh);
+    }
+
+    [Fact]
+    public void Execute_Thanh_has_remaining_lifetime_1()
+    {
+        var state = MakeState();
+        var ctx = Context(state, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        var thanh = result.State.Obstacles.Single(o => o.Kind == SkillKeys.ObstacleKindThanh);
+        Assert.Equal(1, thanh.RemainingLifetime);
+    }
+
+    [Fact]
+    public void Execute_Thanh_placed_on_own_half()
+    {
+        var state = MakeState();
+        // Red's half: y = 0..4
+        var ctx = new CommandSkillContext(state, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.Thanh, 2, Target(0, 0));
+        var result = Handler().Execute(ctx);
+
+        Assert.True(result.Accepted);
+    }
+
+    [Fact]
+    public void Execute_Thanh_rejected_on_enemy_half()
+    {
+        var state = MakeState();
+        // Red trying to place Thành on Black's half: y >= 5
+        var ctx = new CommandSkillContext(state, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.Thanh, 2, Target(0, 5));
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("WRONG_HALF", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_Thanh_rejected_on_occupied_cell()
+    {
+        var state = MakeState();
+        // Add a Red piece at (0,0)
+        state.Pieces.Add(new PieceState { PieceId = Guid.NewGuid(), Class = PieceClass.Soldier, Side = Side.Red, Position = new BoardPoint(0, 0) });
+
+        var ctx = new CommandSkillContext(state, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.Thanh, 2, Target(0, 0));
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("CELL_OCCUPIED", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_Thanh_rejected_off_board()
+    {
+        var state = MakeState();
+        var ctx = new CommandSkillContext(state, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.Thanh, 2, Target(-1, 0));
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("INVALID_POSITION", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_Thanh_Black_on_own_half()
+    {
+        var state = MakeState();
+        // Black's half: y = 5..9
+        var ctx = new CommandSkillContext(state, Side.Black, 1, Guid.NewGuid(),
+            SkillKeys.Thanh, 2, Target(0, 5));
+        var result = Handler().Execute(ctx);
+
+        Assert.True(result.Accepted);
+    }
+}
+
+/// <summary>
+/// Tests for RaoHandler (Rào Command Skill).
+/// </summary>
+public sealed class RaoHandlerTests
+{
+    private static GameState MakeState() => new()
+    {
+        StateSchemaVersion = 4,
+        SideToMove = Side.Red,
+        EffectInstances = new List<EffectInstance>(),
+        ProcessedTurns = new Dictionary<Side, List<int>> { [Side.Red] = new(), [Side.Black] = new() },
+        StakeMetadata = new Dictionary<Guid, StakeMetadata>(),
+        SkillStates = new Dictionary<Side, List<SkillState>>
+        {
+            [Side.Red] = new() { new(1, Guid.NewGuid(), null, 0, SkillKeys.Rao) },
+            [Side.Black] = new()
+        },
+        ObstacleMetadata = new Dictionary<Guid, ObstacleMetadata>()
+    };
+
+    private static JsonElement Target(int x, int y) =>
+        JsonSerializer.SerializeToElement(new { position = new { x, y } });
+
+    private static CommandSkillContext Context(GameState state, Side side = Side.Red) =>
+        new(state, side, 1, Guid.NewGuid(), SkillKeys.Rao, 1, Target(0, 0));
+
+    private static RaoHandler Handler() => new();
+
+    [Fact]
+    public void Execute_creates_Rao_obstacle()
+    {
+        var state = MakeState();
+        var ctx = Context(state);
+        var result = Handler().Execute(ctx);
+
+        Assert.True(result.Accepted);
+        Assert.Single(result.State.Obstacles, o => o.Kind == SkillKeys.ObstacleKindRao);
+    }
+
+    [Fact]
+    public void Execute_Rao_has_remaining_lifetime_1()
+    {
+        var state = MakeState();
+        var ctx = Context(state);
+        var result = Handler().Execute(ctx);
+
+        var rao = result.State.Obstacles.Single(o => o.Kind == SkillKeys.ObstacleKindRao);
+        Assert.Equal(1, rao.RemainingLifetime);
+    }
+
+    [Fact]
+    public void Execute_Rao_placed_on_own_half()
+    {
+        var state = MakeState();
+        var ctx = Context(state, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        Assert.True(result.Accepted);
+    }
+
+    [Fact]
+    public void Execute_Rao_rejected_on_enemy_half()
+    {
+        var state = MakeState();
+        var ctx = new CommandSkillContext(state, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.Rao, 1, Target(0, 5));
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("WRONG_HALF", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_Rao_rejected_on_occupied_cell()
+    {
+        var state = MakeState();
+        state.Pieces.Add(new PieceState { PieceId = Guid.NewGuid(), Class = PieceClass.Soldier, Side = Side.Red, Position = new BoardPoint(0, 0) });
+
+        var ctx = new CommandSkillContext(state, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.Rao, 1, Target(0, 0));
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("CELL_OCCUPIED", result.Error!.Code);
+    }
+}
+
+/// <summary>
+/// Tests for ThDTuongCocHandler (Trần Hưng Đạo — Tượng Hero Skill).
+/// </summary>
+public sealed class ThDTuongCocHandlerTests
+{
+    private static GameState MakeState(Side actorSide = Side.Red) => new()
+    {
+        StateSchemaVersion = 4,
+        SideToMove = actorSide,
+        EffectInstances = new List<EffectInstance>(),
+        ProcessedTurns = new Dictionary<Side, List<int>> { [Side.Red] = new(), [Side.Black] = new() },
+        StakeMetadata = new Dictionary<Guid, StakeMetadata>(),
+        SkillStates = new Dictionary<Side, List<SkillState>>
+        {
+            [Side.Red] = actorSide == Side.Red
+                ? new() { new(1, Guid.NewGuid(), null, 0, SkillKeys.ThDTuongCoc) }
+                : new(),
+            [Side.Black] = actorSide == Side.Black
+                ? new() { new(1, Guid.NewGuid(), null, 0, SkillKeys.ThDTuongCoc) }
+                : new()
+        },
+        ObstacleMetadata = new Dictionary<Guid, ObstacleMetadata>(),
+        ThdTuongCocStakes = new Dictionary<Guid, Guid>()
+    };
+
+    private static PieceState MakeThdTuong(Side side, int x, int y)
+    {
+        var heroId = Guid.NewGuid();
+        var pieceId = Guid.NewGuid();
+        return new PieceState
+        {
+            PieceId = pieceId,
+            HeroId = heroId,
+            Class = PieceClass.Elephant,
+            Side = side,
+            Position = new BoardPoint(x, y),
+            MovementImplementationKey = "elephant.diagonal_range"
+        };
+    }
+
+    private static JsonElement PlaceTarget(int x, int y) =>
+        JsonSerializer.SerializeToElement(new { action = "place", position = new { x, y } });
+
+    private static JsonElement RecallTarget() =>
+        JsonSerializer.SerializeToElement(new { action = "recall" });
+
+    private static CommandSkillContext ContextPlace(GameState state, int x, int y, Side side = Side.Red) =>
+        new(state, side, 1, Guid.NewGuid(), SkillKeys.ThDTuongCoc, 3, PlaceTarget(x, y));
+
+    private static CommandSkillContext ContextRecall(GameState state, Side side = Side.Red) =>
+        new(state, side, 1, Guid.NewGuid(), SkillKeys.ThDTuongCoc, 3, RecallTarget());
+
+    private static ThDTuongCocHandler Handler() => new();
+
+    [Fact]
+    public void Execute_place_creates_stake_on_river()
+    {
+        var state = MakeState();
+        var thd = MakeThdTuong(Side.Red, 3, 3);
+        state.Pieces.Add(thd);
+
+        // River is y=4 or y=5. Red THD at y=3 → forward cell is y=4.
+        var ctx = ContextPlace(state, 3, 4, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        Assert.True(result.Accepted);
+        Assert.Single(result.State.Obstacles, o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc);
+    }
+
+    [Fact]
+    public void Execute_place_stake_has_remaining_lifetime_3()
+    {
+        var state = MakeState();
+        var thd = MakeThdTuong(Side.Red, 3, 3);
+        state.Pieces.Add(thd);
+
+        var ctx = ContextPlace(state, 3, 4, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        var stake = result.State.Obstacles.Single(o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc);
+        Assert.Equal(3, stake.RemainingLifetime);
+    }
+
+    [Fact]
+    public void Execute_place_invalid_not_on_river()
+    {
+        var state = MakeState();
+        var thd = MakeThdTuong(Side.Red, 3, 3);
+        state.Pieces.Add(thd);
+
+        // y=3 is NOT on the river (river is y=4 or y=5)
+        var ctx = ContextPlace(state, 3, 3, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("NOT_RIVER", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_place_invalid_not_in_front()
+    {
+        var state = MakeState();
+        var thd = MakeThdTuong(Side.Red, 3, 3);
+        state.Pieces.Add(thd);
+
+        // Wrong x position (not in front of hero)
+        var ctx = ContextPlace(state, 4, 4, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("NOT_IN_FRONT", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_place_no_thd_piece()
+    {
+        var state = MakeState();
+        // No THD Tượng piece on Red's side
+
+        var ctx = ContextPlace(state, 3, 4, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("NO_THUONG_TUONG", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_recall_removes_stake()
+    {
+        var state = MakeState();
+        var thd = MakeThdTuong(Side.Red, 3, 3);
+        state.Pieces.Add(thd);
+
+        // First place a stake
+        var placeCtx = ContextPlace(state, 3, 4, Side.Red);
+        var afterPlace = Handler().Execute(placeCtx).State;
+
+        // Then recall it
+        var recallCtx = new CommandSkillContext(afterPlace, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.ThDTuongCoc, 3, RecallTarget());
+        var result = Handler().Execute(recallCtx);
+
+        Assert.True(result.Accepted);
+        Assert.Equal(0, result.State.Obstacles.Count(o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc));
+    }
+
+    [Fact]
+    public void Execute_recall_no_stake_to_recall()
+    {
+        var state = MakeState();
+        var thd = MakeThdTuong(Side.Red, 3, 3);
+        state.Pieces.Add(thd);
+
+        var ctx = ContextRecall(state, Side.Red);
+        var result = Handler().Execute(ctx);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("NO_STAKE", result.Error!.Code);
+    }
+
+    [Fact]
+    public void Execute_place_replaces_existing_stake()
+    {
+        var state = MakeState();
+        var thd = MakeThdTuong(Side.Red, 3, 3);
+        state.Pieces.Add(thd);
+
+        // First place a stake at (3,4) — directly in front of THD at (3,3)
+        var placeCtx1 = ContextPlace(state, 3, 4, Side.Red);
+        var afterPlace1 = Handler().Execute(placeCtx1).State;
+
+        // Place a new stake — Thành allows replacement, so a new stake at (3,4) replaces the existing one
+        // We test the "only one stake" constraint by placing the same valid cell
+        var placeCtx2 = new CommandSkillContext(afterPlace1, Side.Red, 1, Guid.NewGuid(),
+            SkillKeys.ThDTuongCoc, 3, PlaceTarget(3, 4));
+        var result = Handler().Execute(placeCtx2);
+
+        Assert.True(result.Accepted);
+        // Should have exactly one stake
+        Assert.Equal(1, result.State.Obstacles.Count(o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc));
+    }
+
+    [Fact]
+    public void Execute_place_Black_on_river()
+    {
+        var state = MakeState(Side.Black);
+        var thd = MakeThdTuong(Side.Black, 3, 6);
+        state.Pieces.Add(thd);
+
+        // Black's half is y=5..9. River is y=4 or y=5.
+        // Black at y=6 → forward is y-1=5 (river).
+        var ctx = ContextPlace(state, 3, 5, Side.Black);
+        var result = Handler().Execute(ctx);
+
+        Assert.True(result.Accepted);
+        Assert.Single(result.State.Obstacles, o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc);
+    }
+}
