@@ -56,7 +56,7 @@ public sealed class ApiFlowTests : IClassFixture<HeroChessFactory>
         var lineup = await create.Content.ReadFromJsonAsync<LineupDto>(Json);
         Assert.NotNull(lineup);
         Assert.True(lineup.IsValid);
-        Assert.Equal(43, lineup.TotalSp);
+        Assert.Equal(entries.Sum(entry => catalog.Heroes.Single(hero => hero.Id == entry.HeroId).SetupPoints), lineup.TotalSp);
 
         var update = createRequest with { Name = "Revision 2", ExpectedRevision = lineup.Revision };
         Assert.Equal(HttpStatusCode.OK, (await _client.PutAsJsonAsync($"/api/v1/lineups/{lineup.Id}", update, Json)).StatusCode);
@@ -84,6 +84,7 @@ public sealed class HeroChessFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("ConnectionStrings__DefaultConnection", connectionString);
         Environment.SetEnvironmentVariable("DatabaseBootstrap__Enabled", "true");
         Environment.SetEnvironmentVariable("DatabaseBootstrap__SeedDevelopmentFixtures", "true");
+        Environment.SetEnvironmentVariable("DatabaseBootstrap__IsProductionDatabase", "false");
         Environment.SetEnvironmentVariable("Onboarding__GrantDevelopmentFixtureHeroes", "true");
         Environment.SetEnvironmentVariable("Onboarding__DevelopmentStartingCoins", "1000");
         Environment.SetEnvironmentVariable("Onboarding__DevelopmentAdminEmails__0", DevelopmentAdminEmail);

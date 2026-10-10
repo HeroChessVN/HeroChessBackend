@@ -58,6 +58,8 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "06_user_inheritance.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "07_exclusive_hero_traits.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "02_seed_catalog.sql"), cancellationToken);
+        await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "08_step6_skills.sql"), cancellationToken);
+        await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "09_hero_movement_fixes.sql"), cancellationToken);
         if (environment.IsDevelopment() && options.Value.SeedDevelopmentFixtures)
             await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "03_seed_dev_only.sql"), cancellationToken);
         logger.LogInformation("Database bootstrap completed.");

@@ -58,7 +58,8 @@ try {
   observer.send(id, denied); assert.equal((await observer.next()).payload.code, 'MATCH_NOT_FOUND');
   const mover = await connect(red.token), moves = await ok(red.token, `/matches/${id}/legal-actions`), move = moves[0];
   const command = { commandId: randomUUID(), expectedVersion: 0, action: { type: 'move', pieceId: move.pieceId, to: { x: move.toX, y: move.toY } } };
-  mover.send(id, command); assert.equal((await mover.next()).type, 'match.command_accepted');
+  mover.send(id, command); assert.equal((await mover.next()).type, 'match.changed');
+  assert.equal((await mover.next()).type, 'match.command_accepted');
   const retry = await connect(red.token); retry.send(id, command);
   const duplicate = await retry.next(); assert.equal(duplicate.payload.duplicate, true); assert.equal(duplicate.payload.sequenceNo, 1);
   await ok(black.token, `/matches/${id}/commands`, 'POST', { commandId: randomUUID(), expectedVersion: 1, action: { type: 'resign' } });

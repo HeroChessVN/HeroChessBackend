@@ -16,7 +16,7 @@ Base path `/api/v1`; mọi endpoint dưới đây yêu cầu bearer auth, trừ 
 | GET | `/matches/{matchId}/legal-actions` | Bổ sung cho web/Unity tô legal targets |
 | POST | `/matches/{matchId}/commands` | REST fallback dùng cùng command pipeline với WebSocket |
 | GET | `/matches?cursor=&limit=` | Lịch sử của actor, tối đa 50 |
-| GET | `/matches/{matchId}/replay?afterSequence=&limit=` | Chỉ participant, chỉ terminal match |
+| GET | `/matches/{matchId}/replay?afterSequence=&limit=` | Chỉ participant, sau khi trận bắt đầu (active/terminal); sequence 0 là bàn cờ ban đầu |
 | POST | `/ws-ticket` | Vé 30 giây, dùng một lần |
 | POST | `/shop/heroes/{heroId}/purchase` | Header `Idempotency-Key` UUID; giá lấy từ server |
 | PATCH | `/admin/heroes/{id}/price` | Role `admin`; body `coinPrice` string và `reason` |

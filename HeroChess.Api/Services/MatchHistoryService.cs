@@ -4,6 +4,7 @@ using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
 using Microsoft.EntityFrameworkCore;
+using HeroChess.Rules;
 
 namespace HeroChess.Api.Services;
 
@@ -35,16 +36,19 @@ public sealed class MatchHistoryService(AppDbContext db)
         return new(items, next);
     }
 
-    // ReplayAsync: Chỉ participant của trận terminal được xem; đọc action theo sequence, trả cursor cho trang tiếp.
+    // ReplayAsync: Participant xem được action sau khi trận bắt đầu; đọc theo sequence, trả cursor cho trang tiếp.
     public async Task<ReplayPageDto> ReplayAsync(Guid playerId, Guid matchId, int afterSequence, int limit, CancellationToken ct)
     {
         limit = Math.Clamp(limit, 1, 100);
         var match = await db.Matches.AsNoTracking().SingleOrDefaultAsync(x => x.Id == matchId, ct);
-        if (match is null || !await db.MatchParticipants.AsNoTracking().AnyAsync(x => x.MatchId == matchId && x.PlayerId == playerId, ct))
+        var participant = await db.MatchParticipants.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId && x.PlayerId == playerId, ct);
+        if (match is null || participant is null)
             throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
-        if (match.Status is not ("completed" or "cancelled")) throw new ApiException(409, "REPLAY_NOT_AVAILABLE", "Replay is available after the match ends.");
+        if (match.Status is not ("active" or "completed" or "cancelled")) throw new ApiException(409, "REPLAY_NOT_AVAILABLE", "Actions are available after the match starts.");
         var rows = await db.MatchActions.AsNoTracking().Where(x => x.MatchId == matchId && x.SequenceNo > afterSequence).OrderBy(x => x.SequenceNo).Take(limit + 1).ToListAsync(ct);
-        var entries = rows.Take(limit).Select(x => new ReplayEntryDto(x.SequenceNo, x.Kind, x.ActorSide, x.ResolvedEvents.RootElement.Clone(), x.StateAfter.RootElement.Clone(), x.CommittedAt)).ToArray();
+        var viewer = participant.Side == "red" ? Side.Red : Side.Black;
+        var entries = rows.Take(limit).Select(x => new ReplayEntryDto(x.SequenceNo, x.Kind, x.ActorSide,
+            MatchStateProjection.Events(x.ResolvedEvents.RootElement, viewer), MatchStateProjection.State(x.StateAfter.RootElement, viewer), x.CommittedAt)).ToArray();
         return new(matchId, entries, rows.Count > limit ? entries[^1].SequenceNo : null);
     }
 }

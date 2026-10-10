@@ -5,6 +5,7 @@ using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
 using HeroChess.Rules;
+using HeroChess.Rules.Skills;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
@@ -41,7 +42,15 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
                 state = StateSchemaUpgrade.UpgradeToCurrent(state);
                 var started = Stopwatch.GetTimestamp();
                 var moves = new XiangqiRulesEngine().GenerateLegalActions(state);
-                if (moves.Count == 0) continue;
+                if (moves.Count == 0)
+                {
+                    var rescue = MatchCommandService.FindLegalSkillAction(state, new XiangqiRulesEngine(),
+                        scope.ServiceProvider.GetRequiredService<CommandSkillDispatcher>());
+                    if (rescue is not null)
+                        await scope.ServiceProvider.GetRequiredService<MatchCommandService>().ExecuteBotAsync(work.MatchId,
+                            new MatchCommandRequest(Guid.NewGuid(), work.Version, rescue.Value), DateTimeOffset.UtcNow, stoppingToken);
+                    continue;
+                }
                 var chosen = moves.OrderByDescending(x => x.CapturedPieceId is null ? -1 : state.Pieces.Single(p => p.PieceId == x.CapturedPieceId).SetupPoints)
                     .ThenBy(x => x.PieceId).ThenBy(x => x.To.X).ThenBy(x => x.To.Y).First();
                 if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromMilliseconds(options.Value.BotThinkMilliseconds))

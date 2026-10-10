@@ -1,7 +1,7 @@
 // Minimal read-only DB auditor. DO NOT MODIFY DATABASE.
 using Npgsql;
 
-var connString = "Host=aws-0-ap-northeast-1.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.rvcvlobhtoqiojwqywoy;Password=FA26SE307ZZ;SSL Mode=Require";
+var connString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection") ?? throw new InvalidOperationException("Set ConnectionStrings__DefaultConnection for the read-only DB audit.");
 
 await using var conn = new NpgsqlConnection(connString);
 await conn.OpenAsync();

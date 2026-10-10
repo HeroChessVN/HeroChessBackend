@@ -392,7 +392,7 @@ HTTP đọc trận/replay và command fallback; REST và WS dùng chung MatchCom
 - `Legal`: GET legal moves từ Rules server.
 - `Command`: POST action qua pipeline có dedup/version/transaction.
 - `List`: GET lịch sử trận của actor.
-- `Replay`: GET trang replay của trận terminal actor tham gia.
+- `Replay`: GET trang action/replay của trận đã bắt đầu mà actor tham gia.
 
 #### [HeroChess.Api/Controllers/MatchmakingController.cs](/D:/Code/Github/HeroChessBackend/HeroChess.Api/Controllers/MatchmakingController.cs)
 

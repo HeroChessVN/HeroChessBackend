@@ -1,7 +1,6 @@
 // Step 6: Rào — Command Skill.
 // Creates a temporary barrier obstacle on the owning side's half of the board.
-// Duration: 1 round (1 player turn of the creator).
-// Cooldown: 1 round.
+// Duration: 4 shared board turns. Cooldown: 6 shared board turns.
 // Rào behaves like a Soldier for destruction interaction.
 // Rào blocks normal movement.
 using HeroChess.Rules.Effects;
@@ -18,8 +17,8 @@ namespace HeroChess.Rules.Skills;
 /// onto its square and the Rào is removed.
 ///
 /// Rules:
-/// - Duration: 1 round (creator's turn).
-/// - Cooldown: 1 round.
+/// - Duration: 4 shared board turns.
+/// - Cooldown: 6 shared board turns.
 /// - Target: a single valid cell on the owner's half of the board.
 /// - Rào is a movement obstacle.
 /// - When a piece moves to/through the Rào cell, the Rào is removed (like being captured).
@@ -33,15 +32,14 @@ public sealed class RaoHandler : ICommandSkillHandler
     public CommandSkillResult Execute(CommandSkillContext ctx)
     {
         // --- Parse target: { "position": { "x": 0, "y": 0 } } ---
-        if (!ctx.Target.TryGetProperty("position", out var posProp) ||
-            !posProp.TryGetProperty("x", out var xProp) ||
-            !posProp.TryGetProperty("y", out var yProp))
+        if (ctx.Target.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !ctx.Target.TryGetProperty("position", out var posProp) || posProp.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !posProp.TryGetProperty("x", out var xProp) || xProp.ValueKind != System.Text.Json.JsonValueKind.Number || !xProp.TryGetInt32(out var x) ||
+            !posProp.TryGetProperty("y", out var yProp) || yProp.ValueKind != System.Text.Json.JsonValueKind.Number || !yProp.TryGetInt32(out var y))
         {
             return CommandSkillResult.Failure(ctx.State, "INVALID_TARGET",
                 "Rào requires a target with a position {x, y}.");
         }
-        var x = xProp.GetInt32();
-        var y = yProp.GetInt32();
         var pos = new BoardPoint(x, y);
 
         if (!pos.IsOnBoard)
@@ -57,14 +55,16 @@ public sealed class RaoHandler : ICommandSkillHandler
         if (ctx.State.Pieces.Any(p => p.Status == PieceStatus.Alive && p.Position == pos))
             return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED",
                 "Cannot place Rào on a cell occupied by a piece.");
+        if (ctx.State.Obstacles.Any(o => o.Position == pos && o.Kind != SkillKeys.ObstacleKindThDTuongCoc))
+            return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED", "Cannot place Rào on an occupied cell.");
 
         // --- Build state changes ---
         var next = ctx.State.Clone();
         var obstacleId = Guid.NewGuid();
-        // Duration = 1 round = 1 creator turn. RemainingLifetime = 1.
+        // The turn that creates Rào counts as the first of four turns.
         next.Obstacles.Add(new ObstacleState(obstacleId, pos, SkillKeys.ObstacleKindRao)
         {
-            RemainingLifetime = 1
+            RemainingLifetime = 4
         });
         // Track placer for TurnLifecycle lifetime decrement.
         next.ObstacleMetadata[obstacleId] = new ObstacleMetadata { Placer = ctx.ActorSide };

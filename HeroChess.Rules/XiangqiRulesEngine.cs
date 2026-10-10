@@ -53,30 +53,6 @@ public sealed class XiangqiRulesEngine
         columnX == 4 || columnX == 5 || columnX == 6;
 
     /// <summary>
-    /// Resolves the effective movement handler key for hero-specific skills.
-    ///
-    /// Routing rules:
-    /// - Quang Trung (MovementKey = "general.orthogonal_range_3"):
-    ///     cooldown ready (cooldownReady == 1) → "quang_trung.hoanh_soc" (up to 9 ortho)
-    ///     otherwise → "general.orthogonal_range_3" (up to 3 ortho, no river crossing)
-    /// - Phạm Ngũ Lão (MovementKey = "rook.hoanh_soc"):
-    ///     always uses "rook.hoanh_soc" (standard + pass-through via TraitState)
-    /// - All other handlers: use the piece's MovementImplementationKey unchanged.
-    /// </summary>
-    private static string ResolveEffectiveHandlerKey(GameState state, PieceState piece)
-    {
-        var key = piece.MovementImplementationKey;
-        if (key == "general.orthogonal_range_3")
-        {
-            // Quang Trung hero: check cooldown-ready state.
-            var ready = piece.TraitState.TryGetValue(SkillKeys.QuangTrungCooldownKey, out var v)
-                && v == 1;
-            return ready ? SkillKeys.QuangTrungHoanhSoc : key;
-        }
-        return key!;
-    }
-
-    /// <summary>
     /// Checks whether a river-crossing move is blocked by an Active river-blocking effect
     /// created by the opponent of the given piece.
     ///
@@ -231,7 +207,13 @@ public sealed class XiangqiRulesEngine
             foreach (var destination in GeneratePseudoDestinations(state, piece, attacksOnly: false))
             {
                 var target = PieceAt(state, destination);
-                if (target?.Side == actor || target?.Class == PieceClass.General) continue;
+                if (target?.Side == actor || target?.Class == PieceClass.General ||
+                    target?.Effects.Any(e => e.Code == SkillKeys.ShieldEffect && e.RemainingTurns > 0) == true) continue;
+                if (state.Obstacles.Any(o => o.Position == destination &&
+                    RulesGeometry.IsBlockingObstacle(o) &&
+                    (o.Kind != SkillKeys.ObstacleKindRao &&
+                     !(o.Kind == SkillKeys.ObstacleKindThanh &&
+                       (piece.Class == PieceClass.Cannon || piece.MovementImplementationKey == SkillKeys.LyThuongKietXe))))) continue;
                 var candidate = MoveUnchecked(state, piece.PieceId, destination, runHandler: false);
                 if (!IsInCheck(candidate, actor))
                     legal.Add(new(piece.PieceId, piece.Position!.Value, destination, target?.PieceId));
@@ -240,7 +222,41 @@ public sealed class XiangqiRulesEngine
         return legal;
     }
 
-    // ApplyMove: Chỉ nhận nước trong legal list; clone, apply, tăng turn/version/counter, reset AFK và xét đối thủ hết legal moves.
+    public IReadOnlyList<LegalMove> GenerateQuangTrungSpecialMoves(GameState state, Guid pieceId)
+    {
+        var piece = state.Pieces.FirstOrDefault(p => p.PieceId == pieceId && p.Side == state.SideToMove && IsAlive(p) &&
+            IsQuangTrung(p));
+        if (state.Result is not null || piece is null ||
+            piece.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownKey) != 1 ||
+            piece.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownRemainingKey) is > 0 ||
+            !_handlers.TryGet(SkillKeys.QuangTrungSpecialMove, out var handler)) return Array.Empty<LegalMove>();
+        var result = new List<LegalMove>();
+        foreach (var to in handler.GenerateDestinations(state, piece))
+        {
+            var target = PieceAt(state, to);
+            if (target?.Side == piece.Side || target?.Class == PieceClass.General ||
+                target?.Effects.Any(e => e.Code == SkillKeys.ShieldEffect && e.RemainingTurns > 0) == true ||
+                state.Obstacles.Any(o => o.Position == to && RulesGeometry.IsBlockingObstacle(o)) ||
+                IsBlockedByActiveEffect(state, piece, piece.Position!.Value, to, attacksOnly: false)) continue;
+            var candidate = MoveUnchecked(state, pieceId, to, runHandler: false);
+            if (!IsInCheck(candidate, piece.Side))
+                result.Add(new LegalMove(pieceId, piece.Position.Value, to, target?.PieceId));
+        }
+        return result;
+    }
+
+    public ApplyMoveResult ApplyHeroSpecialMove(GameState state, MoveAction action)
+    {
+        if (!GenerateQuangTrungSpecialMoves(state, action.PieceId).Any(m => m.To == action.To))
+            return ApplyMoveResult.Failure(state, "ILLEGAL_HERO_MOVE", "The selected hero skill destination is not legal.");
+        var next = MoveUnchecked(state, action.PieceId, action.To, runHandler: true);
+        var piece = next.Pieces.Single(p => p.PieceId == action.PieceId);
+        piece.TraitState[SkillKeys.QuangTrungCooldownKey] = 0;
+        piece.TraitState[SkillKeys.QuangTrungCooldownRemainingKey] = SkillKeys.QuangTrungCooldownTurns;
+        return CompleteMove(state, next);
+    }
+
+    // ApplyMove: Chỉ nhận nước trong legal list; kết thúc do hết hành động xét sau lifecycle ở MatchCommandService.
     public ApplyMoveResult ApplyMove(GameState state, MoveAction action)
     {
         if (state.Result is not null)
@@ -251,17 +267,24 @@ public sealed class XiangqiRulesEngine
             return ApplyMoveResult.Failure(state, "ILLEGAL_MOVE", "The requested move is not legal in the current state.");
 
         var next = MoveUnchecked(state, action.PieceId, action.To, runHandler: true);
+        return CompleteMove(state, next);
+    }
+
+    private ApplyMoveResult CompleteMove(GameState state, GameState next)
+    {
         next.Version++;
         next.TurnIndex++;
         next.CountedActions++;
         next.ConsecutiveTimeouts[state.SideToMove] = 0;
         next.SideToMove = Opposite(state.SideToMove);
 
-        if (GenerateLegalActions(next).Count == 0)
+        if (!next.Pieces.Any(p => p.Side == state.SideToMove && p.Class == PieceClass.General && IsAlive(p)))
         {
-            next.Result = state.SideToMove == Side.Red ? "red_win" : "black_win";
-            next.EndReason = IsInCheck(next, next.SideToMove) ? "checkmate" : "no_legal_actions";
+            next.Result = state.SideToMove == Side.Red ? "black_win" : "red_win";
+            next.EndReason = "river_stake";
+            return ApplyMoveResult.Success(next);
         }
+
         return ApplyMoveResult.Success(next);
     }
 
@@ -274,6 +297,7 @@ public sealed class XiangqiRulesEngine
     {
         var general = state.Pieces.FirstOrDefault(x => x.Side == side && x.Class == PieceClass.General && IsAlive(x));
         if (general?.Position is not { } generalPosition) return true;
+        if (general.Effects.Any(e => e.Code == SkillKeys.ShieldEffect && e.RemainingTurns > 0)) return false;
 
         var otherGeneral = state.Pieces.FirstOrDefault(x => x.Side != side && x.Class == PieceClass.General && IsAlive(x));
         if (otherGeneral?.Position is { } otherPosition && otherPosition.X == generalPosition.X &&
@@ -281,7 +305,13 @@ public sealed class XiangqiRulesEngine
 
         return state.Pieces
             .Where(x => x.Side != side && IsAlive(x))
-            .Any(x => GeneratePseudoDestinations(state, x, attacksOnly: true).Contains(generalPosition));
+            .Any(x => GeneratePseudoDestinations(state, x, attacksOnly: true).Contains(generalPosition) ||
+                (IsQuangTrung(x) &&
+                 x.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownKey) == 1 &&
+                 x.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownRemainingKey) is not > 0 &&
+                 _handlers.TryGet(SkillKeys.QuangTrungSpecialMove, out var special) &&
+                 special.GenerateDestinations(state, x).Contains(generalPosition) &&
+                 !IsBlockedByActiveEffect(state, x, x.Position!.Value, generalPosition, attacksOnly: true)));
     }
 
     // GeneratePseudoDestinations: Sinh đích theo class/handler trước khi lọc an toàn Tướng; tham số attacksOnly hiện chưa được tách xử lý trong thân hàm.
@@ -293,7 +323,7 @@ public sealed class XiangqiRulesEngine
         if (piece.MovementImplementationKey is not null)
         {
             // Step 5 Hero Skill routing: resolve the effective handler key for hero-specific skills.
-            var effectiveKey = ResolveEffectiveHandlerKey(state, piece);
+            var effectiveKey = piece.MovementImplementationKey;
             if (_handlers.TryGet(effectiveKey, out var custom))
             {
                 foreach (var point in custom.GenerateDestinations(state, piece))
@@ -422,12 +452,17 @@ public sealed class XiangqiRulesEngine
                 var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
                 if (!to.IsOnBoard) break;
                 var target = PieceAt(state, to);
-                var obstacle = state.Obstacles.Any(x => x.Position == to);
+                var obstacle = state.Obstacles.Any(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x));
                 var occupied = target is not null || obstacle;
 
                 if (!cannon)
                 {
-                    if (obstacle) break;
+                    if (obstacle)
+                    {
+                        if (state.Obstacles.Any(x => x.Position == to && x.Kind == SkillKeys.ObstacleKindRao))
+                            yield return to;
+                        break;
+                    }
                     if (target is null) yield return to;
                     else { yield return to; break; }
                     continue;
@@ -436,11 +471,17 @@ public sealed class XiangqiRulesEngine
                 if (!screened)
                 {
                     if (!occupied) yield return to;
+                    else if (state.Obstacles.Any(x => x.Position == to && x.Kind == SkillKeys.ObstacleKindThanh))
+                    {
+                        yield return to;
+                        break;
+                    }
                     else screened = true;
                 }
                 else if (occupied)
                 {
-                    if (target is not null) yield return to;
+                    if (target is not null || state.Obstacles.Any(x => x.Position == to && x.Kind is SkillKeys.ObstacleKindThanh or SkillKeys.ObstacleKindRao))
+                        yield return to;
                     break;
                 }
             }
@@ -458,68 +499,34 @@ public sealed class XiangqiRulesEngine
         // Resolve effective handler key for all checks below.
         var effectiveKey = piece.MovementImplementationKey;
 
-        // Step 6 — Lý Thường Kiệt Pháo destroys Thành without moving onto it.
-        // Two cases:
-        // 1. LKT Pháo captures a piece or moves orthogonally — any Thành along the path is destroyed.
-        //    (Thành is not a screen, so it can be in the middle of the path or at the destination.)
-        // 2. LKT Pháo targets a Thành directly (to=Thành position) — destroy it in place, no move.
-        var lktPhaoDestroyedThanh = false;
-        if (effectiveKey == SkillKeys.LyThuongKietPhao)
+        // Lý Thường Kiệt Pháo destroys the Thành at its destination and moves into that square.
+        var destroyedObstacle = next.Obstacles.FirstOrDefault(o => o.Position == to &&
+            (o.Kind == SkillKeys.ObstacleKindRao ||
+             (o.Kind == SkillKeys.ObstacleKindThanh &&
+              (piece.Class == PieceClass.Cannon || piece.MovementImplementationKey == SkillKeys.LyThuongKietXe))));
+        if (destroyedObstacle is not null)
         {
-            var dx = Math.Sign(to.X - from.X);
-            var dy = Math.Sign(to.Y - from.Y);
-            // Only orthogonal moves
-            if ((dx == 0) != (dy == 0))
-            {
-                // Case 1: destroy any Thành along the path between from and to (intermediate cells).
-                // This fires whether or not we are capturing a piece.
-                var x = from.X + dx;
-                var y = from.Y + dy;
-                while (x != to.X || y != to.Y)
-                {
-                    var pos = new BoardPoint(x, y);
-                    var thanhIdx = next.Obstacles.FindIndex(o =>
-                        o.Position == pos && o.Kind == SkillKeys.ObstacleKindThanh);
-                    if (thanhIdx >= 0)
-                    {
-                        next.Obstacles.RemoveAt(thanhIdx);
-                        lktPhaoDestroyedThanh = true;
-                    }
-                    x += dx;
-                    y += dy;
-                }
-
-                // Case 2: if the target cell itself is a Thành obstacle, destroy it in place.
-                // The piece does NOT move onto the Thành's square.
-                var targetThanhIdx = next.Obstacles.FindIndex(o =>
-                    o.Position == to && o.Kind == SkillKeys.ObstacleKindThanh);
-                if (targetThanhIdx >= 0)
-                {
-                    next.Obstacles.RemoveAt(targetThanhIdx);
-                    lktPhaoDestroyedThanh = true;
-                    // Do NOT update piece.Position — cannon stays at 'from'.
-                    // Skip normal capture logic and the piece-position update below.
-                    if (runHandler)
-                    {
-                        if (_handlers.TryGet(effectiveKey, out var handler))
-                            handler.AfterMove(piece, from, to);
-                        var didUsePassThrough = handler?.DidUsePassThrough(state, piece, from, to) == true;
-                        if (didUsePassThrough)
-                            piece.TraitState.Remove(SkillKeys.HoanhSocChargedKey);
-                    }
-                    return next;
-                }
-            }
+            next.Obstacles.Remove(destroyedObstacle);
+            next.ObstacleMetadata.Remove(destroyedObstacle.ObstacleId);
         }
 
         // Apply the move: update piece position and handle normal piece capture.
-        // (LKT Pháo Thành destruction is NOT a piece capture.)
-        if (captured is not null && !lktPhaoDestroyedThanh)
+        if (captured is not null)
         {
             captured.Position = null;
             captured.Status = PieceStatus.Captured;
         }
         piece.Position = to;
+
+        if (runHandler && !piece.Effects.Any(e => e.Code == SkillKeys.ShieldEffect && e.RemainingTurns > 0) &&
+            next.Obstacles.Any(o => o.Position == to && o.Kind == SkillKeys.ObstacleKindThDTuongCoc &&
+                next.ObstacleMetadata.TryGetValue(o.ObstacleId, out var owner) && owner.Placer != piece.Side))
+        {
+            piece.Position = null;
+            piece.Status = PieceStatus.Captured;
+        }
+
+        if (piece.Status == PieceStatus.Captured) return next;
 
         if (runHandler)
         {
@@ -528,36 +535,25 @@ public sealed class XiangqiRulesEngine
             if (_handlers.TryGet(effectiveKey, out var handler))
                 handler.AfterMove(piece, from, to);
 
-            // Step 6 — Phạm Ngũ Lão hoành sóc charge consumption:
-            // Consume charge ONLY if the handler confirms this move used pass-through.
-            // AfterMove no longer clears charge unconditionally.
-            // Call DidUsePassThrough ONCE and cache the result to avoid double-evaluation.
-            var didUsePassThrough = handler?.DidUsePassThrough(state, piece, from, to) == true;
-            if (didUsePassThrough)
+            // Hoành Sóc applies to the next move by this piece, whether or not it crosses an ally.
+            if (effectiveKey == SkillKeys.HoanhSoc)
                 piece.TraitState.Remove(SkillKeys.HoanhSocChargedKey);
 
-            // Step 5 Hero Skill — grant hoành sóc charge after successful BASIC capture by Phạm Ngũ Lão.
-            // "Basic/Normal capture" = NOT a pass-through capture.
-            // If the capture used pass-through (DidUsePassThrough above), the charge was consumed
-            // and we skip the recharge so the hero doesn't double-dip.
-            if (captured is not null && !didUsePassThrough)
-                GrantHoanhSocChargeAfterCapture(next, piece);
+            if (captured is not null)
+                GrantHoanhSocChargeAfterCapture(piece);
 
-            // Step 5 Hero Skill — Quang Trung cooldown consumption.
-            ConsumeQuangTrungCooldownIfUsed(next, piece);
         }
 
         return next;
     }
 
     /// <summary>
-    /// After a successful BASIC capture by Phạm Ngũ Lão, grants the hoành sóc charge.
+    /// After a successful capture by Phạm Ngũ Lão, grants the hoành sóc charge.
     /// The charge is stored in TraitState["hoanhSocCharged"] = 1.
-    /// This is a ONE-TIME charge: the charge is granted on basic capture and consumed on
-    /// the next pass-through movement.
-    /// Charge does NOT stack — if already charged, do not overwrite with another grant.
+    /// This is a ONE-MOVE charge, consumed by the next move of this piece.
+    /// Repeated captures refresh the single-use charge; it never stacks.
     /// </summary>
-    private static void GrantHoanhSocChargeAfterCapture(GameState state, PieceState piece)
+    private static void GrantHoanhSocChargeAfterCapture(PieceState piece)
     {
         // Only Phạm Ngũ Lão (rook.hoanh_soc) gets the charge.
         if (piece.MovementImplementationKey != SkillKeys.HoanhSoc) return;
@@ -566,33 +562,10 @@ public sealed class XiangqiRulesEngine
         piece.TraitState[SkillKeys.HoanhSocChargedKey] = 1;
     }
 
-    /// <summary>
-    /// After a successful move by Quang Trung (general.orthogonal_range_3), if the move
-    /// used the cooldown-ready handler (quang_trung.hoanh_soc), the cooldown is consumed.
-    ///
-    /// Consumption rule:
-    /// - If cooldownReady == 1 AND the effective handler was quang_trung.hoanh_soc,
-    ///   set cooldownReady = 0 and start cooldown on Quang Trung's team skill.
-    /// - A failed/illegal move never calls MoveUnchecked with runHandler=true,
-    ///   so no cooldown is consumed for a rejected move.
-    /// </summary>
-    private static void ConsumeQuangTrungCooldownIfUsed(GameState state, PieceState piece)
-    {
-        if (piece.MovementImplementationKey != "general.orthogonal_range_3") return;
-        if (!piece.TraitState.TryGetValue(SkillKeys.QuangTrungCooldownKey, out var v) || v != 1) return;
-
-        // The move used the cooldown-ready handler — consume it.
-        piece.TraitState[SkillKeys.QuangTrungCooldownKey] = 0;
-
-        // Start cooldown on all team skills that belong to this hero.
-        // We rebuild the list with the new cooldown value.
-        if (state.SkillStates.TryGetValue(piece.Side, out var skills))
-        {
-            state.SkillStates[piece.Side] = skills
-                .Select(s => s with { CooldownRemaining = SkillKeys.QuangTrungCooldownTurns })
-                .ToList();
-        }
-    }
+    private static bool IsQuangTrung(PieceState piece) => piece.Class == PieceClass.General &&
+        (piece.TraitImplementationKey == SkillKeys.QuangTrungSpecialMove ||
+         piece.TraitImplementationKey == "general.orthogonal_range_3" ||
+         piece.MovementImplementationKey == "general.orthogonal_range_3");
 
     // CountBlockers: Đếm vật cản giữa hai tọa độ thẳng hàng; dùng kiểm tra hai Tướng đối mặt.
     private static int CountBlockers(GameState state, BoardPoint from, BoardPoint to)

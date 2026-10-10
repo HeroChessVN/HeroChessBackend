@@ -34,7 +34,7 @@ Các mục T01–T14 bên dưới ghi lại kết quả triển khai trước re
 | T07 | Web test cùng origin | implemented-smoke | `wwwroot` có auth/catalog/lineup/queue/selection/board 9×10/legal targets/log; browser smoke thủ công chưa tự động hóa |
 | T08 | Deadline, timeout, reconnect và startup recovery | implemented-tested | TimeProvider inject được; test trước/đúng/sau deadline không chờ 90 giây; recovery hủy match dang dở bằng `server_restart` |
 | T09 | Result/action limit, RatingPolicy/RewardPolicy và settlement | implemented-tested | Elo dùng giá trị trước trận; lock UUID order; hai retry settlement không cộng coin/Elo lần hai |
-| T10 | History/replay snapshot | implemented-tested | Actor-only, terminal-only, cursor/sequence pagination; xóa source lineup sau start không ảnh hưởng replay |
+| T10 | History/replay snapshot | implemented-tested | Actor-only, xem action sau khi trận bắt đầu, cursor/sequence pagination; xóa source lineup sau start không ảnh hưởng replay |
 | T11 | Bot deterministic và append-only undo | implemented-tested | Bot dùng legal generator + pipeline chung; undo tăng version và khôi phục board/trait state; ranked undo bị từ chối |
 | T12 | Shop hero, idempotency, admin price/audit | implemented-tested | Concurrent retry chỉ trừ 100 coin một lần; free hero không có ledger 0; disabled/insufficient/owned/key conflict; player 403 và admin audit PASS |
 | T13 | Ba special elephant và điểm mở rộng hero | implemented-tested | Development overlay bật/grant ba hero; 16 Rules tests gồm JSON round-trip; undo integration giữ `lastMoveDistance`; có `AddingHeroLogic.md` |
@@ -86,7 +86,7 @@ Các mục T01–T14 bên dưới ghi lại kết quả triển khai trước re
 - Startup recovery cancel `selecting`/`active`; active append cancel snapshot, selecting không tạo giả start sequence 0. Terminal chưa settle được retry idempotent.
 - Action limit lấy từ frozen ruleset snapshot. Đến giới hạn, checkmate/no-legal đã được ưu tiên; nếu chưa kết thúc thì so SP quân còn sống.
 - Ranked Development reward: thắng 10 coin, hòa 5, thua 0; Elo K=32. Bot/cancel không đổi coin/Elo/stats.
-- Replay đọc trực tiếp `state_after`, chỉ participant của trận terminal được xem. Test xóa lineup nguồn sau start vẫn replay đủ sequence.
+- Replay đọc trực tiếp `state_after`, chỉ participant được xem từ lúc trận bắt đầu. Test xóa lineup nguồn sau start vẫn replay đủ sequence.
 - Bot có budget 250 ms, ưu tiên captured SP rồi tie-break piece/coordinate. Undo chỉ bot active, append event mới, cấp deadline mới và không xóa lịch sử.
 - Các fault-injection hiếm như PostgreSQL chết đúng giữa settlement và test browser tự động chưa có trong suite; transaction/recovery path đã được triển khai để retry.
 

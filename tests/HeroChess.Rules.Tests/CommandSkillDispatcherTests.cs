@@ -256,6 +256,23 @@ public sealed class CommandSkillDispatcherTests
     }
 
     [Fact]
+    public void Dispatch_consumes_limited_uses_and_refuses_exhausted_skill()
+    {
+        var state = MakeState(Side.Red);
+        state.SkillStates[Side.Red][0] = state.SkillStates[Side.Red][0] with { UsesRemaining = 1 };
+        var dispatcher = new CommandSkillDispatcher(Registry(new NoopHandler()));
+        var frozen = FrozenSkillSnapshotFactory.FromSkillState(state.SkillStates[Side.Red][0], 2);
+
+        var result = dispatcher.Dispatch(state, Side.Red, frozen, Action(1));
+
+        Assert.True(result.Accepted);
+        Assert.Equal(2, result.State.SkillStates[Side.Red][0].CooldownRemaining);
+        Assert.Equal(0, result.State.SkillStates[Side.Red][0].UsesRemaining);
+        result.State.SkillStates[Side.Red][0] = result.State.SkillStates[Side.Red][0] with { CooldownRemaining = 0 };
+        Assert.Equal("SKILL_USES_EXHAUSTED", dispatcher.Dispatch(result.State, Side.Red, frozen, Action(1)).Error?.Code);
+    }
+
+    [Fact]
     public void Dispatch_does_not_set_cooldown_on_failure()
     {
         var state = MakeState(Side.Red);

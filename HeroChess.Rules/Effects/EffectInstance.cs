@@ -7,7 +7,7 @@ namespace HeroChess.Rules.Effects;
 /// - EffectId, Creator, CreationOrder are set once at creation and never mutated.
 /// - Duration is set once at creation and never mutated.
 /// - RemainingDuration is initialized to Duration and counts down; it is never reset
-///   by control transfer or disabling (U-DUR = A: shared timer, Creator is TimerOwner).
+///   by control transfer or disabling.
 /// - Every position in TargetPositions has an entry in PositionControllers.
 /// - State is Active | Disabled | Ended.
 /// </summary>
@@ -67,8 +67,8 @@ public sealed class EffectInstance
     /// <summary>
     /// Remaining shared duration of this Effect.
     /// Initialized to Duration at creation.
-    /// Counts down at the start of the Creator's each subsequent player turn.
-    /// U-DUR = A: TimerOwner = Creator; RemainingDuration never resets on transfer or disabling.
+    /// Counts down at the start of each subsequent shared board turn.
+    /// RemainingDuration never resets on transfer or disabling.
     /// </summary>
     public int RemainingDuration { get; set; }
 

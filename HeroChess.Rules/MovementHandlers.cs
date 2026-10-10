@@ -11,9 +11,7 @@ public interface IMovementHandler
     void AfterMove(PieceState piece, BoardPoint from, BoardPoint to);
 
     /// <summary>
-    /// Returns true if the movement from→to used the special pass-through mechanic
-    /// of this handler (e.g., Phạm Ngũ Lão's hoành sóc). Used by the engine to
-    /// determine whether to consume a charge after the move.
+    /// Returns true when this handler's pass-through mechanic was used.
     /// </summary>
     bool DidUsePassThrough(GameState state, PieceState piece, BoardPoint from, BoardPoint to);
 }
@@ -32,13 +30,13 @@ public sealed class MovementHandlerRegistry
             ["elephant.alternating_distance"] = new WildElephantHandler(),
             ["elephant.river_crossing"] = new RiverCrossingDiagonalHandler(),
             ["general.king_move"] = new LeLoiHandler(),
-            ["general.orthogonal_range_3"] = new OrthogonalRangeHandler(3),
+            ["general.orthogonal_range_3"] = new OrthogonalRangeHandler(1), // legacy Quang Trung snapshots
             ["general.orthogonal_range_1_no_palace"] = new TranHungDaoGeneralHandler(),
             ["rook.hoanh_soc"] = new HoanhSocHandler(),
-            ["quang_trung.hoanh_soc"] = new QuangTrungHoanhSocHandler(),
-            // Step 6: Lý Thường Kiệt — Xe passive bypasses Thành/Rào/Cọc obstacles.
+            [SkillKeys.QuangTrungSpecialMove] = new OrthogonalRangeHandler(3),
+            // Lý Thường Kiệt Xe can pass or break Thành/Rào.
             [SkillKeys.LyThuongKietXe] = new LyThuongKietXeHandler(),
-            // Step 6: Lý Thường Kiệt — Pháo passive can destroy Thành without moving.
+            // Lý Thường Kiệt Pháo can use Thành/Rào as a screen or break Thành.
             [SkillKeys.LyThuongKietPhao] = new LyThuongKietPhaoHandler(),
         };
         if (additional is not null)
@@ -75,7 +73,7 @@ internal sealed class HomeDiagonalHandler : IMovementHandler
         {
             var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
             if (!to.IsOnBoard || !RulesGeometry.IsHomeSide(piece.Side, to.Y)) break;
-            var obstacle = state.Obstacles.Any(x => x.Position == to);
+            var obstacle = state.Obstacles.Any(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x));
             if (obstacle) break;
             var occupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
             if (occupant is null) yield return to;
@@ -103,7 +101,7 @@ internal sealed class WildElephantHandler : IMovementHandler
         {
             var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
             if (!to.IsOnBoard || !RulesGeometry.IsHomeSide(piece.Side, to.Y)) break;
-            var obstacle = state.Obstacles.Any(x => x.Position == to);
+            var obstacle = state.Obstacles.Any(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x));
             if (obstacle) break;
             var occupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
             if (lastDistance != distance) yield return to;
@@ -132,7 +130,7 @@ internal sealed class RiverCrossingDiagonalHandler : IMovementHandler
             var to1 = new BoardPoint(from.X + dx, from.Y + dy);
             if (to1.IsOnBoard)
             {
-                var eyeObstacle = state.Obstacles.Any(x => x.Position == to1);
+                var eyeObstacle = state.Obstacles.Any(x => x.Position == to1 && RulesGeometry.IsBlockingObstacle(x));
                 var occupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to1);
                 if (eyeObstacle) continue;
                 if (occupant is null) yield return to1;
@@ -143,7 +141,7 @@ internal sealed class RiverCrossingDiagonalHandler : IMovementHandler
             if (to2.IsOnBoard)
             {
                 var eye = new BoardPoint(from.X + dx, from.Y + dy);
-                var eyeObstacle = state.Obstacles.Any(x => x.Position == eye);
+                var eyeObstacle = state.Obstacles.Any(x => x.Position == eye && RulesGeometry.IsBlockingObstacle(x));
                 var eyeOccupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == eye);
                 var destOccupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to2);
                 if (eyeObstacle || eyeOccupant is not null) continue;
@@ -210,7 +208,7 @@ internal sealed class RiverCrossingDiagonalHandler : IMovementHandler
                     var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
                     if (!to.IsOnBoard) break;
                     if (IsRiverCrossing(piece.Side, from, to)) break;
-                    var obstacle = state.Obstacles.Any(x => x.Position == to);
+                    var obstacle = state.Obstacles.Any(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x));
                     if (obstacle) break;
                     var occupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
                     if (occupant is null) yield return to;
@@ -263,45 +261,6 @@ internal sealed class RiverCrossingDiagonalHandler : IMovementHandler
                 : from.Y >= 5 && to.Y <= 4;
     }
 
-// QuangTrungHoanhSocHandler: Quang Trung special movement — orthogonal up to 9 cells, blocked like Rook.
-// Used as the special-movement source for Quang Trung's cooldown-gated ability.
-// This generates all orthogonal destinations up to board edge (9 cells).
-// The actual availability (cooldown ready = special, cooldown active = blocked) is
-// enforced in XiangqiRulesEngine.GeneratePseudoDestinations by checking TraitState.
-// DO NOT call this handler directly — use it only through GeneratePseudoDestinations.
-internal sealed class QuangTrungHoanhSocHandler : IMovementHandler
-{
-    public IEnumerable<BoardPoint> GenerateDestinations(GameState state, PieceState piece)
-    {
-        if (piece.Position is not { } from) yield break;
-        foreach (var (dx, dy) in Orthogonal())
-        {
-            for (var distance = 1; distance <= 9; distance++)
-            {
-                var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
-                if (!to.IsOnBoard) break;
-                if (IsRiverCrossing(piece.Side, from, to)) break;
-                var obstacle = state.Obstacles.Any(x => x.Position == to);
-                if (obstacle) break;
-                var occupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
-                if (occupant is null) yield return to;
-                else { yield return to; break; }
-            }
-        }
-    }
-
-    public void AfterMove(PieceState piece, BoardPoint from, BoardPoint to) { }
-    public bool DidUsePassThrough(GameState state, PieceState piece, BoardPoint from, BoardPoint to) => false;
-
-    private static (int dx, int dy)[] Orthogonal() => new[] { (1, 0), (-1, 0), (0, 1), (0, -1) };
-
-    // IsRiverCrossing: Red home side y<=4 crosses INTO y>=5; Black home side y>=5 crosses INTO y<=4.
-    private static bool IsRiverCrossing(Side side, BoardPoint from, BoardPoint to) =>
-        side == Side.Red
-            ? from.Y <= 4 && to.Y >= 5
-            : from.Y >= 5 && to.Y <= 4;
-}
-
 // HoanhSocHandler: Phạm Ngũ Lão — Rook with "hoành sóc giang sơn".
 // After a successful capture, the next movement may pass through at most one allied piece.
 // Generates standard Rook destinations, plus pass-through destinations when hoanhSocCharged == 1.
@@ -324,8 +283,7 @@ internal sealed class HoanhSocHandler : IMovementHandler
         }
     }
 
-    // AfterMove: No longer clears the charge — charge consumption is handled conditionally
-    // in XiangqiRulesEngine.MoveUnchecked using DidUsePassThrough.
+    // The engine consumes the charge after this piece's next move.
     public void AfterMove(PieceState piece, BoardPoint from, BoardPoint to) { }
 
     /// <summary>
@@ -349,7 +307,7 @@ internal sealed class HoanhSocHandler : IMovementHandler
             {
                 var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
                 if (!to.IsOnBoard) break;
-                var obstacle = state.Obstacles.Any(x => x.Position == to);
+                var obstacle = state.Obstacles.Any(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x));
                 if (obstacle) break;
                 var occupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
                 if (occupant is null) yield return to;
@@ -362,28 +320,26 @@ internal sealed class HoanhSocHandler : IMovementHandler
     {
         foreach (var (dx, dy) in Orthogonal())
         {
-            // passedAlly tracks whether we've already passed an allied piece in this direction.
             var passedAlly = false;
             for (var distance = 1; distance <= 9; distance++)
             {
                 var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
                 if (!to.IsOnBoard) break;
+                if (state.Obstacles.Any(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x))) break;
 
                 var occupant = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
                 if (occupant is null)
                 {
-                    // Empty cell: yield only if we've already passed an ally (pass-through mode).
                     if (passedAlly) yield return to;
                 }
                 else if (occupant.Side == piece.Side)
                 {
-                    // First allied piece: do NOT yield its cell, enter pass-through mode.
+                    if (passedAlly) break;
                     passedAlly = true;
                 }
                 else
                 {
-                    // First enemy piece: yield as capture and stop scanning this direction.
-                    yield return to;
+                    if (passedAlly) yield return to;
                     break;
                 }
             }
@@ -408,23 +364,16 @@ internal sealed class HoanhSocHandler : IMovementHandler
         var stepY = dy != 0 ? dy : 0;
         var distance = Math.Abs(dx != 0 ? to.X - from.X : to.Y - from.Y);
 
-        var foundAlly = false;
-        for (var i = 1; i <= distance; i++)
+        var allyCount = 0;
+        for (var i = 1; i < distance; i++)
         {
             var intermediate = new BoardPoint(from.X + stepX * i, from.Y + stepY * i);
-            if (intermediate == to)
-            {
-                // 'to' itself is on the path; it must be the pass-through cell
-                // (i.e., we must have passed an ally before reaching it)
-                return foundAlly;
-            }
-            // Check if there's an allied piece at this intermediate cell
-            var occupant = state.Pieces.FirstOrDefault(p =>
-                p.Status == PieceStatus.Alive && p.Position == intermediate && p.Side == side);
-            if (occupant != null)
-                foundAlly = true;
+            if (state.Obstacles.Any(x => x.Position == intermediate && RulesGeometry.IsBlockingObstacle(x))) return false;
+            var occupant = state.Pieces.FirstOrDefault(p => p.Status == PieceStatus.Alive && p.Position == intermediate);
+            if (occupant is null) continue;
+            if (occupant.Side != side || ++allyCount > 1) return false;
         }
-        return false;
+        return allyCount == 1;
     }
 
     private static (int dx, int dy)[] Orthogonal() => new[] { (1, 0), (-1, 0), (0, 1), (0, -1) };
@@ -435,10 +384,8 @@ internal sealed class HoanhSocHandler : IMovementHandler
 // =============================================================================
 
 // LyThuongKietXeHandler: Lý Thường Kiệt — Xe.
-// Standard Rook movement PLUS passive: can bypass Thành / Rào / Cọc obstacles.
-// "Bypass" means: if an obstacle of those kinds is between the Xe and an enemy,
-// the Xe can attack the enemy behind the obstacle (without moving through the obstacle's cell).
-// The obstacle cell itself is never entered.
+// Standard Rook movement PLUS passive: Thành/Rào are transparent to this Xe.
+// It may land on an obstacle to destroy it or move past without destroying it.
 // Normal Xiangqi pieces and Rook movement rules are otherwise unchanged.
 internal sealed class LyThuongKietXeHandler : IMovementHandler
 {
@@ -453,23 +400,14 @@ internal sealed class LyThuongKietXeHandler : IMovementHandler
                 var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
                 if (!to.IsOnBoard) break;
 
-                var obstacle = state.Obstacles.FirstOrDefault(x => x.Position == to);
+                var obstacle = state.Obstacles.FirstOrDefault(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x));
                 var target = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
-
-                // Non-Thanh/Rao/Coc obstacle: acts as normal blocker
-                if (obstacle != null && !IsLktBypassableObstacle(obstacle))
-                    break;
-
-                // LKT-bypassable obstacle: check if there's an enemy beyond it
-                if (obstacle != null && IsLktBypassableObstacle(obstacle))
+                if (obstacle is not null)
                 {
-                    var enemyBeyond = LookBeyondObstacle(state, piece, to, dx, dy, obstacle.ObstacleId);
-                    if (enemyBeyond.HasValue)
-                        yield return enemyBeyond.Value;
-                    break;
+                    if (obstacle.Kind is not (SkillKeys.ObstacleKindThanh or SkillKeys.ObstacleKindRao)) break;
+                    yield return to;
+                    continue;
                 }
-
-                // Standard Rook: empty cell → yield
                 if (target == null)
                 {
                     yield return to;
@@ -486,44 +424,13 @@ internal sealed class LyThuongKietXeHandler : IMovementHandler
     public void AfterMove(PieceState piece, BoardPoint from, BoardPoint to) { }
     public bool DidUsePassThrough(GameState state, PieceState piece, BoardPoint from, BoardPoint to) => false;
 
-    private static bool IsLktBypassableObstacle(ObstacleState obs) =>
-        obs.Kind == SkillKeys.ObstacleKindThanh ||
-        obs.Kind == SkillKeys.ObstacleKindRao ||
-        obs.Kind == SkillKeys.ObstacleKindThDTuongCoc ||
-        obs.Kind == "stake"; // existing Vạn Cọc stakes are also bypassable
-
-    /// <summary>Scans past an LKT-bypassable obstacle to find the first enemy piece on the same ray.</summary>
-    private static BoardPoint? LookBeyondObstacle(
-        GameState state, PieceState piece,
-        BoardPoint obstaclePos, int dx, int dy, Guid skipObstacleId)
-    {
-        var x = obstaclePos.X + dx;
-        var y = obstaclePos.Y + dy;
-        for (; x >= 0 && x <= 8 && y >= 0 && y <= 9; x += dx, y += dy)
-        {
-            var pos = new BoardPoint(x, y);
-            // Skip the obstacle we just passed
-            if (state.Obstacles.Any(o => o.Position == pos && o.ObstacleId != skipObstacleId))
-                break; // another non-bypassable obstacle stops
-            var target = state.Pieces.FirstOrDefault(p => p.Status == PieceStatus.Alive && p.Position == pos);
-            if (target != null)
-            {
-                // Enemy → attackable destination (bypass)
-                if (target.Side != piece.Side) return pos;
-                // Allied piece → stops even for LKT Xe
-                break;
-            }
-        }
-        return null;
-    }
-
     private static (int dx, int dy)[] Orthogonal() => new[] { (1, 0), (-1, 0), (0, 1), (0, -1) };
 }
 
 // LyThuongKietPhaoHandler: Lý Thường Kiệt — Pháo.
-// Standard Cannon movement PLUS passive: Thành cannot serve as a cannon screen.
-// LKT Pháo can destroy a Thành without moving to its square (consumes the turn).
-// Rào and Cọc behave as normal for cannon screen logic.
+// Standard Cannon movement PLUS passive: Thành and Rào can serve as cannon screens.
+// LKT Pháo destroys a Thành by moving into its square (consumes the turn).
+// Rào can act as a screen; hidden Cọc is not a physical screen.
 // Normal Xiangqi Cannon rules are otherwise unchanged.
 internal sealed class LyThuongKietPhaoHandler : IMovementHandler
 {
@@ -539,24 +446,22 @@ internal sealed class LyThuongKietPhaoHandler : IMovementHandler
                 var to = new BoardPoint(from.X + dx * distance, from.Y + dy * distance);
                 if (!to.IsOnBoard) break;
 
-                var obstacle = state.Obstacles.FirstOrDefault(x => x.Position == to);
+                var obstacle = state.Obstacles.FirstOrDefault(x => x.Position == to && RulesGeometry.IsBlockingObstacle(x));
                 var target = state.Pieces.FirstOrDefault(x => x.Status == PieceStatus.Alive && x.Position == to);
                 var occupied = target != null || obstacle != null;
 
                 if (!screened)
                 {
                     if (!occupied) yield return to;
-                    else if (obstacle != null && obstacle.Kind == SkillKeys.ObstacleKindThanh) screened = true;
+                    else if (obstacle?.Kind == SkillKeys.ObstacleKindThanh) { yield return to; screened = true; }
                     else screened = true;
                 }
-                else
+                else if (occupied)
                 {
-                    if (occupied)
-                    {
-                        if (target != null && target.Side != piece.Side) yield return to;
-                        break;
-                    }
-                    else yield return to;
+                    if (target?.Side != piece.Side && target is not null ||
+                        obstacle?.Kind is SkillKeys.ObstacleKindThanh or SkillKeys.ObstacleKindRao)
+                        yield return to;
+                    break;
                 }
             }
         }
@@ -572,10 +477,11 @@ internal sealed class LyThuongKietPhaoHandler : IMovementHandler
 // RulesGeometry: Các phép kiểm tra hình học dùng chung.
 internal static class RulesGeometry
 {
+    public static bool IsBlockingObstacle(ObstacleState obstacle) => obstacle.Kind != SkillKeys.ObstacleKindThDTuongCoc;
     // IsHomeSide: Red ở y <= 4, Black ở y >= 5.
     public static bool IsHomeSide(Side side, int y) => side == Side.Red ? y <= 4 : y >= 5;
     // IsBlocked: Ô có quân sống hoặc obstacle thì bị cản.
     public static bool IsBlocked(GameState state, BoardPoint point) =>
         state.Pieces.Any(x => x.Status == PieceStatus.Alive && x.Position == point) ||
-        state.Obstacles.Any(x => x.Position == point);
+        state.Obstacles.Any(x => x.Position == point && IsBlockingObstacle(x));
 }

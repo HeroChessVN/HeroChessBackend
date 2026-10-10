@@ -23,11 +23,12 @@ public static class SkillKeys
 
     // ---- Hero Skills ----
     // Quang Trung cooldown-ready special movement.
-    public const string QuangTrungHoanhSoc = "quang_trung.hoanh_soc";
+    public const string QuangTrungSpecialMove = "quang_trung.special_move";
     // Quang Trung: cooldown starts at this value when cooldown resets.
     public const int QuangTrungCooldownTurns = 3;
     // TraitState key for Quang Trung cooldown-ready indicator.
     public const string QuangTrungCooldownKey = "cooldownReady";
+    public const string QuangTrungCooldownRemainingKey = "quangTrungCooldownRemaining";
 
     // Phạm Ngũ Lão "hoành sóc giang sơn" — charge granted after capture.
     public const string HoanhSoc = "rook.hoanh_soc";
@@ -40,12 +41,15 @@ public static class SkillKeys
 
     /// <summary>Rào — Command Skill: temporary barrier behaving like a Soldier for destruction.</summary>
     public const string Rao = "rao";
+    public const string Khien = "khien";
+    public const string ShieldEffect = "shield";
 
     /// <summary>Trần Hưng Đạo — Tượng Hero Skill: place a Cọc on the river.</summary>
     public const string ThDTuongCoc = "tran_hung_dao_tuong.coc";
+    public const string HeroCooldownRemainingKey = "heroCooldownRemaining";
 
-    /// <summary>Trần Hưng Đạo — Tượng Hero Skill cooldown: 3 turns.</summary>
-    public const int ThDTuongCocCooldownTurns = 3;
+    /// <summary>Trần Hưng Đạo — Tượng Hero Skill cooldown: 5 shared turns.</summary>
+    public const int ThDTuongCocCooldownTurns = 5;
 
     // ---- New Hero Trait Keys (Step 6) ----
     /// <summary>
@@ -55,7 +59,7 @@ public static class SkillKeys
     public const string LyThuongKietXe = "rook.ly_thuong_kiet";
 
     /// <summary>
-    /// Lý Thường Kiệt — Pháo passive: can destroy Thành without moving.
+    /// Lý Thường Kiệt — Pháo passive: can destroy Thành and enter its cell.
     /// Stored as MovementImplementationKey on the piece.
     /// </summary>
     public const string LyThuongKietPhao = "cannon.ly_thuong_kiet";

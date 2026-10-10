@@ -52,7 +52,7 @@ public sealed partial class MatchFlowTests
         var moves = await red.Client.GetFromJsonAsync<LegalMoveDto[]>($"/api/v1/matches/{id}/legal-actions", Json);
         var command = Command(0, moves![0]);
         await SendWs(socket, id, command);
-        Assert.Equal("match.command_accepted", (await Receive(socket)).GetProperty("type").GetString());
+        Assert.Equal("match.changed", (await Receive(socket)).GetProperty("type").GetString());
         using var retrySocket = await Connect(red.Client);
         await SendWs(retrySocket, id, command);
         var ack = (await Receive(retrySocket)).GetProperty("payload");

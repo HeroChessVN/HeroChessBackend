@@ -1,7 +1,6 @@
 // Step 6: Thành — Command Skill.
 // Creates a temporary fortification obstacle on the owning side's half of the board.
-// Duration: 1 round (1 player turn of the creator).
-// Cooldown: 2 rounds (2 player turns of the creator).
+// Duration: 6 shared board turns. Cooldown: 8 shared board turns.
 // Only Cannon (Pháo) can destroy Thành.
 // Thành CANNOT act as a Cannon screen.
 // Thành blocks normal movement.
@@ -16,8 +15,8 @@ namespace HeroChess.Rules.Skills;
 /// Thành is a movement obstacle but CANNOT serve as a cannon screen.
 ///
 /// Rules:
-/// - Duration: 1 round (creator's turn).
-/// - Cooldown: 2 rounds.
+/// - Duration: 6 shared board turns.
+/// - Cooldown: 8 shared board turns.
 /// - Target: a single valid cell on the owner's half of the board.
 /// - Only Cannon can destroy Thành (handled by MoveUnchecked).
 /// - Thành is NOT a valid Cannon screen.
@@ -30,15 +29,14 @@ public sealed class ThanhHandler : ICommandSkillHandler
     public CommandSkillResult Execute(CommandSkillContext ctx)
     {
         // --- Parse target: { "position": { "x": 0, "y": 0 } } ---
-        if (!ctx.Target.TryGetProperty("position", out var posProp) ||
-            !posProp.TryGetProperty("x", out var xProp) ||
-            !posProp.TryGetProperty("y", out var yProp))
+        if (ctx.Target.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !ctx.Target.TryGetProperty("position", out var posProp) || posProp.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !posProp.TryGetProperty("x", out var xProp) || xProp.ValueKind != System.Text.Json.JsonValueKind.Number || !xProp.TryGetInt32(out var x) ||
+            !posProp.TryGetProperty("y", out var yProp) || yProp.ValueKind != System.Text.Json.JsonValueKind.Number || !yProp.TryGetInt32(out var y))
         {
             return CommandSkillResult.Failure(ctx.State, "INVALID_TARGET",
                 "Thành requires a target with a position {x, y}.");
         }
-        var x = xProp.GetInt32();
-        var y = yProp.GetInt32();
         var pos = new BoardPoint(x, y);
 
         if (!pos.IsOnBoard)
@@ -54,14 +52,16 @@ public sealed class ThanhHandler : ICommandSkillHandler
         if (ctx.State.Pieces.Any(p => p.Status == PieceStatus.Alive && p.Position == pos))
             return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED",
                 "Cannot place Thành on a cell occupied by a piece.");
+        if (ctx.State.Obstacles.Any(o => o.Position == pos && o.Kind != SkillKeys.ObstacleKindThDTuongCoc))
+            return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED", "Cannot place Thành on an occupied cell.");
 
         // --- Build state changes ---
         var next = ctx.State.Clone();
         var obstacleId = Guid.NewGuid();
-        // Duration = 1 round = 1 creator turn. RemainingLifetime = 1.
+        // The turn that creates Thành counts as the first of six turns.
         next.Obstacles.Add(new ObstacleState(obstacleId, pos, SkillKeys.ObstacleKindThanh)
         {
-            RemainingLifetime = 1
+            RemainingLifetime = 6
         });
         // Track placer for TurnLifecycle lifetime decrement.
         next.ObstacleMetadata[obstacleId] = new ObstacleMetadata { Placer = ctx.ActorSide };

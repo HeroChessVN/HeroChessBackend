@@ -21,6 +21,32 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
     public MatchFlowTests(HeroChessFactory factory) => _factory = factory;
 
     [Fact]
+    public async Task Team_skill_commits_one_action_and_ends_turn()
+    {
+        var human = await CreatePlayerWithLineup();
+        var catalog = (await human.Client.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
+        var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == "thanh");
+        var otherSkills = human.Lineup.Skills.Skip(1).ToArray();
+        var updated = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
+            new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
+                [new LineupSkillInput(1, skill.Id), .. otherSkills], human.Lineup.Revision), HttpMethod.Put);
+        var ticket = await Post<MatchmakingTicketDto>(human.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("bot"));
+        var matchId = ticket.MatchId!.Value;
+        await Post<MatchSelectionDto>(human.Client, $"/api/v1/matches/{matchId}/selection", new SelectLineupRequest(updated.Id, updated.Revision), HttpMethod.Put);
+        await human.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null);
+        var action = JsonSerializer.SerializeToElement(new { type = "team_skill", slot = 1, target = new { position = new { x = 4, y = 2 } } }, Json);
+        var request = new MatchCommandRequest(Guid.NewGuid(), 0, action);
+
+        var accepted = await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", request);
+
+        Assert.Equal(1, accepted.SequenceNo);
+        Assert.Equal(1, accepted.Snapshot.CountedActions);
+        Assert.Equal("black", accepted.Snapshot.SideToMove);
+        Assert.Equal(7, accepted.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
+        Assert.True((await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", request)).Duplicate);
+    }
+
+    [Fact]
     // Ranked_match_serializes_competing_commands_broadcasts_and_replays: Kiểm tra hai command cạnh tranh, phát socket, log và replay của ranked.
     public async Task Ranked_match_serializes_competing_commands_broadcasts_and_replays()
     {
@@ -38,11 +64,15 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var beforeReveal = await red.Client.GetFromJsonAsync<MatchSelectionDto>($"/api/v1/matches/{matchId}/selection", Json);
         Assert.All(beforeReveal!.Sides, side => Assert.Equal(3, side.PublicSkillIds.Count));
         Assert.Null(beforeReveal.Sides.Single(x => x.Side == "black").OwnLineupId);
+        Assert.Equal(HttpStatusCode.Conflict, (await red.Client.GetAsync($"/api/v1/matches/{matchId}/replay")).StatusCode);
         var confirmations = await Task.WhenAll(red.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null), black.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null));
         Assert.All(confirmations, x => Assert.Equal(HttpStatusCode.OK, x.StatusCode));
         Assert.Equal(HttpStatusCode.NoContent, (await red.Client.DeleteAsync($"/api/v1/lineups/{red.Lineup.Id}?expectedRevision={red.Lineup.Revision}")).StatusCode);
         var observer = await CreatePlayerWithLineup();
         Assert.Equal(HttpStatusCode.NotFound, (await observer.Client.GetAsync($"/api/v1/matches/{matchId}/state")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await observer.Client.GetAsync($"/api/v1/matches/{matchId}/replay")).StatusCode);
+        var activeHistory = await red.Client.GetFromJsonAsync<ReplayPageDto>($"/api/v1/matches/{matchId}/replay", Json);
+        Assert.Equal(0, Assert.Single(activeHistory!.Entries).SequenceNo);
 
         using var redSocket = await Connect(red.Client);
         using var blackSocket = await Connect(black.Client);
@@ -63,8 +93,8 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         Assert.Single(attempts, x => x.StatusCode == HttpStatusCode.Conflict || x.StatusCode == HttpStatusCode.UnprocessableEntity);
         var acceptedIndex = Array.FindIndex(attempts, x => x.StatusCode == HttpStatusCode.OK);
         var acceptedRequest = acceptedIndex == 0 ? first : second;
-        Assert.Equal("match.command_accepted", (await Receive(redSocket)).GetProperty("type").GetString());
-        Assert.Equal("match.command_accepted", (await Receive(blackSocket)).GetProperty("type").GetString());
+        Assert.Equal("match.changed", (await Receive(redSocket)).GetProperty("type").GetString());
+        Assert.Equal("match.changed", (await Receive(blackSocket)).GetProperty("type").GetString());
 
         var retry = await Post<MatchCommandResultDto>(red.Client, $"/api/v1/matches/{matchId}/commands", acceptedRequest);
         Assert.True(retry.Duplicate);

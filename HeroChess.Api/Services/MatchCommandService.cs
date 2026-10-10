@@ -47,7 +47,9 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     CountedActions = historical.CountedActions, TurnDeadlineAt = currentState.Version == previous.SequenceNo ? currentState.TurnDeadlineAt : null,
                     StateSchemaVersion = previous.StateSchemaVersion, State = GameJson.Document(historical), UpdatedAt = previous.CommittedAt };
                 await transaction.CommitAsync(ct);
-                return new(matchId, request.CommandId, previous.SequenceNo, true, previous.ResolvedEvents.RootElement.Clone(), MatchReadService.ToDto(currentMatch, previousState, clock.GetUtcNow()));
+                var viewer = participant.Side == "red" ? Side.Red : Side.Black;
+                return new(matchId, request.CommandId, previous.SequenceNo, true,
+                    MatchStateProjection.Events(previous.ResolvedEvents.RootElement, viewer), MatchReadService.ToDto(currentMatch, previousState, clock.GetUtcNow(), viewer));
             }
             var match = await db.Matches.FromSqlInterpolated($"SELECT * FROM hero_chess.game_match WHERE id={matchId} FOR UPDATE").SingleAsync(ct);
             var row = await db.MatchStates.FromSqlInterpolated($"SELECT * FROM hero_chess.match_state WHERE match_id={matchId} FOR UPDATE").SingleOrDefaultAsync(ct)
@@ -112,7 +114,6 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     var applied = new XiangqiRulesEngine().ApplyMove(state, new MoveAction(piece.GetGuid(), new BoardPoint(x.GetInt32(), y.GetInt32())));
                     if (!applied.Accepted) throw new ApiException(422, applied.Error!.Code, applied.Error.Message);
                     next = applied.State; events = new object[] { new { type = "piece.moved", pieceId = piece.GetGuid(), to = new { x = x.GetInt32(), y = y.GetInt32() } } };
-                    ApplyActionLimit(match, next);
                     break;
                 case "resign":
                     next = state.Clone(); next.Version++; next.Result = actorSide == Side.Red ? "black_win" : "red_win"; next.EndReason = "resign";
@@ -129,7 +130,38 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     next = StateSchemaUpgrade.UpgradeToCurrent(next);
                     next.Version = row.Version + 1; next.Result = null; next.EndReason = null;
                     events = new object[] { new { type = "match.undone", targetSequence = target } }; break;
-                case "hero_active": throw new ApiException(422, "SKILL_NOT_IMPLEMENTED", "Hero active skills are not implemented.");
+                case "hero_active":
+                    if (state.SideToMove != actorSide) throw new ApiException(422, "WRONG_TURN", "It is not this participant's turn.");
+                    if (!request.Action.TryGetProperty("pieceId", out var heroPieceId) || !heroPieceId.TryGetGuid(out var activePieceId) ||
+                        !request.Action.TryGetProperty("skillCode", out var skillCode) ||
+                        !request.Action.TryGetProperty("target", out var heroTarget))
+                        throw new ApiException(400, "INVALID_ACTION", "hero_active requires pieceId, skillCode and target.");
+                    if (skillCode.GetString() == SkillKeys.QuangTrungSpecialMove)
+                    {
+                        if (!heroTarget.TryGetProperty("to", out var destination) || destination.ValueKind != JsonValueKind.Object ||
+                            !destination.TryGetProperty("x", out var heroX) || heroX.ValueKind != JsonValueKind.Number || !heroX.TryGetInt32(out var hx) ||
+                            !destination.TryGetProperty("y", out var heroY) || heroY.ValueKind != JsonValueKind.Number || !heroY.TryGetInt32(out var hy) ||
+                            hx is < 0 or > 8 || hy is < 0 or > 9)
+                            throw new ApiException(400, "INVALID_ACTION", "Quang Trung skill requires target.to.x/to.y.");
+                        var special = new XiangqiRulesEngine().ApplyHeroSpecialMove(state, new MoveAction(activePieceId, new BoardPoint(hx, hy)));
+                        if (!special.Accepted) throw new ApiException(422, special.Error!.Code, special.Error.Message);
+                        next = special.State;
+                        events = new object[] { new { type = "hero_skill.activated", code = SkillKeys.QuangTrungSpecialMove, pieceId = activePieceId },
+                            new { type = "piece.moved", pieceId = activePieceId, to = new { x = hx, y = hy } } };
+                        break;
+                    }
+                    if (skillCode.GetString() != SkillKeys.ThDTuongCoc)
+                        throw new ApiException(422, "HERO_SKILL_NOT_AVAILABLE", "The selected hero skill is not available.");
+                    var heroResult = BachDangGiang.Execute(state, actorSide, activePieceId, heroTarget);
+                    if (!heroResult.Accepted) throw new ApiException(422, heroResult.Error!.Code, heroResult.Error.Message);
+                    next = heroResult.State;
+                    if (new XiangqiRulesEngine().IsInCheck(next, actorSide))
+                        throw new ApiException(422, "KING_IN_CHECK", "The skill must resolve check before ending the turn.");
+                    next.Version++; next.TurnIndex++; next.CountedActions++;
+                    next.ConsecutiveTimeouts[actorSide] = 0;
+                    next.SideToMove = actorSide == Side.Red ? Side.Black : Side.Red;
+                    events = heroResult.Events.ToArray();
+                    break;
                 case "team_skill":
                     // Extract slot from action (required field).
                     if (!request.Action.TryGetProperty("slot", out var slotProp) || !slotProp.TryGetInt32(out var slotNo))
@@ -140,11 +172,22 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                         : null;
                     if (actorSkill == null)
                         throw new ApiException(422, "SKILL_NOT_IN_LINEUP", $"No skill found in slot {slotNo} for this lineup.");
-                    var frozen = FrozenSkillSnapshotFactory.FromSkillState(actorSkill);
+                    var lineup = GameJson.Read<FrozenLineup>(participant.LineupSnapshot);
+                    var lineupSkill = lineup.Skills.FirstOrDefault(s => s.SlotNo == slotNo && s.SkillId == actorSkill.SkillId)
+                        ?? throw new ApiException(422, "SKILL_NOT_IN_LINEUP", "The skill is not in this match's lineup.");
+                    var frozen = FrozenSkillSnapshotFactory.FromSkillState(actorSkill, lineupSkill.CooldownTurns);
                     var skillResult = dispatcher.Dispatch(state, actorSide, frozen, request.Action);
                     if (!skillResult.Accepted)
                         throw new ApiException(422, skillResult.Error!.Code, skillResult.Error.Message);
                     next = skillResult.State;
+                    var engine = new XiangqiRulesEngine();
+                    if (engine.IsInCheck(next, actorSide))
+                        throw new ApiException(422, "KING_IN_CHECK", "The skill must resolve check before ending the turn.");
+                    next.Version++;
+                    next.TurnIndex++;
+                    next.CountedActions++;
+                    next.ConsecutiveTimeouts[actorSide] = 0;
+                    next.SideToMove = actorSide == Side.Red ? Side.Black : Side.Red;
                     events = new object[]
                     {
                         new { type = "team_skill.activated", code = frozen.ImplementationKey, slot = slotNo, side = participant.Side }
@@ -153,10 +196,26 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 case "start" or "timeout" or "cancel": throw new ApiException(400, "SERVER_ACTION_ONLY", "This action can only be created by the server.");
                 default: throw new ApiException(400, "INVALID_ACTION", "Unknown match action.");
             }
+            var nextTurnEvents = new List<object>();
+            if (type is "move" or "team_skill" or "hero_active")
+            {
+                // Resolve mate after all turn-start effects and skills.
+                if (next.Result is null && !TurnLifecycle.IsTurnProcessed(next, next.SideToMove, next.TurnIndex))
+                {
+                    var started = TurnLifecycle.Apply(next, next.SideToMove, resolveCreatorCancellation: true);
+                    next = started.State;
+                    TurnLifecycle.MarkTurnProcessed(next, next.SideToMove, next.TurnIndex);
+                    nextTurnEvents.Add(new { type = "turn.started", side = next.SideToMove.ToString().ToLowerInvariant() });
+                    foreach (var e in started.ExpiredEffects)
+                        nextTurnEvents.Add(new { type = "effect.expired", effectId = e.EffectId, code = e.Code });
+                    foreach (var e in started.RemovedStakes)
+                        nextTurnEvents.Add(new { type = "stake.removed", obstacleId = e.ObstacleId, position = new { x = e.Position.X, y = e.Position.Y } });
+                }
+                FinishTurn(match, next);
+            }
             // Phase 3.1: Merge lifecycle events with action events for broadcast.
             // Lifecycle events are prepended so they appear first in the event stream.
-            if (lifecycleEvents.Count > 0)
-                events = lifecycleEvents.Concat(events).ToArray();
+            events = lifecycleEvents.Concat(events).Concat(nextTurnEvents).ToArray();
 
             var now = clock.GetUtcNow();
             var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
@@ -174,11 +233,12 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             // The committed command must finish independently of the caller disconnecting.
             ct = CancellationToken.None;
             if (match.Status == "active") bots.Schedule(matchId, next.Version);
-            var dto = new MatchCommandResultDto(matchId, request.CommandId, log.SequenceNo, false, resolved.RootElement.Clone(), MatchReadService.ToDto(match, row, clock.GetUtcNow()));
-            await hub.BroadcastAsync(matchId, new { type = "match.command_accepted", payload = dto }, ct);
+            var dto = new MatchCommandResultDto(matchId, request.CommandId, log.SequenceNo, false,
+                MatchStateProjection.Events(resolved.RootElement, actorSide), MatchReadService.ToDto(match, row, clock.GetUtcNow(), actorSide));
+            await hub.BroadcastAsync(matchId, new { type = "match.changed", payload = new { matchId, version = next.Version } }, ct);
             if (match.Status == "completed")
             {
-                await hub.BroadcastAsync(matchId, new { type = "match.ended", payload = new { matchId, match.Result, match.EndReason, snapshot = dto.Snapshot } }, ct);
+                await hub.BroadcastAsync(matchId, new { type = "match.ended", payload = new { matchId, match.Result, match.EndReason } }, ct);
                 await TrySettleAsync(matchId);
             }
             return dto;
@@ -244,27 +304,27 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 state.Result = timedOut == Side.Red ? "black_win" : "red_win";
                 state.EndReason = inCheck ? "timeout_in_check" : "afk";
             }
+            if (state.Result is null) FinishTurn(match, state);
             // A direct loss takes priority over SP comparison on action 150.
             ApplyActionLimit(match, state);
             var events = new List<object> { new { type = "turn.timeout", side = timedOut.ToString().ToLowerInvariant(), consecutiveTimeouts = streak } };
-            // Merge lifecycle events so they appear first in the event stream
+            // The next turn starts after the timeout action.
             if (lifecycleEvents.Count > 0)
-                events.InsertRange(0, lifecycleEvents);
+                events.AddRange(lifecycleEvents);
             if (state.Result is not null) CompleteMatch(match, state, now);
             var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
             row.Version = state.Version; row.SideToMove = state.SideToMove.ToString().ToLowerInvariant(); row.TurnIndex = state.TurnIndex; row.CountedActions = state.CountedActions;
-            row.State = GameJson.Document(state); row.TurnDeadlineAt = match.Status == "active" ? now.AddSeconds(rules.TurnSeconds) : null; row.UpdatedAt = now;
+            row.StateSchemaVersion = state.StateSchemaVersion; row.State = GameJson.Document(state); row.TurnDeadlineAt = match.Status == "active" ? now.AddSeconds(rules.TurnSeconds) : null; row.UpdatedAt = now;
             var resolved = GameJson.Document(events);
             db.MatchActions.Add(new MatchAction { Id = Guid.NewGuid(), MatchId = matchId, SequenceNo = state.Version, CommandId = Guid.NewGuid(), Kind = "timeout",
                 RequestPayload = GameJson.Document(new { expectedVersion }), ResolvedEvents = resolved, StateAfter = GameJson.Document(state), StateSchemaVersion = state.StateSchemaVersion, ReceivedAt = receivedAt, CommittedAt = now });
             await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
             ct = CancellationToken.None;
             if (match.Status == "active") bots.Schedule(matchId, state.Version);
-            var dto = MatchReadService.ToDto(match, row, clock.GetUtcNow());
-            await hub.BroadcastAsync(matchId, new { type = "match.command_accepted", payload = new { matchId, sequenceNo = state.Version, resolvedEvents = resolved.RootElement, snapshot = dto } }, ct);
+            await hub.BroadcastAsync(matchId, new { type = "match.changed", payload = new { matchId, version = state.Version } }, ct);
             if (match.Status is "completed" or "cancelled")
             {
-                await hub.BroadcastAsync(matchId, new { type = "match.ended", payload = new { matchId, match.Result, match.EndReason, snapshot = dto } }, ct);
+                await hub.BroadcastAsync(matchId, new { type = "match.ended", payload = new { matchId, match.Result, match.EndReason } }, ct);
                 await TrySettleAsync(matchId);
             }
             return true;
@@ -294,6 +354,10 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
         }
         if (kind.GetString() == "undo" && (!action.TryGetProperty("targetSequence", out var target) ||
             target.ValueKind != JsonValueKind.Number || !target.TryGetInt32(out var sequence) || sequence < 0)) throw Invalid();
+        if (kind.GetString() == "hero_active" &&
+            (!action.TryGetProperty("pieceId", out var hero) || hero.ValueKind != JsonValueKind.String || !hero.TryGetGuid(out _) ||
+             !action.TryGetProperty("skillCode", out var skill) || skill.ValueKind != JsonValueKind.String ||
+             !action.TryGetProperty("target", out var skillTarget) || skillTarget.ValueKind != JsonValueKind.Object)) throw Invalid();
     }
 
     // ApplyActionLimit: Nếu chưa có kết quả trực tiếp và đạt giới hạn, so tổng SP frozen quân còn sống; bằng nhau hòa.
@@ -304,6 +368,65 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
         var red = state.Pieces.Where(x => x.Side == Side.Red && x.Status == PieceStatus.Alive).Sum(x => x.SetupPoints);
         var black = state.Pieces.Where(x => x.Side == Side.Black && x.Status == PieceStatus.Alive).Sum(x => x.SetupPoints);
         state.Result = red == black ? "draw" : red > black ? "red_win" : "black_win"; state.EndReason = "action_limit_sp";
+    }
+    private void FinishTurn(GameMatch match, GameState state)
+    {
+        if (state.Result is not null) return;
+        var engine = new XiangqiRulesEngine();
+        if (engine.GenerateLegalActions(state).Count == 0 && FindLegalSkillAction(state, engine, dispatcher) is null)
+        {
+            state.Result = state.SideToMove == Side.Red ? "black_win" : "red_win";
+            state.EndReason = engine.IsInCheck(state, state.SideToMove) ? "checkmate" : "no_legal_actions";
+        }
+        ApplyActionLimit(match, state);
+    }
+
+    public static JsonElement? FindLegalSkillAction(GameState state, XiangqiRulesEngine engine, CommandSkillDispatcher dispatcher)
+    {
+        var side = state.SideToMove;
+        foreach (var skill in state.SkillStates[side].Where(s => s.CooldownRemaining == 0 && s.UsesRemaining != 0))
+        {
+            IEnumerable<object> targets = skill.ImplementationKey switch
+            {
+                SkillKeys.Thanh or SkillKeys.Rao => Enumerable.Range(0, 9).SelectMany(x => Enumerable.Range(0, 10)
+                    .Select(y => (object)new { position = new { x, y } })),
+                SkillKeys.Khien => state.Pieces.Where(p => p.Side == side && p.Status == PieceStatus.Alive)
+                    .Select(p => (object)new { pieceId = p.PieceId }),
+                SkillKeys.VanCocTranGiang or SkillKeys.BinhLamThuyHien => new object[] { new { paths = new[] { 4, 5, 6 } } },
+                SkillKeys.PhanKyDoatThe or SkillKeys.PhaTranDoatPhong => state.EffectInstances
+                    .Select(e => (object)new { effectId = e.EffectId }),
+                _ => Array.Empty<object>()
+            };
+            foreach (var target in targets)
+            {
+                var action = JsonSerializer.SerializeToElement(new { type = "team_skill", slot = skill.SlotNo, target }, GameJson.Options);
+                var result = dispatcher.Dispatch(state, side, FrozenSkillSnapshotFactory.FromSkillState(skill), action);
+                if (result.Accepted && !engine.IsInCheck(result.State, side)) return action;
+            }
+        }
+        foreach (var hero in state.Pieces.Where(p => p.Side == side && p.Status == PieceStatus.Alive &&
+            p.TraitKind == "active" && p.TraitImplementationKey == SkillKeys.ThDTuongCoc &&
+            p.TraitState.GetValueOrDefault(SkillKeys.HeroCooldownRemainingKey) is not > 0))
+        {
+            for (var x = 0; x < 9; x++)
+            for (var y = 4; y <= 5; y++)
+            {
+                var target = JsonSerializer.SerializeToElement(new { position = new { x, y } }, GameJson.Options);
+                var result = BachDangGiang.Execute(state, side, hero.PieceId, target);
+                if (result.Accepted && !engine.IsInCheck(result.State, side))
+                    return JsonSerializer.SerializeToElement(new { type = "hero_active", pieceId = hero.PieceId,
+                        skillCode = SkillKeys.ThDTuongCoc, target = new { position = new { x, y } } }, GameJson.Options);
+            }
+        }
+        foreach (var hero in state.Pieces.Where(p => p.Side == side && p.Status == PieceStatus.Alive &&
+            p.TraitImplementationKey is SkillKeys.QuangTrungSpecialMove or "general.orthogonal_range_3"))
+        {
+            var move = engine.GenerateQuangTrungSpecialMoves(state, hero.PieceId).FirstOrDefault();
+            if (move is not null)
+                return JsonSerializer.SerializeToElement(new { type = "hero_active", pieceId = hero.PieceId,
+                    skillCode = SkillKeys.QuangTrungSpecialMove, target = new { to = new { x = move.To.X, y = move.To.Y } } }, GameJson.Options);
+        }
+        return null;
     }
     // CompleteMatch: Đồng bộ trạng thái completed, result, endReason và endedAt từ GameState vào entity trận.
     private static void CompleteMatch(GameMatch match, GameState state, DateTimeOffset now)

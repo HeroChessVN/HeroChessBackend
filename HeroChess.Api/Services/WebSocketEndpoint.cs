@@ -79,8 +79,7 @@ public static class WebSocketEndpoint
                         await scope.ServiceProvider.GetRequiredService<MatchReadService>().StateAsync(playerId, matchId, context.RequestAborted);
                         hub.Subscribe(connectionId, matchId);
                         var accepted = await scope.ServiceProvider.GetRequiredService<MatchCommandService>().ExecuteAsync(playerId, matchId, request, receivedAt, context.RequestAborted);
-                        if (accepted.Duplicate)
-                            await hub.SendAsync(connectionId, new { type = "match.command_accepted", requestId, payload = accepted }, context.RequestAborted);
+                        await hub.SendAsync(connectionId, new { type = "match.command_accepted", requestId, payload = accepted }, context.RequestAborted);
                     }
                     else throw new ApiException(400, "INVALID_MESSAGE_TYPE", "Unknown WebSocket message type.");
                 }

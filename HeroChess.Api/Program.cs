@@ -37,6 +37,8 @@ builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHand
 builder.Services.AddHttpContextAccessor();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrWhiteSpace(connectionString))
+    throw new InvalidOperationException("Missing ConnectionStrings:DefaultConnection. Set it with .NET User Secrets or an environment variable.");
 // Scoped DbContext: mỗi request/scope có unit of work riêng; không chia sẻ context giữa thread.
 builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.Configure<DatabaseBootstrapOptions>(builder.Configuration.GetSection("DatabaseBootstrap"));
@@ -81,8 +83,7 @@ builder.Services.AddSingleton<HeroChess.Rules.Skills.CommandSkillRegistry>(sp =>
         // Step 6: Thành and Rào Command Skills
         new HeroChess.Rules.Skills.ThanhHandler(),
         new HeroChess.Rules.Skills.RaoHandler(),
-        // Step 6: Trần Hưng Đạo — Tượng Hero Skill
-        new HeroChess.Rules.Skills.ThDTuongCocHandler(),
+        new HeroChess.Rules.Skills.KhienHandler(),
         // NOTE: Stolen effect cancellation is NOT a Command Skill.
         // It is an internal Phản Kỳ Đoạt Thế resolution mechanism handled by TurnLifecycle.
         // See: TurnLifecycle.Apply(..., resolveCreatorCancellation: true)

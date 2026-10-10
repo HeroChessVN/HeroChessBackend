@@ -27,7 +27,7 @@ public sealed class ShopAdminTests : IClassFixture<HeroChessFactory>
         var paid = catalog!.Heroes.Single(x => x.Code == "dev-shop-soldier");
         var free = catalog.Heroes.Single(x => x.Code == "dev-free-soldier");
         var expensive = catalog.Heroes.Single(x => x.Code == "dev-expensive-soldier");
-        var disabledId = Guid.Parse("60000000-0000-4000-8000-000000000018");
+        var disabledId = Guid.Parse("60000000-0000-4000-8000-000000000047");
         var setupPoints = paid.SetupPoints;
 
         Assert.Equal(HttpStatusCode.Forbidden, (await player.PatchAsJsonAsync($"/api/v1/admin/heroes/{paid.Id}/price", new UpdatePriceRequest("123", "forbidden"), Json)).StatusCode);

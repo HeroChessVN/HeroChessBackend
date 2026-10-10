@@ -1,4 +1,5 @@
 // Vai trò file: Model bàn cờ thuần C#, không DB/HTTP/UnityEngine; state có thể clone và serialize cho replay/undo.
+using System.Text.Json;
 namespace HeroChess.Rules;
 
 // Side: Hai bên Red và Black.
@@ -28,6 +29,10 @@ public sealed class PieceState
     public string? MovementImplementationKey { get; init; }
     public string? TraitKind { get; init; }
     public string? TraitImplementationKey { get; init; }
+    public string? HeroName { get; init; }
+    public string? TraitName { get; init; }
+    public string? TraitDescription { get; init; }
+    public JsonElement? TraitParameters { get; init; }
     public Dictionary<string, int?> TraitState { get; set; } = new(StringComparer.Ordinal);
     public List<EffectState> Effects { get; set; } = new();
 
@@ -46,7 +51,11 @@ public sealed class PieceState
             Status = Status,
             MovementImplementationKey = MovementImplementationKey,
             TraitKind = TraitKind,
-            TraitImplementationKey = TraitImplementationKey
+            TraitImplementationKey = TraitImplementationKey,
+            HeroName = HeroName,
+            TraitName = TraitName,
+            TraitDescription = TraitDescription,
+            TraitParameters = TraitParameters
         };
         foreach (var pair in TraitState) copy.TraitState[pair.Key] = pair.Value;
         copy.Effects.AddRange(Effects.Select(x => x with { }));
@@ -61,7 +70,8 @@ public sealed record ObstacleState(Guid ObstacleId, BoardPoint Position, string 
 // PendingEffectState: Dữ liệu hiệu ứng chờ, chưa có cơ chế resolution hoàn chỉnh.
 public sealed record PendingEffectState(string Code, Side Owner, int? ExpiresAtTurn);
 // SkillState: Charge/cooldown của một skill theo bên; hiện chủ yếu là dữ liệu snapshot.
-public sealed record SkillState(int SlotNo, Guid SkillId, int? UsesRemaining, int CooldownRemaining, string ImplementationKey);
+public sealed record SkillState(int SlotNo, Guid SkillId, int? UsesRemaining, int CooldownRemaining, string ImplementationKey,
+    string? Name = null, string? Description = null, JsonElement? Parameters = null);
 // LegalMove: Một nước hợp lệ do server sinh, gồm quân bị ăn nếu có.
 public sealed record LegalMove(Guid PieceId, BoardPoint From, BoardPoint To, Guid? CapturedPieceId = null);
 // MoveAction: Ý định đi một quân tới ô đích.
@@ -108,13 +118,13 @@ public sealed class GameState
         [Side.Black] = new List<int>()
     };
     // Metadata for physical stake obstacles (Vạn Cọc). Key = ObstacleId, Value = StakeMetadata.
-    // Used by TurnLifecycle to determine which stakes to decrement per turn.
+    // Records the original owner; lifetime now advances on every shared board turn.
     // This is the selected architecture for A1 (stake lifetime storage).
     public Dictionary<Guid, StakeMetadata> StakeMetadata { get; set; } = new();
 
     // Step 6: General obstacle metadata. Key = ObstacleId, Value = ObstacleMetadata.
     // Stores the placer Side for any obstacle (Thành, Rào, THD Cọc, etc.).
-    // Used by TurnLifecycle to determine whose turn decrements the obstacle's lifetime.
+    // Used to identify the placer, including when projecting hidden Cọc by viewer.
     public Dictionary<Guid, ObstacleMetadata> ObstacleMetadata { get; set; } = new();
 
     // Step 6: THD Tượng Cọc stakes. Key = PieceId of the THD Tượng piece, Value = ObstacleId of the placed Cọc.

@@ -120,10 +120,15 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
         return new FrozenLineup(lineup.Id, lineup.Revision, totalSp,
             lineup.Entries.OrderBy(x => x.SlotNo).Select(x => new FrozenPiece(x.SlotNo, x.HeroId, x.ClassCode, heroes[x.HeroId].SetupPoints,
                 slots[x.SlotNo].StartX, slots[x.SlotNo].StartY,
-                heroes[x.HeroId].Trait?.Kind == "special_move" ? heroes[x.HeroId].Trait!.ImplementationKey : null,
-                x.CosmeticId, heroes[x.HeroId].Trait?.Kind, heroes[x.HeroId].Trait?.ImplementationKey)).ToArray(),
+                heroes[x.HeroId].Trait?.ImplementationKey == HeroChess.Rules.Skills.SkillKeys.QuangTrungSpecialMove
+                    ? "general.orthogonal_range_1_no_palace"
+                    : heroes[x.HeroId].Trait?.Kind == "special_move" ? heroes[x.HeroId].Trait!.ImplementationKey : null,
+                x.CosmeticId, heroes[x.HeroId].Trait?.Kind, heroes[x.HeroId].Trait?.ImplementationKey,
+                heroes[x.HeroId].Name, heroes[x.HeroId].Trait?.Name, heroes[x.HeroId].Trait?.Description,
+                heroes[x.HeroId].Trait?.Parameters.RootElement.Clone())).ToArray(),
             lineup.Skills.OrderBy(x => x.SlotNo).Select(x => new FrozenSkill(x.SlotNo, x.TeamSkillId, skills[x.TeamSkillId].ImplementationKey,
-                skills[x.TeamSkillId].MaxUses, skills[x.TeamSkillId].CooldownTurns ?? 0)).ToArray());
+                skills[x.TeamSkillId].MaxUses, skills[x.TeamSkillId].CooldownTurns ?? 0,
+                skills[x.TeamSkillId].Name, skills[x.TeamSkillId].Description, skills[x.TeamSkillId].Parameters.RootElement.Clone())).ToArray());
     }
 
     // Start: Tạo 32 piece với ID riêng, xoay vị trí Black, lưu state version 0 và action start; không chạy gameplay skill.
@@ -140,12 +145,19 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             {
                 var start = side == Side.Red ? new BoardPoint(frozen.StartX, frozen.StartY) : new BoardPoint(8 - frozen.StartX, 9 - frozen.StartY);
                 if (!Enum.TryParse<PieceClass>(frozen.ClassCode, true, out var pieceClass)) throw new ApiException(422, "UNSUPPORTED_CLASS", $"Unsupported class {frozen.ClassCode}.");
-                state.Pieces.Add(new PieceState { PieceId = Guid.NewGuid(), HeroId = frozen.HeroId, Side = side, Class = pieceClass,
+                var piece = new PieceState { PieceId = Guid.NewGuid(), HeroId = frozen.HeroId, Side = side, Class = pieceClass,
                     SetupPoints = frozen.SetupPoints, Position = start, StartPosition = start, MovementImplementationKey = frozen.MovementImplementationKey,
-                    TraitKind = frozen.TraitKind, TraitImplementationKey = frozen.TraitImplementationKey });
+                    TraitKind = frozen.TraitKind, TraitImplementationKey = frozen.TraitImplementationKey,
+                    HeroName = frozen.HeroName, TraitName = frozen.TraitName, TraitDescription = frozen.TraitDescription,
+                    TraitParameters = frozen.TraitParameters };
+                if (piece.TraitImplementationKey is HeroChess.Rules.Skills.SkillKeys.QuangTrungSpecialMove or "general.orthogonal_range_3")
+                    piece.TraitState[HeroChess.Rules.Skills.SkillKeys.QuangTrungCooldownKey] = 1;
+                state.Pieces.Add(piece);
             }
-            state.SkillStates[side].AddRange(lineup.Skills.Select(x => new SkillState(x.SlotNo, x.SkillId, x.MaxUses, 0, x.ImplementationKey)));
+            state.SkillStates[side].AddRange(lineup.Skills.Select(x => new SkillState(x.SlotNo, x.SkillId, x.MaxUses, 0,
+                x.ImplementationKey, x.Name, x.Description, x.Parameters)));
         }
+        TurnLifecycle.MarkTurnProcessed(state, Side.Red, state.TurnIndex);
         match.Status = "active"; match.StartedAt = now;
         var stateDoc = GameJson.Document(state);
         match.State = new MatchState { MatchId = match.Id, Version = 0, SideToMove = "red", TurnIndex = 0, CountedActions = 0,

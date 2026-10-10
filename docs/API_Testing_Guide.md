@@ -10,17 +10,21 @@ Tài liệu này dùng để chạy và nghiệm thu backend ở máy local, v�
 - Một project Supabase PostgreSQL và connection string có quyền tạo schema/bảng, nếu database còn trống.
 - Trong Visual Studio hoặc terminal, chạy API theo profile `Development`.
 
-Backend đọc `ConnectionStrings:DefaultConnection` qua User Secrets. File `.env` **không được `dotnet run` tự đọc**; nó chỉ dành cho Docker Compose local. Vì vậy, khi dùng Supabase, không cần sửa hay chạy `.env`/Docker để API kết nối database.
+Backend đọc `ConnectionStrings:DefaultConnection` qua User Secrets (profile Development) hoặc biến môi trường. `appsettings.json` không chứa password. File `.env` **không được `dotnet run` tự đọc**; nó chỉ dành cho Docker Compose local. Vì vậy, khi dùng Supabase, không cần sửa hay chạy `.env`/Docker để API kết nối database. Sau khi đổi password Supabase, cập nhật lại User Secret; password cũ đã từng nằm trong Git nên cần thu hồi/đổi trên Supabase.
 
 ## 2. Cấu hình User Secrets cho Supabase
 
-Mở PowerShell tại thư mục gốc repository và thay các giá trị trong dấu `<...>` bằng thông tin Supabase của bạn:
+Máy hiện tại đã có `ConnectionStrings:DefaultConnection` trong User Secrets; bỏ password khỏi `appsettings.json` không làm mất cấu hình đó. Để cập nhật sau khi đổi password: trong Visual Studio nhấp phải project `HeroChess.Api` → **Manage User Secrets**, rồi giữ JSON tương tự (dán connection string mới lấy từ nút **Connect** trong Supabase):
 
-```powershell
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=<host-supabase>;Port=5432;Database=postgres;Username=postgres;Password=<database-password>;SSL Mode=Require;Trust Server Certificate=true" --project HeroChess.Api
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=<host>;Port=<port>;Database=postgres;Username=<user>;Password=<new-password>;SSL Mode=Require"
+  }
+}
 ```
 
-Nếu Supabase cung cấp connection string khác (ví dụ pooler có host/port/user riêng), dùng **nguyên connection string Supabase cung cấp**. Không tự đổi qua `127.0.0.1:55432`; đó là địa chỉ Docker local, không phải Supabase.
+Giữ các User Secrets khác nếu file đã có, chỉ thay `DefaultConnection`. Nếu Supabase cung cấp connection string khác (ví dụ pooler có host/port/user riêng), dùng **nguyên connection string Supabase cung cấp**. Không tự đổi qua `127.0.0.1:55432`; đó là địa chỉ Docker local, không phải Supabase.
 
 ### Database mới hoặc chưa có schema Hero Chess
 
@@ -28,11 +32,11 @@ Chỉ bật bootstrap trong lần đầu tạo schema, sau khi đã xác nhận 
 
 ```powershell
 dotnet user-secrets set "DatabaseBootstrap:Enabled" "true" --project HeroChess.Api
-dotnet user-secrets set "DatabaseBootstrap:SeedDevelopmentFixtures" "true" --project HeroChess.Api
-dotnet user-secrets set "Onboarding:GrantDevelopmentFixtureHeroes" "true" --project HeroChess.Api
+dotnet user-secrets set "DatabaseBootstrap:SeedDevelopmentFixtures" "false" --project HeroChess.Api
+dotnet user-secrets set "DatabaseBootstrap:IsProductionDatabase" "true" --project HeroChess.Api
 ```
 
-Bootstrap tạo schema `hero_chess`, các bảng game, Identity, catalog và fixture Development. Nó sẽ từ chối sửa một schema `hero_chess` có số bảng không đúng để tránh ghi đè một database dở dang.
+Chỉ dùng bước này với database mới hoặc bản sao đã backup và kiểm thử. Bootstrap tạo schema `hero_chess`, các bảng game, Identity và catalog. Không bật development fixtures trên Supabase. Nó sẽ từ chối sửa một schema `hero_chess` có số bảng không đúng để tránh ghi đè một database dở dang.
 
 Sau khi log hiện `Database bootstrap completed.`, tắt bootstrap để các lần chạy sau không mang quyền tự sửa schema:
 
@@ -42,7 +46,23 @@ dotnet user-secrets set "DatabaseBootstrap:Enabled" "false" --project HeroChess.
 
 ### Database Hero Chess đã có đủ schema
 
-Giữ bootstrap là `false`. Nếu log báo `relation hero_chess.game_match does not exist`, connection string đang trỏ nhầm database hoặc database đó chưa được bootstrap; không phải lỗi ở MatchRecovery worker.
+Giữ bootstrap là `false`. Nếu log báo `relation hero_chess.game_match does not exist`, connection string đang trỏ nhầm database hoặc database đó chưa được bootstrap; không phải lỗi ở MatchRecovery worker. **Đừng bật bootstrap trên Supabase đang dùng chỉ để thử skill mới**: seed/gameplay mới chưa được chạy nghiệm thu trên DB thử. Ngoài ra `MatchRecoveryHostedService` hủy trận `selecting/active` khi API khởi động lại, nên chỉ restart lúc không còn trận đang chơi.
+
+### Thử gameplay mới trên PostgreSQL Docker riêng
+
+Khởi động Docker Desktop, giữ mật khẩu local trong `.env` (file này đã được Git ignore), rồi tại thư mục repo chạy:
+
+```powershell
+docker compose up -d postgres
+$env:ConnectionStrings__DefaultConnection = 'Host=127.0.0.1;Port=55432;Database=hero_chess;Username=hero_chess;Password=<mật-khẩu-HERO_CHESS_DB_PASSWORD-trong-.env>'
+$env:DatabaseBootstrap__Enabled = 'true'
+$env:DatabaseBootstrap__SeedDevelopmentFixtures = 'true'
+$env:DatabaseBootstrap__IsProductionDatabase = 'false'
+$env:Onboarding__GrantDevelopmentFixtureHeroes = 'true'
+dotnet run --project HeroChess.Api --launch-profile http
+```
+
+Các biến `$env:` chỉ áp dụng trong cửa sổ PowerShell này và ghi đè User Secrets Supabase cho lần chạy local. Không chạy lệnh trên nếu `ConnectionStrings__DefaultConnection` còn trỏ Supabase. Bootstrap sẽ áp dụng catalog/skill mới và thêm quân DEV để đủ 16 ô đội hình; hero có tên mua được trong UI nếu đã bật và giá 0. Sau khi test local, đóng cửa sổ PowerShell này để trở về cấu hình User Secrets Supabase. Không dùng `docker compose down -v` nếu cần giữ dữ liệu local.
 
 ## 3. Chạy backend
 
@@ -62,6 +82,18 @@ Invoke-RestMethod http://localhost:5012/health/ready
 
 Kết quả mong đợi là `status: live` và `status: ready`, database `connected`. Swagger có tại `http://localhost:5012/swagger` khi chạy Development. Trang demo có tại `http://localhost:5012`; nó tiện để chơi thử nhưng không thay thế test API bên dưới.
 
+### Chạy React test UI
+
+Mở cửa sổ terminal thứ hai:
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+Mở `http://127.0.0.1:5173/react/`. Vite chuyển `/api/v1` và WebSocket về backend cổng `5012`. Đăng nhập, mua hero cần thử ở Catalog nếu chưa sở hữu, xếp 16 quân và 3 Command Skill, rồi chọn **Chơi với bot**. Trong bàn cờ, chọn hero để xem Hero Skill; Thành/Rào/Khiên nằm trong bảng Command Skill. `http://localhost:5012/swagger` dùng để xem request/response API; `http://localhost:5012/react/` là bản FE đã build sẵn từ lần `npm run build` gần nhất.
+
 ### Test trực tiếp bằng Swagger UI
 
 Có thể dùng Swagger thay cho PowerShell với hầu hết API HTTP:
@@ -73,7 +105,7 @@ Có thể dùng Swagger thay cho PowerShell với hầu hết API HTTP:
 5. Bấm nút **Authorize** ở góc trên bên phải, dán **chỉ accessToken** vào Bearer authentication rồi bấm Authorize/Close. Swagger tự thêm `Authorization: Bearer ...` vào các request sau đó.
 6. Dùng **Try it out** cho `GET /api/v1/me`, `GET /api/v1/catalog`, lineup, matchmaking và các route match.
 
-WebSocket không gửi được từ Swagger UI; phần đó dùng trang demo hoặc một WebSocket client. API `hero_active` và `team_skill` hiện vẫn trả `SKILL_NOT_IMPLEMENTED` theo phạm vi prototype.
+WebSocket không gửi được từ Swagger UI; phần đó dùng React test UI hoặc một WebSocket client. `hero_active` đã hỗ trợ Bạch Đằng Giang và bước đặc biệt của Quang Trung; `team_skill` hỗ trợ những skill có handler, gồm Thành/Rào/Khiên. Skill trong catalog vẫn có thể chưa được triển khai nếu không có handler.
 
 ## 4. Quy ước test bằng PowerShell
 
@@ -236,7 +268,7 @@ Invoke-RestMethod "$base/matches?limit=10" -Headers $headersA
 Invoke-RestMethod "$base/matches/$matchId/replay?afterSequence=-1&limit=50" -Headers $headersA
 ```
 
-`undo` chỉ hợp lệ trong bot match. `hero_active` và `team_skill` hiện phải trả `422 SKILL_NOT_IMPLEMENTED`; đây là limitation đã biết, không phải lỗi test.
+`undo` chỉ hợp lệ trong bot match. `hero_active` dùng cho Bạch Đằng Giang/Quang Trung; `team_skill` dùng slot skill đã chọn trong lineup. Skill chưa có handler mới trả lỗi không hỗ trợ.
 
 ## 8. Test PvP hai Player
 
@@ -334,7 +366,7 @@ Player gọi `/admin/...` phải nhận `403`; Admin gọi lineup, shop, matchma
 
 ## 12. Docker dùng khi nào?
 
-Nếu dùng Supabase, bỏ qua Docker. `docker compose up -d` chỉ dùng khi muốn có PostgreSQL local riêng tại `127.0.0.1:55432`. Khi chọn Docker, connection string User Secrets phải đổi sang host/port local và password phải khớp `HERO_CHESS_DB_PASSWORD` trong `.env`.
+Nếu dùng Supabase, bỏ qua Docker. `docker compose up -d postgres` chỉ dùng khi muốn có PostgreSQL local riêng tại `127.0.0.1:55432`. Để test local, ưu tiên biến môi trường chỉ trong cửa sổ PowerShell đang chạy API như mục 2; không cần thay User Secrets Supabase. Password local phải khớp `HERO_CHESS_DB_PASSWORD` trong `.env`.
 
 ## 13. Gỡ lỗi nhanh
 
@@ -345,7 +377,7 @@ Nếu dùng Supabase, bỏ qua Docker. `docker compose up -d` chỉ dùng khi mu
 | `/health/ready` 503 | Connection string/Supabase network sai | Kiểm tra host, port, password, SSL và firewall/network. |
 | `401` | Thiếu/sai bearer token | Login lại, dùng `Authorization: Bearer <accessToken>`. |
 | `403` | Account sai role hoặc disabled | Player chỉ vào game; Admin chỉ vào route admin. |
-| `422 SKILL_NOT_IMPLEMENTED` | Skill chưa có gameplay handler | Expected ở prototype hiện tại. |
+| `422 SKILL_NOT_IMPLEMENTED` | Skill cụ thể chưa có gameplay handler | Kiểm tra `implementationKey` trong catalog và handler đã đăng ký. |
 | `409 STALE_STATE` | State đổi sau khi client đọc | GET state mới, gửi lại với version mới và commandId mới. |
 
 ## 14. Test tự động của source
@@ -353,6 +385,8 @@ Nếu dùng Supabase, bỏ qua Docker. `docker compose up -d` chỉ dùng khi mu
 Manual API test không thay thế test tự động. Không chạy integration test vào Supabase production/development đang dùng, vì test có thể tạo/sửa dữ liệu. Muốn chạy integration test, cấu hình `HERO_CHESS_TEST_DB` tới database test riêng rồi chạy:
 
 ```powershell
-dotnet test HeroChessBackend.slnx --no-restore --verbosity quiet
+dotnet test tests/HeroChess.Rules.Tests/HeroChess.Rules.Tests.csproj --no-restore
+dotnet test tests/HeroChess.IntegrationTests/HeroChess.IntegrationTests.csproj --no-restore
 node --test tests/web/app.test.mjs
+npm test --prefix frontend
 ```

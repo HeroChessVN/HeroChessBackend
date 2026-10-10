@@ -5,45 +5,55 @@ SET LOCAL search_path = hero_chess, pg_catalog;
 
 -- Step 6: Thành Command Skill
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
- ('70000000-0000-4000-8000-000000000010','thanh','Thành','thanh',2,true,false,
-  'Thành: tạo một chướng ngại tạm thời trên lãnh thổ. Tồn tại 1 lượt. Chỉ Pháo mới phá được. Không dùng làm ngòi.')
+ ('70000000-0000-4000-8000-000000000010','thanh','Thành','thanh',8,true,false,
+  'Tạo 1 Thành ở vị trí bất kỳ bên sông mình; tồn tại 6 lượt chung, hồi chiêu 8. Pháo phá Thành và tiến vào ô đó; Thành không làm ngòi.')
 ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
-  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description;
+  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled;
 
 -- Step 6: Rào Command Skill
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
- ('70000000-0000-4000-8000-000000000011','rao','Rào','rao',1,true,false,
-  'Rào: tạo một rào cản tạm thời trên lãnh thổ. Tồn tại 1 lượt. Hành xử như Tốt khi bị phá.')
+ ('70000000-0000-4000-8000-000000000011','rao','Rào','rao',6,true,false,
+  'Tạo 1 Rào ở vị trí bất kỳ bên sông mình; tồn tại 4 lượt chung, hồi chiêu 6. Pháo có thể dùng Rào làm ngòi.')
 ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
-  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description;
+  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled;
 
 -- Step 6: Trần Hưng Đạo — Tượng Hero Skill (team_skill slot for the hero's own skill)
-INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
- ('70000000-0000-4000-8000-000000000012','tran-hung-dao-tuong-coc','Trần Hưng Đạo — Tượng: Tạo Cọc','tran_hung_dao_tuong.coc',3,true,false,
-  'Trần Hưng Đạo — Tượng: Tạo một Cọc trên sông phía trước. Cọc tồn tại 3 lượt. Có thể thu hồi.')
-ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
-  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description;
+INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
+ ('30000000-0000-4000-8000-000000000009','bach-dang-giang','Bạch Đằng Giang','active','tran_hung_dao_tuong.coc',
+  '{"cooldownTurns":5,"durationTurns":3}',
+  'Tạo 1 Cọc ẩn trên hai hàng sông; quân địch dừng ở ô Cọc bị ăn. Tồn tại 3 lượt chung, hồi chiêu 5; không thể thu hồi.')
+ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,kind=EXCLUDED.kind,implementation_key=EXCLUDED.implementation_key,
+  parameters=EXCLUDED.parameters,description=EXCLUDED.description;
+UPDATE hero SET trait_id='30000000-0000-4000-8000-000000000009' WHERE code='tran-hung-dao-elephant';
 
--- Step 6: Lý Thường Kiệt — Xe: movement trait already has no override (trait_id = NULL).
--- The movement bypass is implemented purely via the MovementImplementationKey being set
--- on the piece at lineup time (e.g., via a trait or directly).
--- We mark the existing ly-thuong-kiet-rook hero with the trait so the engine can route it.
--- The trait is stored in hero_trait and linked via hero.trait_id.
+INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
+ ('70000000-0000-4000-8000-000000000013','khien','Khiên','khien',8,true,false,
+  'Tạo 1 Khiên cho quân đồng minh bất kỳ trên bàn cờ; tồn tại 4 lượt chung, hồi chiêu 8. Quân có Khiên không thể bị ăn.')
+ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
+  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled;
+
+INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
+ ('70000000-0000-4000-8000-000000000012','tran-hung-dao-tuong-coc','Trần Hưng Đạo — Tượng: Tạo Cọc','tran_hung_dao_tuong.coc',5,false,false,
+  'Skill này đã chuyển thành Hero Skill Bạch Đằng Giang; không thể chọn làm Command Skill.')
+ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
+  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled;
+
+-- Lý Thường Kiệt Xe uses a movement trait to pass or break Thành/Rào.
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
  ('30000000-0000-4000-8000-000000000007','ly-thuong-kiet-xe-trait','Lý Thường Kiệt — Xe','special_move','rook.ly_thuong_kiet',
   '{}',
-  'Xe 8d; passive: không bị cản bởi Thành / Rào / Cọc. Có thể tấn công quân địch đằng sau chướng ngại.')
+  'Xe có thể đi qua Thành/Rào hoặc vào ô đó để phá; quân trên đường vẫn chặn như Xe thường.')
 ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,description=EXCLUDED.description;
 
 -- Link Lý Thường Kiệt Xe hero to the trait
 UPDATE hero SET trait_id='30000000-0000-4000-8000-000000000007'
  WHERE code='ly-thuong-kiet-rook';
 
--- Step 6: Lý Thường Kiệt — Pháo: similar trait for cannon bypass
+-- Lý Thường Kiệt Pháo uses Thành/Rào as a screen and may break Thành.
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
  ('30000000-0000-4000-8000-000000000008','ly-thuong-kiet-phao-trait','Lý Thường Kiệt — Pháo','special_move','cannon.ly_thuong_kiet',
   '{}',
-  'Pháo 6d; passive: Thành không dùng làm ngòi. Có thể phá Thành.')
+  'Pháo có thể dùng cả Thành và Rào làm ngòi; cũng có thể vào ô Thành để phá.')
 ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,description=EXCLUDED.description;
 
 -- Link Lý Thường Kiệt Pháo hero to the trait

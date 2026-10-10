@@ -69,7 +69,7 @@ public sealed class TurnLifecycleTests
     }
 
     [Fact]
-    public void Apply_does_not_affect_opponent_cooldowns()
+    public void Apply_decrements_both_sides_cooldowns_on_shared_turn()
     {
         var state = EmptyState();
         AddSkill(state, Side.Red, slot: 1, cooldownRemaining: 3);
@@ -78,12 +78,12 @@ public sealed class TurnLifecycleTests
         var result = TurnLifecycle.Apply(state, Side.Red);
 
         Assert.Equal(2, result.State.SkillStates[Side.Red][0].CooldownRemaining);
-        Assert.Equal(2, result.State.SkillStates[Side.Black][0].CooldownRemaining); // unchanged
+        Assert.Equal(1, result.State.SkillStates[Side.Black][0].CooldownRemaining);
     }
 
     #endregion
 
-    #region Effect duration decrement (U-DUR = A)
+    #region Effect duration decrement (shared board turns)
 
     [Fact]
     public void Apply_decrements_RemainingDuration_at_Creator_turn()
@@ -99,14 +99,14 @@ public sealed class TurnLifecycleTests
     }
 
     [Fact]
-    public void Apply_does_not_decrement_RemainingDuration_at_nonCreator_turn()
+    public void Apply_decrements_RemainingDuration_at_nonCreator_turn()
     {
         var state = EmptyState();
         var effect = MakeEffect(state, Side.Red, EffectStateValue.Active, remainingDuration: 2);
 
         var result = TurnLifecycle.Apply(state, Side.Black);
 
-        Assert.Equal(2, result.State.EffectInstances[0].RemainingDuration);
+        Assert.Equal(1, result.State.EffectInstances[0].RemainingDuration);
         Assert.Empty(result.ExpiredEffects);
     }
 
@@ -134,12 +134,11 @@ public sealed class TurnLifecycleTests
 
         var result = TurnLifecycle.Apply(state, Side.Red);
 
-        // Only the Red effect with remainingDuration==1 expires on Red's turn.
-        // The Black effect with remainingDuration==1 expires on Black's turn.
+        // Both sides' effects advance on every shared board turn.
         Assert.Equal(3, result.State.EffectInstances.Count);
         var endedCount = result.State.EffectInstances.Count(e => e.State == EffectStateValue.Ended);
-        Assert.Equal(1, endedCount);
-        Assert.Single(result.ExpiredEffects);
+        Assert.Equal(2, endedCount);
+        Assert.Equal(2, result.ExpiredEffects.Count);
     }
 
     [Fact]
@@ -198,7 +197,7 @@ public sealed class TurnLifecycleTests
     }
 
     [Fact]
-    public void Apply_does_not_affect_opponent_effects()
+    public void Apply_advances_opponent_effects()
     {
         var state = EmptyState();
         MakeEffect(state, Side.Red, EffectStateValue.Active, remainingDuration: 1);
@@ -206,13 +205,12 @@ public sealed class TurnLifecycleTests
 
         var result = TurnLifecycle.Apply(state, Side.Red);
 
-        // Only Red effect expires
-        Assert.Single(result.ExpiredEffects);
+        Assert.Equal(2, result.ExpiredEffects.Count);
         var redEnded = result.State.EffectInstances.First(e => e.Creator == Side.Red);
         Assert.Equal(EffectStateValue.Ended, redEnded.State);
-        var blackStillActive = result.State.EffectInstances.First(e => e.Creator == Side.Black);
-        Assert.Equal(EffectStateValue.Active, blackStillActive.State);
-        Assert.Equal(1, blackStillActive.RemainingDuration);
+        var blackEnded = result.State.EffectInstances.First(e => e.Creator == Side.Black);
+        Assert.Equal(EffectStateValue.Ended, blackEnded.State);
+        Assert.Equal(0, blackEnded.RemainingDuration);
     }
 
     #endregion
@@ -327,14 +325,14 @@ public sealed class TurnLifecycleTests
     }
 
     [Fact]
-    public void Apply_does_not_decrement_stake_at_nonPlacer_turn()
+    public void Apply_decrements_stake_at_nonPlacer_turn()
     {
         var state = EmptyState();
         AddStake(state, Side.Red, remainingLifetime: 2);
 
         var result = TurnLifecycle.Apply(state, Side.Black);
 
-        Assert.Equal(2, result.State.Obstacles[0].RemainingLifetime);
+        Assert.Equal(1, result.State.Obstacles[0].RemainingLifetime);
         Assert.Empty(result.RemovedStakes);
     }
 
@@ -619,8 +617,8 @@ public sealed class TurnLifecycleTests
             TurnLifecycle.MarkTurnProcessed(state, Side.Black, state.TurnIndex);
         }
 
-        // Red cooldown unchanged
-        Assert.Equal(redCooldownAfterRedTurn, state.SkillStates[Side.Red][0].CooldownRemaining);
+        // Both cooldowns advance on each shared board turn.
+        Assert.Equal(redCooldownAfterRedTurn - 1, state.SkillStates[Side.Red][0].CooldownRemaining);
         // Black cooldown decremented
         Assert.Equal(blackCooldownAfterRedTurn - 1, state.SkillStates[Side.Black][0].CooldownRemaining);
     }
@@ -890,8 +888,7 @@ public sealed class TurnLifecycleTests
             state = lifecycle.State;
             TurnLifecycle.MarkTurnProcessed(state, nextSide, state.TurnIndex);
 
-            // Black's turn: Red's effects don't decrement (Black is not the Creator)
-            Assert.Empty(lifecycle.ExpiredEffects);
+            Assert.Single(lifecycle.ExpiredEffects);
         }
     }
 
@@ -947,8 +944,7 @@ public sealed class TurnLifecycleTests
             state = lifecycle.State;
             TurnLifecycle.MarkTurnProcessed(state, nextSide, state.TurnIndex);
 
-            // Black's turn: Red's stake doesn't decrement (Black is not the placer)
-            Assert.Empty(lifecycle.RemovedStakes);
+            Assert.Single(lifecycle.RemovedStakes);
         }
     }
 
@@ -1058,7 +1054,7 @@ public sealed class TurnLifecycleTests
             TurnLifecycle.MarkTurnProcessed(state, Side.Black, state.TurnIndex);
         }
         var blackCooldownAfterFirst = state.SkillStates[Side.Black][0].CooldownRemaining;
-        Assert.Equal(3, blackCooldownAfterFirst); // 4 -> 3
+        Assert.Equal(2, blackCooldownAfterFirst); // 4 -> 3 -> 2 across both turns
 
         // Simulate another timeout: TurnIndex=2 -> 3, side changes to Red
         state.Version++;
@@ -1074,7 +1070,7 @@ public sealed class TurnLifecycleTests
             TurnLifecycle.MarkTurnProcessed(state, Side.Red, state.TurnIndex);
         }
         var redCooldownAfterSecond = state.SkillStates[Side.Red][0].CooldownRemaining;
-        Assert.Equal(3, redCooldownAfterSecond); // 4 -> 3
+        Assert.Equal(2, redCooldownAfterSecond); // 5 -> 4 -> 3 -> 2 across three turns
 
         // Red cooldown decremented again (not stuck at 4)
         Assert.True(redCooldownAfterSecond < redCooldownAfterFirst);

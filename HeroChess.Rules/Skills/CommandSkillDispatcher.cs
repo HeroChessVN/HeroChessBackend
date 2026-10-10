@@ -14,15 +14,15 @@ public sealed record FrozenSkillSnapshot(
     int SlotNo,
     Guid SkillId,
     string ImplementationKey,
-    int CooldownRemaining);
+    int CooldownTurns);
 
 /// <summary>
 /// Creates a FrozenSkillSnapshot from a SkillState record (for the dispatcher).
 /// </summary>
 public static class FrozenSkillSnapshotFactory
 {
-    public static FrozenSkillSnapshot FromSkillState(SkillState skill) =>
-        new(skill.SlotNo, skill.SkillId, skill.ImplementationKey ?? "", skill.CooldownRemaining);
+    public static FrozenSkillSnapshot FromSkillState(SkillState skill, int cooldownTurns = 0) =>
+        new(skill.SlotNo, skill.SkillId, skill.ImplementationKey ?? "", cooldownTurns);
 }
 
 /// <summary>
@@ -98,6 +98,8 @@ public sealed class CommandSkillDispatcher
         if (skillState.CooldownRemaining > 0)
             return CommandSkillResult.Failure(state, "SKILL_ON_COOLDOWN",
                 $"Skill is on cooldown for {skillState.CooldownRemaining} more turn(s).");
+        if (skillState.UsesRemaining is 0)
+            return CommandSkillResult.Failure(state, "SKILL_USES_EXHAUSTED", "The skill has no uses remaining.");
 
         // 4. Resolve handler by ImplementationKey.
         if (!_registry.TryGet(frozenSkill.ImplementationKey, out var rawHandler) || rawHandler == null)
@@ -119,7 +121,7 @@ public sealed class CommandSkillDispatcher
             slotNo: frozenSkill.SlotNo,
             skillId: frozenSkill.SkillId,
             implementationKey: frozenSkill.ImplementationKey,
-            cooldownTurns: frozenSkill.CooldownRemaining,
+            cooldownTurns: frozenSkill.CooldownTurns,
             target: target);
 
         // --- Execute handler ---
@@ -140,13 +142,17 @@ public sealed class CommandSkillDispatcher
             {
                 if (updatedList[i].SlotNo == frozenSkill.SlotNo)
                 {
-                    updatedList[i] = updatedList[i] with { CooldownRemaining = frozenSkill.CooldownRemaining };
+                    updatedList[i] = updatedList[i] with
+                    {
+                        CooldownRemaining = frozenSkill.CooldownTurns,
+                        UsesRemaining = updatedList[i].UsesRemaining is int remaining ? remaining - 1 : null
+                    };
                     break;
                 }
             }
         }
 
-        return CommandSkillResult.Success(newState, result.Events, frozenSkill.CooldownRemaining);
+        return CommandSkillResult.Success(newState, result.Events, frozenSkill.CooldownTurns);
     }
 
     private static SkillState? FindSkillState(GameState state, Side side, int slotNo)

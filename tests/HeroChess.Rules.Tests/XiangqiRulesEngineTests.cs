@@ -125,8 +125,8 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // No_legal_actions_ends_match_without_capturing_general: Hết nước hợp lệ kết thúc trận mà không cần ăn Tướng.
-    public void No_legal_actions_ends_match_without_capturing_general()
+    // The match service evaluates all move and skill actions after turn-start lifecycle.
+    public void ApplyMove_leaves_no_action_result_to_match_service()
     {
         var winningSoldier = Piece(PieceClass.Soldier, Side.Red, 4, 7);
         var state = State(
@@ -140,8 +140,8 @@ public sealed class XiangqiRulesEngineTests
         var result = _rules.ApplyMove(state, new(winningSoldier.PieceId, new BoardPoint(4, 8)));
 
         Assert.True(result.Accepted);
-        Assert.Equal("red_win", result.State.Result);
-        Assert.Equal("checkmate", result.State.EndReason);
+        Assert.Null(result.State.Result);
+        Assert.Null(result.State.EndReason);
         Assert.Equal(PieceStatus.Alive, result.State.Pieces.Single(x => x.Class == PieceClass.General && x.Side == Side.Black).Status);
     }
 
@@ -632,7 +632,7 @@ public sealed class XiangqiRulesEngineTests
     // STEP 3: Quang Trung & Tran Hung Dao (GENERAL) movement tests
     // ============================================================
 
-    // ---- Quang Trung: orthogonal 1-3, blocked like Rook ----
+    // ---- Quang Trung: normal move is one orthogonal square ----
 
     [Fact]
     // QuangTrung_moves_one_step_orthogonal: Quang Trung đi 1 ô thẳng.
@@ -648,35 +648,35 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // QuangTrung_moves_two_steps_orthogonal: Quang Trung đi 2 ô thẳng.
+    // A normal move cannot go two squares.
     // Clean State(): (2,4) moves right to (4,4) — Red Rook at (5,3) does not block the x=2 file.
-    public void QuangTrung_moves_two_steps_orthogonal()
+    public void QuangTrung_normal_move_cannot_go_two_steps()
     {
         var quangTrung = Piece(PieceClass.General, Side.Red, 2, 4, "general.orthogonal_range_3");
         var state = State(quangTrung);
 
         var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == quangTrung.PieceId).ToArray();
 
-        Assert.Contains(moves, x => x.To == new BoardPoint(4, 4));  // right 2
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(4, 4));
     }
 
     [Fact]
-    // QuangTrung_moves_three_steps_orthogonal: Quang Trung đi 3 ô thẳng.
+    // The three-square move requires the active skill.
     // Red at (0,4) going right: (1,4), (2,4), (3,4) are all within Red's home side (y=4).
-    public void QuangTrung_moves_three_steps_orthogonal()
+    public void QuangTrung_normal_move_cannot_go_three_steps()
     {
         var quangTrung = Piece(PieceClass.General, Side.Red, 0, 4, "general.orthogonal_range_3");
         var state = State(quangTrung);
 
         var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == quangTrung.PieceId).ToArray();
 
-        Assert.Contains(moves, x => x.To == new BoardPoint(3, 4));  // right 3
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(3, 4));
     }
 
     [Fact]
     // QuangTrung_cannot_move_four_steps: Quang Trung không đi 4 ô.
     // Red at (0,4) going right: distance 4 = (4,4). In clean State(), (4,4) is free (no blocker).
-    // But distance 4 > maxRange=3 → not generated.
+    // Distance 4 exceeds both the normal move and the active skill.
     public void QuangTrung_cannot_move_four_steps()
     {
         var quangTrung = Piece(PieceClass.General, Side.Red, 0, 4, "general.orthogonal_range_3");
@@ -716,8 +716,8 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // QuangTrung_captures_first_enemy_on_ray: Quang Trung ăn quân địch đầu tiên trên tia.
-    public void QuangTrung_captures_first_enemy_on_ray()
+    // A normal move cannot capture an enemy two squares away.
+    public void QuangTrung_normal_move_cannot_capture_two_squares_away()
     {
         var quangTrung = Piece(PieceClass.General, Side.Red, 0, 4, "general.orthogonal_range_3");
         var enemy = Piece(PieceClass.Soldier, Side.Black, 2, 4);
@@ -725,7 +725,7 @@ public sealed class XiangqiRulesEngineTests
 
         var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == quangTrung.PieceId).ToArray();
 
-        Assert.Contains(moves, x => x.To == new BoardPoint(2, 4) && x.CapturedPieceId == enemy.PieceId);
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(2, 4));
         Assert.DoesNotContain(moves, x => x.To == new BoardPoint(3, 4));  // stops after capture
     }
 
@@ -747,8 +747,8 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // OrthogonalRangeHandler_returns_1_to_3_orthogonal_destinations: Handler returns 1–3 orthogonal destinations, no diagonal.
-    public void OrthogonalRangeHandler_returns_1_to_3_orthogonal_destinations()
+    // Legacy normal-movement snapshots are also limited to one square.
+    public void OrthogonalRangeHandler_limits_normal_move_to_one_square()
     {
         var registry = new MovementHandlerRegistry();
         Assert.True(registry.TryGet("general.orthogonal_range_3", out var handler));
@@ -761,13 +761,13 @@ public sealed class XiangqiRulesEngineTests
 
         // Within Red home side (y<=4): all destinations work
         Assert.Contains(dests, p => p == new BoardPoint(5, 2)); // right 1
-        Assert.Contains(dests, p => p == new BoardPoint(6, 2)); // right 2
-        Assert.Contains(dests, p => p == new BoardPoint(7, 2)); // right 3
+        Assert.DoesNotContain(dests, p => p == new BoardPoint(6, 2));
+        Assert.DoesNotContain(dests, p => p == new BoardPoint(7, 2));
         Assert.Contains(dests, p => p == new BoardPoint(3, 2)); // left 1
         Assert.Contains(dests, p => p == new BoardPoint(4, 3)); // down 1
-        Assert.Contains(dests, p => p == new BoardPoint(4, 4)); // down 2
+        Assert.DoesNotContain(dests, p => p == new BoardPoint(4, 4));
         Assert.Contains(dests, p => p == new BoardPoint(4, 1)); // up 1
-        Assert.Contains(dests, p => p == new BoardPoint(4, 0)); // up 2 (blocked by own General)
+        Assert.DoesNotContain(dests, p => p == new BoardPoint(4, 0));
         Assert.DoesNotContain(dests, p => p == new BoardPoint(4, -1)); // off board
         Assert.DoesNotContain(dests, p => p.X != 4 && p.Y != 2); // no diagonal
     }
@@ -1093,12 +1093,27 @@ public sealed class XiangqiRulesEngineTests
         Position = new BoardPoint(x, y),
         StartPosition = new BoardPoint(x, y),
         SetupPoints = 1,
-        MovementImplementationKey = "general.orthogonal_range_3",
-        TraitImplementationKey = "quang-trung-orthogonal-3" // Quang Trung marker
+        MovementImplementationKey = "general.orthogonal_range_1_no_palace",
+        TraitImplementationKey = SkillKeys.QuangTrungSpecialMove,
+        TraitKind = "active"
     };
 
     [Fact]
-    // QuangTrung_cooldown_not_ready_blocks_special_movement: When cooldown not ready, max range is 3 (base).
+    public void QuangTrung_can_move_one_square_outside_palace_during_cooldown()
+    {
+        var qt = QuangTrung(Side.Red, 0, 4);
+        qt.TraitState[SkillKeys.QuangTrungCooldownRemainingKey] = 2;
+        var state = State(qt);
+
+        var move = _rules.ApplyMove(state, new MoveAction(qt.PieceId, new BoardPoint(1, 4)));
+
+        Assert.True(move.Accepted);
+        Assert.Equal(new BoardPoint(1, 4), move.State.Pieces.Single(x => x.PieceId == qt.PieceId).Position);
+        Assert.Empty(_rules.GenerateQuangTrungSpecialMoves(state, qt.PieceId));
+    }
+
+    [Fact]
+    // Cooldown does not widen the normal movement range.
     public void QuangTrung_cooldown_not_ready_blocks_special_movement()
     {
         // Use custom state with no Black pieces to avoid self-check interference.
@@ -1108,20 +1123,20 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(qt);
         state.Pieces.Add(Piece(PieceClass.General, Side.Red, 3, 0));
         state.Pieces.Add(Piece(PieceClass.General, Side.Black, 5, 9));
-        // cooldownReady is not set → uses base handler (range 3)
+        // cooldownReady is not set → only the normal one-square move is available.
 
         var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == qt.PieceId).ToArray();
 
-        // 1, 2, 3 steps are all available (base behavior)
+        // Only one square is available without activating the skill.
         Assert.Contains(moves, x => x.To == new BoardPoint(1, 4));
-        Assert.Contains(moves, x => x.To == new BoardPoint(2, 4));
-        Assert.Contains(moves, x => x.To == new BoardPoint(3, 4));
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(2, 4));
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(3, 4));
         // 4 steps should NOT be available (special range blocked)
         Assert.DoesNotContain(moves, x => x.To == new BoardPoint(4, 4));
     }
 
     [Fact]
-    // QuangTrung_cooldown_ready_allows_special_movement: When cooldownReady=1, can move up to 9 ortho.
+    // The ready active skill permits one to three orthogonal squares.
     public void QuangTrung_cooldown_ready_allows_special_movement()
     {
         // State designed to avoid self-check blocking horizontal paths.
@@ -1136,12 +1151,13 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(Piece(PieceClass.Cannon, Side.Black, 1, 5));
         state.Pieces.Add(Piece(PieceClass.Cannon, Side.Black, 4, 7));
 
-        var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == qt.PieceId).ToArray();
+        var moves = _rules.GenerateQuangTrungSpecialMoves(state, qt.PieceId);
 
-        // Special range: up to 9. All within Red's home side (y=4).
+        // Active skill reaches at most three squares on the home side.
         Assert.Contains(moves, x => x.To == new BoardPoint(2, 4));  // 1 step
         Assert.Contains(moves, x => x.To == new BoardPoint(4, 4));  // 3 steps
-        Assert.Contains(moves, x => x.To == new BoardPoint(8, 4));  // board edge
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(5, 4));
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(8, 4));
     }
 
     [Fact]
@@ -1159,7 +1175,7 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(Piece(PieceClass.General, Side.Black, 5, 9));
         state.Pieces.Add(Piece(PieceClass.Rook, Side.Black, 1, 9));
 
-        var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == qt.PieceId).ToArray();
+        var moves = _rules.GenerateQuangTrungSpecialMoves(state, qt.PieceId);
 
         // Up to 1 step (blocked by friendly at 3,4)
         Assert.Contains(moves, x => x.To == new BoardPoint(2, 4));
@@ -1179,7 +1195,7 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(Piece(PieceClass.General, Side.Red, 3, 0));
         state.Pieces.Add(Piece(PieceClass.General, Side.Black, 5, 9));
 
-        var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == qt.PieceId).ToArray();
+        var moves = _rules.GenerateQuangTrungSpecialMoves(state, qt.PieceId);
 
         Assert.DoesNotContain(moves, x => x.To.X != 4 && x.To.Y != 4);
     }
@@ -1201,7 +1217,7 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(Piece(PieceClass.Cannon, Side.Black, 5, 7));
         state.Pieces.Add(Piece(PieceClass.Horse, Side.Black, 3, 3));
 
-        var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == qt.PieceId).ToArray();
+        var moves = _rules.GenerateQuangTrungSpecialMoves(state, qt.PieceId);
 
         // Up (y decreasing): (2,3) is Red's home side (y=3)
         Assert.Contains(moves, x => x.To == new BoardPoint(2, 3));
@@ -1228,7 +1244,7 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(Piece(PieceClass.Cannon, Side.Black, 4, 7));
         state.Pieces.Add(Piece(PieceClass.Horse, Side.Black, 3, 3));
 
-        var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == qt.PieceId).ToArray();
+        var moves = _rules.GenerateQuangTrungSpecialMoves(state, qt.PieceId);
 
         // Move UP (y decreasing): (2,4)→(2,2) — within Red home side, captures enemy
         Assert.Contains(moves, x => x.To == new BoardPoint(2, 2) && x.CapturedPieceId == enemy.PieceId);
@@ -1251,12 +1267,26 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(Piece(PieceClass.Horse, Side.Black, 3, 3));
 
         // Move 1 step up to (2,2) — safe within Red home side
-        var move = _rules.GenerateLegalActions(state).First(x => x.PieceId == qt.PieceId && x.To == new BoardPoint(2, 2));
-        var result = _rules.ApplyMove(state, new MoveAction(move.PieceId, move.To));
+        var move = _rules.GenerateQuangTrungSpecialMoves(state, qt.PieceId).First(x => x.To == new BoardPoint(2, 2));
+        var result = _rules.ApplyHeroSpecialMove(state, new MoveAction(move.PieceId, move.To));
 
         Assert.True(result.Accepted);
         var moved = result.State.Pieces.Single(x => x.PieceId == qt.PieceId);
         Assert.Equal(0, moved.TraitState["cooldownReady"]);
+        Assert.Equal(3, moved.TraitState[SkillKeys.QuangTrungCooldownRemainingKey]);
+    }
+
+    [Fact]
+    public void QuangTrung_normal_move_does_not_consume_ready_skill()
+    {
+        var qt = QuangTrung(Side.Red, 1, 4);
+        qt.TraitState[SkillKeys.QuangTrungCooldownKey] = 1;
+        var state = State(qt);
+        var result = _rules.ApplyMove(state, new MoveAction(qt.PieceId, new BoardPoint(2, 4)));
+        Assert.True(result.Accepted);
+        var moved = result.State.Pieces.Single(p => p.PieceId == qt.PieceId);
+        Assert.Equal(1, moved.TraitState[SkillKeys.QuangTrungCooldownKey]);
+        Assert.False(moved.TraitState.ContainsKey(SkillKeys.QuangTrungCooldownRemainingKey));
     }
 
     [Fact]
@@ -1282,6 +1312,7 @@ public sealed class XiangqiRulesEngineTests
         var state = State(qt);
         state.SkillStates[Side.Red].Clear();
         state.SkillStates[Side.Red].Add(new SkillState(1, Guid.NewGuid(), null, 1, "some_skill"));
+        qt.TraitState[SkillKeys.QuangTrungCooldownRemainingKey] = 1;
 
         var result = TurnLifecycle.Apply(state, Side.Red);
 
@@ -1291,8 +1322,8 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // QuangTrung_opponent_turn_does_not_affect_cooldown: Opponent's lifecycle does not decrement Red's cooldown.
-    public void QuangTrung_opponent_turn_does_not_affect_cooldown()
+    // A shared board turn decreases cooldown even when the opponent is moving.
+    public void QuangTrung_opponent_turn_decrements_shared_cooldown()
     {
         var qt = QuangTrung(Side.Red, 0, 4);
         var state = State(qt);
@@ -1302,8 +1333,7 @@ public sealed class XiangqiRulesEngineTests
         // Apply Black's turn lifecycle (opponent)
         var result = TurnLifecycle.Apply(state, Side.Black);
 
-        // Red's cooldown should NOT have changed (Black's turn doesn't touch Red's cooldown)
-        Assert.Equal(2, result.State.SkillStates[Side.Red][0].CooldownRemaining);
+        Assert.Equal(1, result.State.SkillStates[Side.Red][0].CooldownRemaining);
         // Red's cooldownReady should NOT be set
         var moved = result.State.Pieces.Single(x => x.PieceId == qt.PieceId);
         Assert.False(moved.TraitState.ContainsKey("cooldownReady") && moved.TraitState["cooldownReady"] == 1);
@@ -1568,19 +1598,19 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // QuangTrungHoanhSocHandler_registered_in_registry: The quang_trung.hoanh_soc handler is registered.
-    public void QuangTrungHoanhSocHandler_registered_in_registry()
+    // QuangTrungSpecialMoveHandler_registered_in_registry: The quang_trung.special_move handler is registered.
+    public void QuangTrungSpecialMoveHandler_registered_in_registry()
     {
         var registry = new MovementHandlerRegistry();
-        Assert.True(registry.TryGet("quang_trung.hoanh_soc", out _));
+        Assert.True(registry.TryGet("quang_trung.special_move", out _));
     }
 
     [Fact]
-    // QuangTrungHoanhSocHandler_returns_up_to_9_orthogonal: Handler generates destinations up to board edge.
-    public void QuangTrungHoanhSocHandler_returns_up_to_9_orthogonal()
+    // The active handler stops after three squares.
+    public void QuangTrungSpecialMoveHandler_returns_up_to_3_orthogonal()
     {
         var registry = new MovementHandlerRegistry();
-        Assert.True(registry.TryGet("quang_trung.hoanh_soc", out var handler));
+        Assert.True(registry.TryGet("quang_trung.special_move", out var handler));
         var piece = new PieceState { PieceId = Guid.NewGuid(), Side = Side.Red, Position = new BoardPoint(4, 4), Status = PieceStatus.Alive };
         var state = new GameState();
         state.Pieces.Add(piece);
@@ -1588,18 +1618,17 @@ public sealed class XiangqiRulesEngineTests
 
         var dests = handler.GenerateDestinations(state, piece).ToArray();
 
-        // Up to 9: (4,3)..(4,0) — 4 positions
+        // Up to three squares in each orthogonal direction.
         Assert.Contains(dests, p => p == new BoardPoint(4, 3));
-        Assert.Contains(dests, p => p == new BoardPoint(4, 0));
-        // Right: (5,4)..(8,4) — 4 positions
-        Assert.Contains(dests, p => p == new BoardPoint(8, 4));
-        // (4,0) blocked by own General — stops before
+        Assert.DoesNotContain(dests, p => p == new BoardPoint(4, 0));
+        Assert.Contains(dests, p => p == new BoardPoint(7, 4));
+        Assert.DoesNotContain(dests, p => p == new BoardPoint(8, 4));
         Assert.DoesNotContain(dests, p => p == new BoardPoint(4, -1));
     }
 
     [Fact]
-    // PhamNguLao_charge_not_consumed_after_normal_move: Charge persists after a non-pass-through movement.
-    public void PhamNguLao_charge_not_consumed_after_normal_move()
+    // The next move consumes Hoành Sóc even if it follows ordinary Rook movement.
+    public void PhamNguLao_charge_consumed_after_next_normal_move()
     {
         var pnl = PhamNguLao(Side.Red, 0, 4);
         pnl.TraitState["hoanhSocCharged"] = 1;
@@ -1614,8 +1643,7 @@ public sealed class XiangqiRulesEngineTests
 
         Assert.True(result.Accepted);
         var moved = result.State.Pieces.Single(x => x.PieceId == pnl.PieceId);
-        // Charge should PERSIST — it was NOT consumed
-        Assert.True(moved.TraitState.TryGetValue("hoanhSocCharged", out var v) && v == 1);
+        Assert.False(moved.TraitState.TryGetValue("hoanhSocCharged", out var v) && v == 1);
     }
 
     [Fact]
@@ -1666,8 +1694,8 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // PhamNguLao_pass_through_capture_does_not_recharge: Pass-through capture consumes charge and does NOT recharge.
-    public void PhamNguLao_pass_through_capture_does_not_recharge()
+    // A pass-through capture earns a fresh charge for the following move.
+    public void PhamNguLao_pass_through_capture_recharges()
     {
         var pnl = PhamNguLao(Side.Red, 0, 4);
         pnl.TraitState["hoanhSocCharged"] = 1;
@@ -1686,8 +1714,23 @@ public sealed class XiangqiRulesEngineTests
 
         Assert.True(result.Accepted);
         var moved = result.State.Pieces.Single(x => x.PieceId == pnl.PieceId);
-        // Charge should be consumed (not recharged)
-        Assert.False(moved.TraitState.TryGetValue("hoanhSocCharged", out var v) && v == 1);
+        Assert.True(moved.TraitState.TryGetValue("hoanhSocCharged", out var v) && v == 1);
+    }
+
+    [Fact]
+    public void PhamNguLao_charge_cannot_pass_two_allies_or_Thanh()
+    {
+        var pnl = PhamNguLao(Side.Red, 0, 2);
+        pnl.TraitState[SkillKeys.HoanhSocChargedKey] = 1;
+        var state = State(pnl,
+            Piece(PieceClass.Soldier, Side.Red, 1, 2),
+            Piece(PieceClass.Soldier, Side.Red, 3, 2));
+        state.Obstacles.Add(new ObstacleState(Guid.NewGuid(), new BoardPoint(0, 3), SkillKeys.ObstacleKindThanh));
+
+        var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == pnl.PieceId).ToArray();
+        Assert.Contains(moves, x => x.To == new BoardPoint(2, 2));
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(4, 2));
+        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(0, 4));
     }
 
     [Fact]
@@ -1758,8 +1801,31 @@ public sealed class XiangqiRulesEngineTests
 
         // LKT Xe can attack enemy at (0,3) by bypassing Thành at (0,1)
         Assert.Contains(moves, x => x.To == new BoardPoint(0, 3) && x.CapturedPieceId == enemy.PieceId);
-        // Cannot pass through Thành cell itself
-        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(0, 1));
+        Assert.Contains(moves, x => x.To == new BoardPoint(0, 1));
+    }
+
+    [Fact]
+    public void LyThuongKietXe_can_break_or_pass_multiple_obstacles()
+    {
+        var xe = LyThuongKietXe(Side.Red, 0, 2);
+        var thanh = new ObstacleState(Guid.NewGuid(), new BoardPoint(1, 2), SkillKeys.ObstacleKindThanh);
+        var rao = new ObstacleState(Guid.NewGuid(), new BoardPoint(2, 2), SkillKeys.ObstacleKindRao);
+        var state = State(xe);
+        state.Obstacles.Add(thanh);
+        state.Obstacles.Add(rao);
+
+        var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == xe.PieceId).ToArray();
+        Assert.Contains(moves, x => x.To == thanh.Position);
+        Assert.Contains(moves, x => x.To == rao.Position);
+        Assert.Contains(moves, x => x.To == new BoardPoint(3, 2));
+
+        var through = _rules.ApplyMove(state, new MoveAction(xe.PieceId, new BoardPoint(3, 2)));
+        Assert.True(through.Accepted);
+        Assert.Equal(2, through.State.Obstacles.Count);
+        var breakThanh = _rules.ApplyMove(state, new MoveAction(xe.PieceId, thanh.Position));
+        Assert.True(breakThanh.Accepted);
+        Assert.DoesNotContain(breakThanh.State.Obstacles, x => x.ObstacleId == thanh.ObstacleId);
+        Assert.Contains(breakThanh.State.Obstacles, x => x.ObstacleId == rao.ObstacleId);
     }
 
     [Fact]
@@ -1843,9 +1909,9 @@ public sealed class XiangqiRulesEngineTests
     };
 
     [Fact]
-    // LyThuongKietPhao_Thanh_not_screen: Thành does not serve as cannon screen for LKT Pháo.
+    // Thành serves as a cannon screen for LKT Pháo.
     // Use y=2 to avoid auto-added Red General at (3,0).
-    public void LyThuongKietPhao_Thanh_not_screen()
+    public void LyThuongKietPhao_Thanh_is_screen()
     {
         var lktPhao = LyThuongKietPhao(Side.Red, 0, 2);
         var screen = Piece(PieceClass.Soldier, Side.Red, 0, 1);
@@ -1856,8 +1922,7 @@ public sealed class XiangqiRulesEngineTests
 
         var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == lktPhao.PieceId).ToArray();
 
-        // LKT Pháo can capture enemy at (2,2) — Thành at (1,2) is NOT a valid screen.
-        // Path: (0,2) → (0,1)[screen] → (2,2)[enemy via (1,2) not counting].
+        Assert.Contains(moves, x => x.To == new BoardPoint(1, 2));
         Assert.Contains(moves, x => x.To == new BoardPoint(2, 2) && x.CapturedPieceId == enemy.PieceId);
     }
 
@@ -1881,17 +1946,8 @@ public sealed class XiangqiRulesEngineTests
     }
 
     [Fact]
-    // LyThuongKietPhao_destroys_Thanh_without_moving: LKT Pháo destroys Thành when capturing past it.
-    // This test verifies the capture-during-destruction mechanic works.
-    // Cannon at (0,3), allied screen at (0,0), Thành at (1,3), enemy at (5,3).
-    // Red General at (3,0) — same column as enemy Rook but different y, so not in line of attack.
-    // LKT Pháo: Thành at (1,3) is NOT a screen. Screen at (0,0) → capture at (5,3).
-    // LyThuongKietPhao_destroys_Thanh_without_moving: LKT Pháo destroys Thành when moving through it.
-    // This test verifies the Thành-destruction mechanic: when LKT Pháo makes an orthogonal
-    // move whose path passes through a Thành, the Thành is destroyed. The piece moves normally.
-    // Setup: LKT Pháo at (0,3), Thành at (1,3), empty path to (2,3). Thành is in the path.
-    // LKT Pháo moves to (2,3). Thành at (1,3) is destroyed. Cannon ends at (2,3).
-    public void LyThuongKietPhao_destroys_Thanh_without_moving()
+    // Moving into Thành destroys it and leaves the cannon on that square.
+    public void LyThuongKietPhao_destroys_Thanh_and_enters_cell()
     {
         var lktPhao = LyThuongKietPhao(Side.Red, 0, 3);
         var thanh = new ObstacleState(Guid.NewGuid(), new BoardPoint(1, 3), SkillKeys.ObstacleKindThanh);
@@ -1902,31 +1958,29 @@ public sealed class XiangqiRulesEngineTests
         state.Pieces.Add(Piece(PieceClass.General, Side.Black, 5, 9));
         state.Obstacles.Add(thanh);
 
-        // LKT Pháo moves to (2,3). Thành at (1,3) is in the path → destroyed.
-        var result = _rules.ApplyMove(state, new MoveAction(lktPhao.PieceId, new BoardPoint(2, 3)));
+        var result = _rules.ApplyMove(state, new MoveAction(lktPhao.PieceId, new BoardPoint(1, 3)));
 
         Assert.True(result.Accepted, $"Move should be accepted but got: {result.Error}");
         // Thành should be destroyed
         Assert.DoesNotContain(result.State.Obstacles, o => o.Kind == SkillKeys.ObstacleKindThanh);
-        // Cannon moved to (2,3)
+        // Cannon enters the destroyed Thành's cell.
         var moved = result.State.Pieces.Single(x => x.PieceId == lktPhao.PieceId);
-        Assert.Equal(new BoardPoint(2, 3), moved.Position);
+        Assert.Equal(new BoardPoint(1, 3), moved.Position);
     }
 
     [Fact]
-    // LyThuongKietPhao_cannot_capture_without_screen: Without a valid cannon screen, LKT Pháo cannot capture.
-    public void LyThuongKietPhao_cannot_capture_piece_through_Thanh_without_screen()
+    // Thành can be the screen for a capture.
+    public void LyThuongKietPhao_captures_piece_using_Thanh_as_screen()
     {
-        var lktPhao = LyThuongKietPhao(Side.Red, 0, 0);
-        var thanh = new ObstacleState(Guid.NewGuid(), new BoardPoint(2, 0), SkillKeys.ObstacleKindThanh);
-        var enemy = Piece(PieceClass.Rook, Side.Black, 5, 0);
+        var lktPhao = LyThuongKietPhao(Side.Red, 0, 2);
+        var thanh = new ObstacleState(Guid.NewGuid(), new BoardPoint(2, 2), SkillKeys.ObstacleKindThanh);
+        var enemy = Piece(PieceClass.Rook, Side.Black, 5, 2);
         var state = State(lktPhao, enemy);
         state.Obstacles.Add(thanh);
 
         var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == lktPhao.PieceId).ToArray();
 
-        // No capture past Thành — Thành is not a screen, so path has no screen
-        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(5, 0));
+        Assert.Contains(moves, x => x.To == new BoardPoint(5, 2) && x.CapturedPieceId == enemy.PieceId);
     }
 
     [Fact]
@@ -1960,8 +2014,7 @@ public sealed class XiangqiRulesEngineTests
 
         var moves = _rules.GenerateLegalActions(state).Where(x => x.PieceId == cannon.PieceId).ToArray();
 
-        // Thành at (2,0) blocks cannon movement to (2,0).
-        Assert.DoesNotContain(moves, x => x.To == new BoardPoint(2, 0));
+        Assert.Contains(moves, x => x.To == new BoardPoint(2, 0));
         // Thành at (2,0) acts as the cannon screen — cannot also use screen piece at (1,0).
         // Cannon sees: screen at (1,0) → another piece/obstacle at (2,0) → invalid capture at (3,0).
         Assert.DoesNotContain(moves, x => x.To == new BoardPoint(3, 0));

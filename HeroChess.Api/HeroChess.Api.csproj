@@ -27,6 +27,8 @@
     <Content Include="Data\Bootstrap\05_app_extensions.sql" Link="Database\05_app_extensions.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\06_user_inheritance.sql" Link="Database\06_user_inheritance.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\07_exclusive_hero_traits.sql" Link="Database\07_exclusive_hero_traits.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\08_step6_skills.sql" Link="Database\08_step6_skills.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\09_hero_movement_fixes.sql" Link="Database\09_hero_movement_fixes.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -9,6 +9,10 @@
 BEGIN;
 SET LOCAL search_path = hero_chess, pg_catalog;
 
+INSERT INTO ruleset(id,code,name,setup_budget,turn_seconds,action_limit,is_active)
+VALUES ('10000000-0000-4000-8000-000000000001','prototype-v0.1','Hero Chess prototype',50,90,150,true)
+ON CONFLICT DO NOTHING;
+
 -- A. chess_class: Update ELEPHANT base from 1 to 2 per design note.
 UPDATE chess_class SET base_sp = 2 WHERE code = 'ELEPHANT';
 INSERT INTO chess_class(code,name_vi,base_sp,required_count,base_movement_code) VALUES
@@ -17,9 +21,17 @@ INSERT INTO chess_class(code,name_vi,base_sp,required_count,base_movement_code) 
  ('CANNON','Phao',6,2,'xiangqi.cannon'),('HORSE','Ma',4,2,'xiangqi.horse'),
  ('SOLDIER','Tot',1,5,'xiangqi.soldier') ON CONFLICT (code) DO UPDATE SET base_sp = EXCLUDED.base_sp;
 
+INSERT INTO lineup_slot(slot_no,class_code,start_x,start_y) VALUES
+ (1,'ROOK',0,0),(2,'HORSE',1,0),(3,'ELEPHANT',2,0),(4,'ADVISOR',3,0),
+ (5,'GENERAL',4,0),(6,'ADVISOR',5,0),(7,'ELEPHANT',6,0),(8,'HORSE',7,0),
+ (9,'ROOK',8,0),(10,'CANNON',1,2),(11,'CANNON',7,2),
+ (12,'SOLDIER',0,3),(13,'SOLDIER',2,3),(14,'SOLDIER',4,3),
+ (15,'SOLDIER',6,3),(16,'SOLDIER',8,3)
+ON CONFLICT (slot_no) DO NOTHING;
+
 -- B. historical_character: 44 roster heroes (45 minus duplicate Nguyen Trai).
 --    Nguyen Nhac / Nguyen Lu appear in both Si and Tuong sections; distinct chars per variant.
-INSERT INTO historical_character(id,code,name) VALUES
+CREATE TEMP TABLE seed_characters ON COMMIT DROP AS SELECT * FROM (VALUES
  -- Si variants
  ('50000000-0000-4000-8000-000000000001','nguyen-trai-1','Nguyen Trai'),
  ('50000000-0000-4000-8000-000000000002','nguyen-trung-ngan','Nguyen Trung Ngan'),
@@ -69,8 +81,11 @@ INSERT INTO historical_character(id,code,name) VALUES
  ('50000000-0000-4000-8000-000000000042','luu-nhan-chu','Luu Nhan Chu'),
  ('50000000-0000-4000-8000-000000000043','le-sat','Le Sat'),
  ('50000000-0000-4000-8000-000000000044','ly-van-bu','Ly Van Bu'),
- ('50000000-0000-4000-8000-000000000045','vo-dinh-tu','Vo Dinh Tu')
- ON CONFLICT (code) DO NOTHING;
+ ('50000000-0000-4000-8000-000000000045','vo-dinh-tu','Vo Dinh Tu')) AS chars(seed_id,code,name);
+INSERT INTO historical_character(id,code,name)
+SELECT CASE WHEN EXISTS (SELECT 1 FROM historical_character existing WHERE existing.id = chars.seed_id::uuid AND existing.code <> chars.code)
+            THEN gen_random_uuid() ELSE chars.seed_id::uuid END, chars.code, chars.name
+FROM seed_characters chars WHERE true ON CONFLICT (code) DO NOTHING;
 
 -- C. hero_trait: Heroes with confirmed custom movement.
 --    Existing traits (from prior seed):
@@ -84,18 +99,34 @@ INSERT INTO historical_character(id,code,name) VALUES
 --      general.orthogonal_range_3     (Quang Trung): orthogonal 1-3 cells, blocked like Rook
 --      general.orthogonal_range_1_no_palace (Tran Hung Dao Tướng): orthogonal 1 cell, no palace, no river
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
+ ('30000000-0000-4000-8000-000000000001','elephant-diagonal-1-2','Trần Bình Trọng đi chéo 1–2 ô','special_move','elephant.diagonal_range',
+  '{"minSteps":1,"maxSteps":2,"ownHalfOnly":true,"canJump":false}', 'Đi chéo 1–2 ô trên phần sân nhà.') ON CONFLICT DO NOTHING;
+INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
+ ('30000000-0000-4000-8000-000000000002','da-tuong-diagonal','Dã Tượng luân phiên tầm đi','special_move','elephant.alternating_distance',
+  '{}', 'Tầm đi chéo thay đổi sau mỗi nước.') ON CONFLICT DO NOTHING;
+INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
+ ('327e712d-26d2-5da4-5c9a-87a1ff74c1e1','bui-thi-xuan-diagonal-1-2','Bùi Thị Xuân đi chéo 1–2 ô','special_move','elephant.diagonal_range',
+  '{"minSteps":1,"maxSteps":2,"ownHalfOnly":true,"canJump":false}', 'Đi chéo 1–2 ô trên phần sân nhà.') ON CONFLICT DO NOTHING;
+INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
  ('30000000-0000-4000-8000-000000000003','elephant-river-crossing','Trung Trac / Trung Nhi di chéo qua sông','special_move','elephant.river_crossing',
+ '{"minSteps":1,"maxSteps":2,"ownHalfOnly":false,"canJump":false}',
+ 'Đi chéo 1–2 ô; không nhảy mắt; có thể qua sông.') ON CONFLICT DO NOTHING;
+INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
+ ('30000000-0000-4000-8000-000000000010','trung-nhi-river-crossing','Trưng Nhị đi chéo qua sông','special_move','elephant.river_crossing',
  '{"minSteps":1,"maxSteps":2,"ownHalfOnly":false,"canJump":false}',
  'Đi chéo 1–2 ô; không nhảy mắt; có thể qua sông.') ON CONFLICT DO NOTHING;
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
  ('30000000-0000-4000-8000-000000000004','le-loi-king-move','Le Loi di 1 ô 8 hướng','special_move','general.king_move',
  '{"maxSteps":1,"orthogonal":true,"diagonal":true,"palaceOnly":true}',
  'Đi tối đa 1 ô theo 8 hướng; giới hạn trong cung của mình.') ON CONFLICT DO NOTHING;
--- STEP 3: Quang Trung — orthogonal 1-3, blocked like Rook, no river crossing.
+-- Quang Trung: one-square normal movement; active skill travels up to three squares.
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
- ('30000000-0000-4000-8000-000000000005','quang-trung-orthogonal-3','Quang Trung đi thẳng 1–3 ô','special_move','general.orthogonal_range_3',
- '{"minSteps":1,"maxSteps":3,"orthogonal":true,"diagonal":false,"riverCrossing":false}',
- 'Đi thẳng 1–3 ô; bị chặn như Xe; không qua sông.') ON CONFLICT DO NOTHING;
+ ('30000000-0000-4000-8000-000000000005','quang-trung-orthogonal-3','Quang Trung — hành quân thần tốc','active','quang_trung.special_move',
+ '{"minSteps":1,"maxSteps":3,"orthogonal":true,"palaceOnly":false,"riverCrossing":false,"cooldownTurns":3}',
+ 'Đi thường 1 ô thẳng, được ra khỏi cung nhưng không qua sông. Bấm skill để đi thẳng 1–3 ô; hồi chiêu 3 lượt chung.') ON CONFLICT DO NOTHING;
+INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
+ ('30000000-0000-4000-8000-000000000011','pham-ngu-lao-hoanh-soc','Hoành Sóc Giang Sơn','special_move','rook.hoanh_soc',
+ '{}','Sau khi Phạm Ngũ Lão ăn một quân, nước đi tiếp theo của chính quân này có thể đi xuyên tối đa một quân đồng minh.') ON CONFLICT DO NOTHING;
 -- STEP 3: Tran Hung Dao (GENERAL) — orthogonal 1 cell, can leave palace, cannot cross river.
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
  ('30000000-0000-4000-8000-000000000006','tran-hung-dao-tuong-no-palace','Tran Hung Dao Tướng đi 1 ô thẳng','special_move','general.orthogonal_range_1_no_palace',
@@ -120,7 +151,12 @@ INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,descripti
 --    Red-marked (Nguyen Trung Ngan, Dinh Liet, Tran Khat Chan, Luu Nhan Chu):
 --      no gameplay meaning assigned in this step.
 --    Pham Ngu Lao: note "8d( co the 9d)" stored as 8d; 9d ambiguity noted.
-INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,description) VALUES
+INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,description)
+SELECT CASE WHEN EXISTS (SELECT 1 FROM hero existing WHERE existing.id = seeded.id::uuid AND existing.code <> seeded.code)
+            THEN gen_random_uuid() ELSE seeded.id::uuid END,
+       seeded.code, actual_character.id, seeded.class_code, seeded.trait_id::uuid, seeded.name,
+       seeded.setup_points, true, seeded.is_test_fixture, seeded.coin_price, seeded.description
+FROM (VALUES
  -- === SI (ADVISOR) ===
  ('60000000-0000-4000-8000-000000000001','nguyen-trai-1-advisor','50000000-0000-4000-8000-000000000001','ADVISOR',NULL,'Nguyen Trai',1,false,false,0,'Si 1d; base ADVISOR movement. First Nguyen Trai entry from note.'),
  ('60000000-0000-4000-8000-000000000002','nguyen-trung-ngan-advisor','50000000-0000-4000-8000-000000000002','ADVISOR',NULL,'Nguyen Trung Ngan',1,false,false,0,'Si 1d; red-marked - no gameplay meaning assigned.'),
@@ -136,16 +172,16 @@ INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_e
  -- SP modifiers (-1d, -2d) stored as 0 pending lineup validation design.
  ('60000000-0000-4000-8000-000000000011','tran-hung-dao-general','50000000-0000-4000-8000-000000000011','GENERAL','30000000-0000-4000-8000-000000000006','Tran Hung Dao',0,false,false,0,'Tuong 0d; design note -1d modifier pending design. Movement: general.orthogonal_range_1_no_palace IMPLEMENTED.'),
  ('60000000-0000-4000-8000-000000000012','le-loi-general','50000000-0000-4000-8000-000000000012','GENERAL','30000000-0000-4000-8000-000000000004','Le Loi',0,false,false,0,'Tuong 0d; design note -1d modifier pending design. Movement: general.king_move IMPLEMENTED.'),
- ('60000000-0000-4000-8000-000000000013','quang-trung-general','50000000-0000-4000-8000-000000000013','GENERAL','30000000-0000-4000-8000-000000000005','Quang Trung',0,false,false,0,'Vua 0d; design note -2d modifier pending design. Movement: general.orthogonal_range_3 IMPLEMENTED.'),
- ('60000000-0000-4000-8000-000000000014','nguyen-nhac-general','50000000-0000-4000-8000-000000000014','GENERAL',NULL,'Nguyen Nhac',0,false,false,0,'Tuong 0d; Nguyen Nhac also has Si variant (1d). No custom rule.'),
- ('60000000-0000-4000-8000-000000000015','nguyen-lu-general','50000000-0000-4000-8000-000000000015','GENERAL',NULL,'Nguyen Lu',0,false,false,0,'Tuong 0d; Nguyen Lu also has Si variant (1d). No custom rule.'),
+ ('60000000-0000-4000-8000-000000000013','quang-trung-general','50000000-0000-4000-8000-000000000013','GENERAL','30000000-0000-4000-8000-000000000005','Quang Trung',0,false,false,0,'Tướng đi thường 1 ô thẳng, được ra khỏi cung, không qua sông; skill đi thẳng 1–3 ô với CD 3.'),
+ ('60000000-0000-4000-8000-000000000014','nguyen-nhac-general','50000000-0000-4000-8000-000000000009','GENERAL',NULL,'Nguyen Nhac',0,false,false,0,'Tuong 0d; Nguyen Nhac also has Si variant (1d). No custom rule.'),
+ ('60000000-0000-4000-8000-000000000015','nguyen-lu-general','50000000-0000-4000-8000-000000000010','GENERAL',NULL,'Nguyen Lu',0,false,false,0,'Tuong 0d; Nguyen Lu also has Si variant (1d). No custom rule.'),
  ('60000000-0000-4000-8000-000000000016','tran-thanh-tong-general','50000000-0000-4000-8000-000000000016','GENERAL',NULL,'Tran Thanh Tong',0,false,false,0,'Tuong 0d; no custom rule noted.'),
  -- === TUONG (ELEPHANT) ===
  -- Da Tuong: trait elephant.alternating_distance (existing ID).
  -- Tran Binh Trong: trait elephant.diagonal_range (existing ID).
  -- Bui Thi Xuan: trait elephant.diagonal_range (existing BXU variant ID).
  -- Tran Hung Dao (ELEPHANT): design note 3d. SP >= 1 satisfied by value 3.
- ('60000000-0000-4000-8000-000000000017','tran-hung-dao-elephant','50000000-0000-4000-8000-000000000017','ELEPHANT',NULL,'Tran Hung Dao',3,false,false,0,'Tuong 3d; design note 3d. Skill tao coc an tren song chua implement.'),
+ ('60000000-0000-4000-8000-000000000017','tran-hung-dao-elephant','50000000-0000-4000-8000-000000000011','ELEPHANT',NULL,'Tran Hung Dao',3,false,false,0,'Tuong 3d; Bạch Đằng Giang active skill.'),
  ('60000000-0000-4000-8000-000000000018','da-tuong-elephant','50000000-0000-4000-8000-000000000018','ELEPHANT','30000000-0000-4000-8000-000000000002','Da Tuong',3,false,false,0,'Tuong 3d; movement: elephant.alternating_distance. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000019','tran-binh-trong-elephant','50000000-0000-4000-8000-000000000019','ELEPHANT','30000000-0000-4000-8000-000000000001','Tran Binh Trong',2,false,false,0,'Tuong 2d; movement: elephant.diagonal_range. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000020','le-khoi-elephant','50000000-0000-4000-8000-000000000020','ELEPHANT',NULL,'Le Khoi',1,false,false,0,'Tuong 1d; standard ELEPHANT movement. COMPLETE (base).'),
@@ -153,11 +189,11 @@ INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_e
  ('60000000-0000-4000-8000-000000000022','bui-thi-xuan-elephant','50000000-0000-4000-8000-000000000022','ELEPHANT','327e712d-26d2-5da4-5c9a-87a1ff74c1e1','Bui Thi Xuan',2,false,false,0,'Tuong 2d; movement: elephant.diagonal_range. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000023','le-van-hung-elephant','50000000-0000-4000-8000-000000000023','ELEPHANT',NULL,'Le Van Hung',1,false,false,0,'Tuong 1d; standard ELEPHANT movement. COMPLETE (base).'),
  ('60000000-0000-4000-8000-000000000024','trung-trac-elephant','50000000-0000-4000-8000-000000000024','ELEPHANT','30000000-0000-4000-8000-000000000003','Trung Trac',3,false,false,0,'Tuong 3d; movement: elephant.river_crossing IMPLEMENTED.'),
- ('60000000-0000-4000-8000-000000000025','trung-nhi-elephant','50000000-0000-4000-8000-000000000025','ELEPHANT','30000000-0000-4000-8000-000000000003','Trung Nhi',3,false,false,0,'Tuong 3d; movement: elephant.river_crossing IMPLEMENTED.'),
+ ('60000000-0000-4000-8000-000000000025','trung-nhi-elephant','50000000-0000-4000-8000-000000000025','ELEPHANT','30000000-0000-4000-8000-000000000010','Trung Nhi',3,false,false,0,'Tuong 3d; movement: elephant.river_crossing IMPLEMENTED.'),
  -- === XE (ROOK) ===
- ('60000000-0000-4000-8000-000000000026','pham-ngu-lao-rook','50000000-0000-4000-8000-000000000026','ROOK',NULL,'Pham Ngu Lao',8,false,false,0,'Xe 8d; design note 8d( co the 9d) stored as 8d; 9d ambiguity noted. Skill hoanh soc giang son chua implement.'),
+ ('60000000-0000-4000-8000-000000000026','pham-ngu-lao-rook','50000000-0000-4000-8000-000000000026','ROOK','30000000-0000-4000-8000-000000000011','Pham Ngu Lao',8,false,false,0,'Xe 8 SP. Hoành Sóc Giang Sơn: sau khi ăn một quân, nước đi tiếp theo có thể xuyên một quân đồng minh.'),
  ('60000000-0000-4000-8000-000000000027','tran-khanh-du-rook','50000000-0000-4000-8000-000000000027','ROOK',NULL,'Tran Khanh Du',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
- ('60000000-0000-4000-8000-000000000028','ly-thuong-kiet-rook','50000000-0000-4000-8000-000000000028','ROOK',NULL,'Ly Thuong Kiet',8,false,false,0,'Xe 8d; passive ko bi can boi thanh rao coc chua implement.'),
+ ('60000000-0000-4000-8000-000000000028','ly-thuong-kiet-rook','50000000-0000-4000-8000-000000000028','ROOK',NULL,'Ly Thuong Kiet',8,false,false,0,'Xe 8 SP; đi qua Thành/Rào hoặc vào ô đó để phá.'),
  ('60000000-0000-4000-8000-000000000029','dinh-liet-rook','50000000-0000-4000-8000-000000000029','ROOK',NULL,'Dinh Liet',7,false,false,0,'Xe 7d; red-marked - no gameplay meaning. Base ROOK movement.'),
  ('60000000-0000-4000-8000-000000000030','tran-nguyen-han-rook','50000000-0000-4000-8000-000000000030','ROOK',NULL,'Tran Nguyen Han',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000031','vo-van-dung-rook','50000000-0000-4000-8000-000000000031','ROOK',NULL,'Vo Van Dung',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
@@ -165,7 +201,7 @@ INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_e
  -- === PHAO (CANNON) ===
  ('60000000-0000-4000-8000-000000000033','tran-khat-chan-cannon','50000000-0000-4000-8000-000000000033','CANNON',NULL,'Tran Khat Chan',6,false,false,0,'Phao 6d; red-marked - no gameplay meaning. Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000034','yet-kieu-cannon','50000000-0000-4000-8000-000000000034','CANNON',NULL,'Yet Kieu',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
- ('60000000-0000-4000-8000-000000000035','ly-thuong-kiet-cannon','50000000-0000-4000-8000-000000000035','CANNON',NULL,'Ly Thuong Kiet',6,false,false,0,'Phao 6d; passive same as Xe variant: ko bi can boi thanh rao coc chua implement.'),
+ ('60000000-0000-4000-8000-000000000035','ly-thuong-kiet-cannon','50000000-0000-4000-8000-000000000028','CANNON',NULL,'Ly Thuong Kiet',6,false,false,0,'Pháo 6 SP; dùng Thành hoặc Rào làm ngòi, có thể vào ô Thành để phá.'),
  ('60000000-0000-4000-8000-000000000036','dinh-le-cannon','50000000-0000-4000-8000-000000000036','CANNON',NULL,'Dinh Le',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000037','nguyen-xi-cannon','50000000-0000-4000-8000-000000000037','CANNON',NULL,'Nguyen Xi',6,false,false,0,'Phao 6d; base CANNON movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000038','nguyen-van-tuyet-cannon','50000000-0000-4000-8000-000000000038','CANNON',NULL,'Nguyen Van Tuyet',6,false,false,0,'Phao 6d; base CANNON movement. COMPLETE.'),
@@ -176,8 +212,12 @@ INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_e
  ('60000000-0000-4000-8000-000000000042','luu-nhan-chu-horse','50000000-0000-4000-8000-000000000042','HORSE',NULL,'Luu Nhan Chu',4,false,false,0,'Ma 4d; red-marked - no gameplay meaning. Base HORSE movement.'),
  ('60000000-0000-4000-8000-000000000043','le-sat-horse','50000000-0000-4000-8000-000000000043','HORSE',NULL,'Le Sat',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000044','ly-van-bu-horse','50000000-0000-4000-8000-000000000044','HORSE',NULL,'Ly Van Bu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
- ('60000000-0000-4000-8000-000000000045','vo-dinh-tu-horse','50000000-0000-4000-8000-000000000045','HORSE',NULL,'Vo Dinh Tu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.')
+ ('60000000-0000-4000-8000-000000000045','vo-dinh-tu-horse','50000000-0000-4000-8000-000000000045','HORSE',NULL,'Vo Dinh Tu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'))
+ AS seeded(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,description)
+ JOIN seed_characters expected_character ON expected_character.seed_id::uuid = seeded.character_id::uuid
+ JOIN historical_character actual_character ON actual_character.code = expected_character.code
+ WHERE true
  ON CONFLICT (code) DO UPDATE SET character_id = EXCLUDED.character_id, class_code = EXCLUDED.class_code,
-   trait_id = EXCLUDED.trait_id, name = EXCLUDED.name, setup_points = EXCLUDED.setup_points,
-   description = EXCLUDED.description;
+   trait_id = EXCLUDED.trait_id, name = EXCLUDED.name,
+   description = EXCLUDED.description, is_enabled = true;
 COMMIT;

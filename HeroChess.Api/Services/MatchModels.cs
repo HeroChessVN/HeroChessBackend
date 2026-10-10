@@ -7,9 +7,11 @@ namespace HeroChess.Api.Services;
 public sealed record FrozenLineup(Guid LineupId, int Revision, int TotalSp, IReadOnlyList<FrozenPiece> Pieces, IReadOnlyList<FrozenSkill> Skills);
 // FrozenPiece: Hero/class/SP/vị trí/trait key đã đóng băng cho một slot.
 public sealed record FrozenPiece(int SlotNo, Guid HeroId, string ClassCode, int SetupPoints, int StartX, int StartY, string? MovementImplementationKey, Guid? CosmeticId,
-    string? TraitKind = null, string? TraitImplementationKey = null);
+    string? TraitKind = null, string? TraitImplementationKey = null, string? HeroName = null, string? TraitName = null,
+    string? TraitDescription = null, JsonElement? TraitParameters = null);
 // FrozenSkill: Skill key, charge và cooldown đã đóng băng; chưa thực thi gameplay.
-public sealed record FrozenSkill(int SlotNo, Guid SkillId, string ImplementationKey, int? MaxUses, int CooldownTurns);
+public sealed record FrozenSkill(int SlotNo, Guid SkillId, string ImplementationKey, int? MaxUses, int CooldownTurns,
+    string? Name = null, string? Description = null, JsonElement? Parameters = null);
 // RulesetSnapshot: Bộ luật và policy thưởng/Elo của trận, giữ đúng giá trị dù config sau này đổi.
 public sealed record RulesetSnapshot(string Code, int SetupBudget, int TurnSeconds, int ActionLimit, JsonElement Config,
     string RatingPolicyVersion, string RewardPolicyVersion, int EloKFactor, int WinnerCoinReward, int DrawCoinReward);
