@@ -31,3 +31,10 @@ export function skillTarget(key, point, effectId, targetPieceId = null) {
   if (key === 'pha_tran_doat_phong') return effectId && { effectId };
   return null;
 }
+
+export function canPlaceStructure(side, x, y, piece, obstacles) {
+  return (side === 'red' ? y <= 4 : side === 'black' && y >= 5) && !piece &&
+    !obstacles.some(item => item.position?.x === x && item.position?.y === y && item.kind !== 'thd_tuong_coc');
+}
+
+export const pollRetryDelay = status => status >= 500 ? 10000 : 3000;

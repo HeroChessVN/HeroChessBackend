@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, skillTarget } from './api.js';
+import { api, canPlaceStructure, pollRetryDelay, skillTarget } from './api.js';
 import { actionLabel } from './history.js';
 
 const classes = { general: 'TƯỚNG', advisor: 'SĨ', elephant: 'TƯỢNG', rook: 'XE', cannon: 'PHÁO', horse: 'MÃ', soldier: 'TỐT' };
@@ -31,6 +31,7 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
   const [replayIndex, setReplayIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
   const clockOffset = useRef(0);
 
   const accept = useCallback(next => {
@@ -49,9 +50,13 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
   }, [token, matchId, accept]);
 
   useEffect(() => {
-    refresh().catch(onError);
-    const interval = setInterval(() => refresh().catch(onError), 3000);
-    return () => clearInterval(interval);
+    let stopped = false; let timer;
+    async function poll() {
+      try { await refresh(); if (!stopped) timer = setTimeout(poll, 3000); }
+      catch (error) { if (!stopped) { onError(error); timer = setTimeout(poll, pollRetryDelay(error.status)); } }
+    }
+    poll();
+    return () => { stopped = true; clearTimeout(timer); };
   }, [refresh]);
 
   useEffect(() => {
@@ -72,14 +77,17 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
           if (message.type === 'match.changed') refresh().catch(onError);
           if (message.payload?.snapshot) accept(message.payload.snapshot);
           if (message.type === 'match.command_accepted') setPending(previous => previous?.commandId === message.payload?.commandId ? null : previous);
-          if (message.type === 'match.command_rejected') onError(new Error(`${message.payload?.code}: ${message.payload?.message}`));
+          if (message.type === 'match.command_rejected') {
+            setPending(previous => previous?.commandId === message.payload?.commandId ? null : previous);
+            setActionError(message.payload?.code === 'CELL_OCCUPIED' ? 'Ô này đang có quân hoặc vật cản. Hãy chọn ô trống.' : message.payload?.message || 'Lệnh không hợp lệ.');
+          }
           if (message.payload?.resolvedEvents) setEvents(previous => [...message.payload.resolvedEvents, ...previous].slice(0, 12));
           if (message.type === 'match.ended' || message.type === 'match.settled') refresh().catch(onError);
         };
         socket.onclose = () => { if (!stopped) { setSocketStatus('mất kết nối · đang thử lại'); retry = setTimeout(connect, 1500); } };
         socket.onerror = () => setSocketStatus('mất kết nối');
       } catch (error) {
-        if (!stopped) { setSocketStatus('REST polling'); retry = setTimeout(connect, 2000); }
+        if (!stopped) { setSocketStatus('REST polling'); retry = setTimeout(connect, pollRetryDelay(error.status)); }
       }
     }
     connect();
@@ -123,18 +131,28 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
 
   async function submit(payload) {
     setBusy(true);
+    setActionError('');
     try {
       const result = await api(token, `/matches/${matchId}/commands`, { method: 'POST', body: payload });
       setPending(null); accept(result.snapshot);
       setEvents(previous => [...(result.resolvedEvents || []), ...previous].slice(0, 12));
     } catch (error) {
-      onError(error);
-      if (error.status >= 400 && error.status < 500) setPending(null);
+      setActionError(error.code === 'CELL_OCCUPIED' ? 'Ô này đang có quân hoặc vật cản. Hãy chọn ô trống.' : error.message);
+      if (error.status) setPending(null);
       await refresh().catch(onError);
     } finally { setBusy(false); }
   }
   function command(action) {
     if (pending || !snapshot || snapshot.status !== 'active') return;
+    if (action.type === 'team_skill' && pointSkills.has(activeInfo?.implementationKey)) {
+      const { x, y } = action.target.position;
+      if (!canPlaceStructure(ownSide, x, y, pieces.find(piece => piece.position.x === x && piece.position.y === y), obstacles)) {
+        setTargetPoint(null);
+        setActionError('Thành/Rào chỉ đặt được vào ô trống bên sông mình.');
+        return;
+      }
+    }
+    setActionError('');
     const payload = { commandId: crypto.randomUUID(), expectedVersion: snapshot.version, action };
     setPending(payload); submit(payload);
   }
@@ -197,13 +215,22 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
     if (heroTargetMode === 'stake') { if ((y === 4 || y === 5) && !piece && !obstacles.some(item => item.position?.x === x && item.position?.y === y)) setTargetPoint({ x, y }); return; }
     if (heroTargetMode === 'quangtrung') { if (heroMoves.some(move => move.toX === x && move.toY === y)) setTargetPoint({ x, y }); return; }
     if (activeInfo?.implementationKey === 'khien') { setTargetPieceId(piece?.side === ownSide ? piece.pieceId : null); return; }
-    if (activeInfo && pointSkills.has(activeInfo.implementationKey)) { setTargetPoint({ x, y }); return; }
+    if (activeInfo && pointSkills.has(activeInfo.implementationKey)) {
+      if (!canPlaceStructure(ownSide, x, y, piece, obstacles)) {
+        setTargetPoint(null);
+        setActionError('Thành/Rào chỉ đặt được vào ô trống bên sông mình.');
+        return;
+      }
+      setActionError('');
+      setTargetPoint({ x, y });
+      return;
+    }
     const move = moves.find(item => item.toX === x && item.toY === y);
     if (move && ourTurn) { command({ type: 'move', pieceId: selectedPiece, to: { x, y } }); return; }
     setSelectedPiece(piece?.pieceId || null);
   }
 
-  return <div className="match-page"><div className="section-head"><div><span className="eyebrow">{snapshot?.mode === 'bot' ? 'CHƠI VỚI BOT' : 'TRẬN ĐẤU'}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
+  return <div className="match-page">{actionError && <div className="error match-error-toast" role="alert">{actionError}<button type="button" className="close" aria-label="Đóng thông báo" onClick={() => setActionError('')}>×</button></div>}<div className="section-head"><div><span className="eyebrow">{snapshot?.mode === 'bot' ? 'CHƠI VỚI BOT' : 'TRẬN ĐẤU'}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
     <div className="match-controls"><button className="secondary" onClick={() => onBack(snapshot?.status === 'completed' || selection?.status === 'cancelled')}>← Sảnh</button><button className="secondary" onClick={() => refresh().catch(onError)}>Đồng bộ</button><button className="secondary" onClick={() => setFlipped(!flipped)}>Xoay bàn</button></div></div>
     <div className="match-meta"><span className="pill">{replay ? 'replay' : status}</span>{replay ? <><span>Bước {replayStep?.sequenceNo ?? 0}/{replayEnd}</span><span>{actionLabel(replayStep, replay[replayIndex - 1], catalog)}</span></> : <><span>Lượt: <strong>{snapshot?.sideToMove || '—'}</strong>{ownSide ? ` · bạn: ${ownSide}` : ''}</span><span>#{snapshot?.countedActions ?? 0}/{catalog?.ruleset?.actionLimit ?? 150}</span><span className="timer">{timeLeft == null ? '—' : `${timeLeft}s`}</span><span>Socket: {socketStatus}</span></>}</div>
     {status === 'selecting' && <section className="card selection"><h2>Chọn đội hình</h2><p>Hai bên có 120 giây để chọn và xác nhận.</p>
@@ -232,9 +259,9 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
         const turnAlreadyProcessed = view?.processedTurns?.[ownSide]?.includes(snapshot?.turnIndex);
         const shownCooldown = ourTurn && !turnAlreadyProcessed ? Math.max(0, skill.cooldownRemaining - 1) : skill.cooldownRemaining;
         const allowed = ourTurn && status === 'active' && !pending && shownCooldown === 0 && skill.usesRemaining !== 0 && knownSkills.has(skill.implementationKey);
-        return <button key={skill.slotNo} className={`skill-button ${skillSlot === skill.slotNo ? 'active' : ''}`} disabled={!allowed} onClick={() => { setSkillSlot(skill.slotNo); setTargetPoint(null); setTargetPieceId(null); setEffectId(''); setHeroTargetMode(null); setSelectedPiece(null); }}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>{shownCooldown ? `Hồi chiêu: ${shownCooldown}` : `Lượt dùng: ${skill.usesRemaining ?? '∞'}`} · {skill.implementationKey}</small></button>;
+        return <button key={skill.slotNo} className={`skill-button ${skillSlot === skill.slotNo ? 'active' : ''}`} disabled={!allowed} onClick={() => { setSkillSlot(skill.slotNo); setTargetPoint(null); setTargetPieceId(null); setEffectId(''); setHeroTargetMode(null); setSelectedPiece(null); setActionError(''); }}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>{shownCooldown ? `Hồi chiêu: ${shownCooldown}` : `Lượt dùng: ${skill.usesRemaining ?? '∞'}`} · {skill.implementationKey}</small></button>;
       })}
-      {activeInfo && <div className="target-panel"><strong>{activeInfo.name}</strong><p>{pointSkills.has(activeInfo.implementationKey) ? 'Chọn ô mục tiêu trên bàn cờ.' : activeInfo.implementationKey === 'khien' ? 'Chọn một quân đồng minh trên bàn cờ.' : effectSkills.has(activeInfo.implementationKey) ? 'Chọn hiệu ứng cần tác động.' : 'Tác động ba đường sông 4, 5, 6.'}</p>
+      {activeInfo && <div className="target-panel"><strong>{activeInfo.name}</strong><p>{pointSkills.has(activeInfo.implementationKey) ? 'Chọn ô trống bên sông mình trên bàn cờ.' : activeInfo.implementationKey === 'khien' ? 'Chọn một quân đồng minh trên bàn cờ.' : effectSkills.has(activeInfo.implementationKey) ? 'Chọn hiệu ứng cần tác động.' : 'Tác động ba đường sông 4, 5, 6.'}</p>
         {effectSkills.has(activeInfo.implementationKey) && <select value={effectId} onChange={event => setEffectId(event.target.value)}><option value="">Chọn hiệu ứng</option>{effects.map(effect => <option key={effect.effectId} value={effect.effectId}>{effect.code || effect.effectId} · {effect.creator} · {effect.remainingDuration} lượt</option>)}</select>}
         {targetPoint && <small>Ô: ({targetPoint.x}, {targetPoint.y})</small>}
         <button disabled={!target || pending || busy} onClick={() => command({ type: 'team_skill', slot: skillSlot, target })}>Dùng skill</button></div>}

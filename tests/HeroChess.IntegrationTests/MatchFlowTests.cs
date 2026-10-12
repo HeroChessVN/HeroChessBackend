@@ -46,6 +46,36 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         Assert.True((await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", request)).Duplicate);
     }
 
+    [Theory]
+    [InlineData("thanh")]
+    [InlineData("rao")]
+    public async Task Occupied_structure_target_rejects_without_blocking_next_command(string implementationKey)
+    {
+        var human = await CreatePlayerWithLineup();
+        var catalog = (await human.Client.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
+        var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == implementationKey);
+        var updated = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
+            new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
+                [new LineupSkillInput(1, skill.Id), .. human.Lineup.Skills.Skip(1)], human.Lineup.Revision), HttpMethod.Put);
+        var ticket = await Post<MatchmakingTicketDto>(human.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("bot"));
+        var matchId = ticket.MatchId!.Value;
+        await Post<MatchSelectionDto>(human.Client, $"/api/v1/matches/{matchId}/selection", new SelectLineupRequest(updated.Id, updated.Revision), HttpMethod.Put);
+        await human.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null);
+
+        var blocked = new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(
+            new { type = "team_skill", slot = 1, target = new { position = new { x = 0, y = 0 } } }, Json));
+        using var rejected = await human.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/commands", blocked, Json);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        Assert.Equal("CELL_OCCUPIED", (await rejected.Content.ReadFromJsonAsync<ApiError>(Json))!.Code);
+        var unchanged = (await human.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{matchId}/state", Json))!;
+        Assert.Equal(0, unchanged.Version);
+
+        var valid = new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(
+            new { type = "team_skill", slot = 1, target = new { position = new { x = 4, y = 2 } } }, Json));
+        var accepted = await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", valid);
+        Assert.Equal(1, accepted.SequenceNo);
+    }
+
     [Fact]
     // Ranked_match_serializes_competing_commands_broadcasts_and_replays: Kiểm tra hai command cạnh tranh, phát socket, log và replay của ranked.
     public async Task Ranked_match_serializes_competing_commands_broadcasts_and_replays()

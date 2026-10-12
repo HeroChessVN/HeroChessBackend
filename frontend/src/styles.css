@@ -2,3 +2,4 @@
 .history-list{max-height:400px;overflow:auto;display:grid;gap:.4rem}.history-row{width:100%;display:flex;gap:.6rem;align-items:start;text-align:left;padding:.55rem .65rem;background:#22323c;border:1px solid #3b505a;font-weight:400}.history-row strong{color:#e6bf84;min-width:2.5rem}.history-row.active{border-color:#e6bf84;background:#3b4140}.history-row:disabled{opacity:1;cursor:default}.event-debug{margin-top:.75rem;border-top:1px solid #3b505a;padding-top:.75rem;color:#a0b1bc}.event-debug summary{cursor:pointer}.event-debug p{font-size:.82rem}
 .hero-card{margin-top:1rem}
 .cell.hero-target{box-shadow:inset 0 0 0 3px #3fa6a8}.hero-skill-list{max-height:280px;overflow:auto}
+.match-error-toast{position:fixed;top:1rem;right:1rem;z-index:1000;width:min(420px,calc(100vw - 2rem));padding-right:3rem;box-shadow:0 12px 32px #0008}

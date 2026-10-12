@@ -1,0 +1,11 @@
+.git/
+.vs/
+artifacts/
+frontend/
+.env
+.env.*
+**/bin/
+**/obj/
+**/node_modules/
+**/keys/
+HeroChess.Api/wwwroot/react/
