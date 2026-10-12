@@ -1,4 +1,4 @@
-// Vai trò file: Recovery chạy một lần lúc startup theo policy prototype: hủy trận dở, giữ lịch sử rồi settle.
+// Vai trò file: Recovery chạy một lần lúc startup theo policy prototype: hủy trận dở, giữ lịch sử.
 using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Rules;
@@ -8,7 +8,7 @@ namespace HeroChess.Api.Services;
 
 public sealed class MatchRecoveryHostedService(IServiceProvider services, TimeProvider clock, ILogger<MatchRecoveryHostedService> logger) : IHostedService
 {
-    // StartAsync: Hủy selecting/active còn lại vì server_restart; active append cancel snapshot; xử lý terminal chưa settled.
+    // StartAsync: Hủy selecting/active còn lại vì server_restart; active append cancel snapshot.
     public async Task StartAsync(CancellationToken ct)
     {
         await using var scope = services.CreateAsyncScope();
@@ -36,12 +36,6 @@ public sealed class MatchRecoveryHostedService(IServiceProvider services, TimePr
             match.Status = "cancelled"; match.EndReason = "server_restart"; match.EndedAt = now;
             await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
             logger.LogWarning("Cancelled unfinished match {MatchId} during startup recovery.", id);
-        }
-        var terminal = await db.Matches.AsNoTracking().Where(x => (x.Status == "completed" || x.Status == "cancelled") && x.SettledAt == null).Select(x => x.Id).ToListAsync(ct);
-        foreach (var id in terminal)
-        {
-            db.ChangeTracker.Clear();
-            await scope.ServiceProvider.GetRequiredService<SettlementService>().SettleAsync(id, ct);
         }
     }
     // StopAsync: Không có loop nền riêng cần dừng.
