@@ -17,6 +17,19 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
   }, [editing, lineups]);
 
   const chosen = catalog.slots.map(slot => catalog.heroes.find(hero => hero.id === heroes[slot.slotNo]));
+
+  const handleSlotChange = (slotNo, heroId) => {
+    const slot = catalog.slots.find(s => s.slotNo === slotNo);
+    if (slot?.classCode === 'SOLDIER') {
+      const updated = { ...heroes };
+      for (const s of catalog.slots) {
+        if (s.classCode === 'SOLDIER') updated[s.slotNo] = heroId;
+      }
+      setHeroes(updated);
+    } else {
+      setHeroes({ ...heroes, [slotNo]: heroId });
+    }
+  };
   const sp = chosen.reduce((sum, hero) => sum + (hero?.setupPoints || 0), 0);
   const repeated = chosen.filter(hero => hero?.characterId && chosen.filter(other => other?.characterId === hero.characterId).length > 1);
   const missing = chosen.filter(hero => !hero).length;
@@ -61,7 +74,7 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
         <div className="slot-grid">{[...catalog.slots].sort((a, b) => a.slotNo - b.slotNo).map(slot => {
           const selected = catalog.heroes.find(hero => hero.id === heroes[slot.slotNo]);
           return <label className="slot" key={slot.slotNo}><span className="slot-title">#{slot.slotNo} · {slot.classCode} <small>({slot.startX},{slot.startY})</small></span>
-            <select value={heroes[slot.slotNo] || ''} onChange={event => setHeroes({ ...heroes, [slot.slotNo]: event.target.value })}><option value="">Chọn hero</option>
+            <select value={heroes[slot.slotNo] || ''} onChange={event => handleSlotChange(slot.slotNo, event.target.value)}><option value="">Chọn hero</option>
               {catalog.heroes.filter(hero => hero.classCode === slot.classCode && hero.isOwned).map(hero => <option key={hero.id} value={hero.id}>{hero.name} · {hero.setupPoints} SP</option>)}</select>
             <small>{selected?.trait ? `${selected.trait.name}${selected.trait.description ? ` — ${selected.trait.description}` : ''}` : 'Chưa có trait'}</small></label>;
         })}</div></section>

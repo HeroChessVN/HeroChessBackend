@@ -38,6 +38,16 @@ public sealed class LineupValidator(AppDbContext db)
             if (!hero.IsEnabled) errors.Add(new("HERO_DISABLED", "The selected hero is disabled.", entry.SlotNo));
             if (!owned.Contains(hero.Id)) errors.Add(new("HERO_NOT_OWNED", "The selected hero is not owned.", entry.SlotNo));
         }
+
+        // 5 ô Tốt phải cùng cosmetic/model
+        var soldierEntries = request.Entries.Where(x => slots.GetValueOrDefault(x.SlotNo) == "SOLDIER").ToList();
+        if (soldierEntries.Count == 5)
+        {
+            var soldierCosmetics = soldierEntries.Select(x => x.CosmeticId).Distinct().ToList();
+            if (soldierCosmetics.Count > 1)
+                errors.Add(new("INCONSISTENT_SOLDIER_COSMETIC", "All five Pawn slots must use the same cosmetic/model."));
+        }
+
         foreach (var duplicateCharacter in request.Entries.Where(x => heroes.TryGetValue(x.HeroId, out var h) && h.CharacterId is not null)
                      .GroupBy(x => heroes[x.HeroId].CharacterId).Where(x => x.Count() > 1))
             foreach (var entry in duplicateCharacter) errors.Add(new("DUPLICATE_CHARACTER", "A historical character cannot appear twice in one lineup.", entry.SlotNo));
