@@ -30,6 +30,26 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
       setHeroes({ ...heroes, [slotNo]: heroId });
     }
   };
+
+  // Lấy tên hero đã chọn theo class (tránh chọn 2 con cùng model trong cùng class)
+  const selectedNameByClass = {};
+  for (const hero of chosen) {
+    if (hero?.name) {
+      const classCode = hero.classCode;
+      if (!selectedNameByClass[classCode]) selectedNameByClass[classCode] = hero.name;
+    }
+  }
+
+  const getAvailableHeroes = (slot) => {
+    return catalog.heroes.filter(hero => {
+      if (hero.classCode !== slot.classCode || !hero.isOwned) return false;
+      // Ẩn nếu class này đã chọn hero cùng tên
+      const usedName = selectedNameByClass[slot.classCode];
+      if (usedName && usedName === hero.name) return false;
+      return true;
+    });
+  };
+
   const sp = chosen.reduce((sum, hero) => sum + (hero?.setupPoints || 0), 0);
   const repeated = chosen.filter(hero => hero?.characterId && chosen.filter(other => other?.characterId === hero.characterId).length > 1);
   const missing = chosen.filter(hero => !hero).length;
@@ -75,7 +95,7 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
           const selected = catalog.heroes.find(hero => hero.id === heroes[slot.slotNo]);
           return <label className="slot" key={slot.slotNo}><span className="slot-title">#{slot.slotNo} · {slot.classCode} <small>({slot.startX},{slot.startY})</small></span>
             <select value={heroes[slot.slotNo] || ''} onChange={event => handleSlotChange(slot.slotNo, event.target.value)}><option value="">Chọn hero</option>
-              {catalog.heroes.filter(hero => hero.classCode === slot.classCode && hero.isOwned).map(hero => <option key={hero.id} value={hero.id}>{hero.name} · {hero.setupPoints} SP</option>)}</select>
+              {getAvailableHeroes(slot).map(hero => <option key={hero.id} value={hero.id}>{hero.name} · {hero.setupPoints} SP</option>)}</select>
             <small>{selected?.trait ? `${selected.trait.name}${selected.trait.description ? ` — ${selected.trait.description}` : ''}` : 'Chưa có trait'}</small></label>;
         })}</div></section>
         <section className="card"><h2>Command skill · 3 ô</h2><div className="skill-editor">{[0, 1, 2].map(index => {
