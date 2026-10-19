@@ -35,7 +35,7 @@ public sealed class CatalogController(AppDbContext db, ICurrentUser current) : C
             await db.Factions.AsNoTracking().OrderBy(x => x.Code).Select(x => new FactionDto(x.Id, x.Code, x.Name, x.Description)).ToListAsync(cancellationToken),
             (await db.TeamSkills.AsNoTracking().Where(x => x.IsEnabled).OrderBy(x => x.Code).ToListAsync(cancellationToken))
                 .Select(x => new TeamSkillDto(x.Id, x.Code, x.Name, x.FactionId, x.ImplementationKey,
-                    x.Parameters.RootElement.Clone(), x.Eligibility.RootElement.Clone(), x.MaxUses, x.CooldownTurns, x.AssetKey)).ToArray()));
+                    x.Parameters.RootElement.Clone(), x.Eligibility.RootElement.Clone(), x.MaxUses, x.CooldownTurns, x.AssetKey, x.Description)).ToArray()));
     }
 
     [HttpGet("me/heroes"), Authorize(Policy = AccountPolicies.Player)]
