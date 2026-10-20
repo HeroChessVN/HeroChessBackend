@@ -1,5 +1,6 @@
 // Vai trò file: Pipeline ghi trận dùng chung cho REST, WebSocket, bot và timeout; kiểm tra quyền/version rồi lưu state/action nguyên tử.
 using System.Text.Json;
+using System.Diagnostics;
 using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
@@ -25,7 +26,9 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
     // ExecuteActorAsync: Khóa trận, authorize, validate/dedup, apply move/resign/undo, commit; sau commit enqueue broadcast, lịch bot và settlement.
     private async Task<MatchCommandResultDto> ExecuteActorAsync(Guid? playerId, bool bot, Guid matchId, MatchCommandRequest request, DateTimeOffset received, CancellationToken ct)
     {
+        var startedAt = Stopwatch.GetTimestamp();
         var gate = locks.For(matchId); await gate.WaitAsync(ct);
+        var gateMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
         try
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -51,6 +54,8 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 return new(matchId, request.CommandId, previous.SequenceNo, true,
                     MatchStateProjection.Events(previous.ResolvedEvents.RootElement, viewer), MatchReadService.ToDto(currentMatch, previousState, clock.GetUtcNow(), viewer));
             }
+            if (request.Action.GetProperty("type").GetString() == "hero_active")
+                throw new ApiException(422, "HERO_SKILL_NOT_AVAILABLE", "Hero skills are disabled.");
             var match = await db.Matches.FromSqlInterpolated($"SELECT * FROM hero_chess.game_match WHERE id={matchId} FOR UPDATE").SingleAsync(ct);
             var row = await db.MatchStates.FromSqlInterpolated($"SELECT * FROM hero_chess.match_state WHERE match_id={matchId} FOR UPDATE").SingleOrDefaultAsync(ct)
                 ?? throw new ApiException(409, "MATCH_NOT_STARTED", "The match has not started.");
@@ -59,6 +64,8 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             if (row.TurnDeadlineAt is not null && received >= row.TurnDeadlineAt)
                 throw new ApiException(409, "TURN_DEADLINE_PASSED", "The turn deadline has passed.", new { currentVersion = row.Version, deadlineAt = row.TurnDeadlineAt });
 
+            var readMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds - gateMs;
+            var rulesStartedAt = Stopwatch.GetTimestamp();
             var state = GameJson.Read<GameState>(row.State);
             // Phase 3.4: v3 → v4 state schema upgrade.
             // Upgrade is idempotent: already-v4 state returns immediately, no mutation.
@@ -130,38 +137,6 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     next = StateSchemaUpgrade.UpgradeToCurrent(next);
                     next.Version = row.Version + 1; next.Result = null; next.EndReason = null;
                     events = new object[] { new { type = "match.undone", targetSequence = target } }; break;
-                case "hero_active":
-                    if (state.SideToMove != actorSide) throw new ApiException(422, "WRONG_TURN", "It is not this participant's turn.");
-                    if (!request.Action.TryGetProperty("pieceId", out var heroPieceId) || !heroPieceId.TryGetGuid(out var activePieceId) ||
-                        !request.Action.TryGetProperty("skillCode", out var skillCode) ||
-                        !request.Action.TryGetProperty("target", out var heroTarget))
-                        throw new ApiException(400, "INVALID_ACTION", "hero_active requires pieceId, skillCode and target.");
-                    if (skillCode.GetString() == SkillKeys.QuangTrungSpecialMove)
-                    {
-                        if (!heroTarget.TryGetProperty("to", out var destination) || destination.ValueKind != JsonValueKind.Object ||
-                            !destination.TryGetProperty("x", out var heroX) || heroX.ValueKind != JsonValueKind.Number || !heroX.TryGetInt32(out var hx) ||
-                            !destination.TryGetProperty("y", out var heroY) || heroY.ValueKind != JsonValueKind.Number || !heroY.TryGetInt32(out var hy) ||
-                            hx is < 0 or > 8 || hy is < 0 or > 9)
-                            throw new ApiException(400, "INVALID_ACTION", "Quang Trung skill requires target.to.x/to.y.");
-                        var special = new XiangqiRulesEngine().ApplyHeroSpecialMove(state, new MoveAction(activePieceId, new BoardPoint(hx, hy)));
-                        if (!special.Accepted) throw new ApiException(422, special.Error!.Code, special.Error.Message);
-                        next = special.State;
-                        events = new object[] { new { type = "hero_skill.activated", code = SkillKeys.QuangTrungSpecialMove, pieceId = activePieceId },
-                            new { type = "piece.moved", pieceId = activePieceId, to = new { x = hx, y = hy } } };
-                        break;
-                    }
-                    if (skillCode.GetString() != SkillKeys.ThDTuongCoc)
-                        throw new ApiException(422, "HERO_SKILL_NOT_AVAILABLE", "The selected hero skill is not available.");
-                    var heroResult = BachDangGiang.Execute(state, actorSide, activePieceId, heroTarget);
-                    if (!heroResult.Accepted) throw new ApiException(422, heroResult.Error!.Code, heroResult.Error.Message);
-                    next = heroResult.State;
-                    if (new XiangqiRulesEngine().IsInCheck(next, actorSide))
-                        throw new ApiException(422, "KING_IN_CHECK", "The skill must resolve check before ending the turn.");
-                    next.Version++; next.TurnIndex++; next.CountedActions++;
-                    next.ConsecutiveTimeouts[actorSide] = 0;
-                    next.SideToMove = actorSide == Side.Red ? Side.Black : Side.Red;
-                    events = heroResult.Events.ToArray();
-                    break;
                 case "team_skill":
                     // Extract slot from action (required field).
                     if (!request.Action.TryGetProperty("slot", out var slotProp) || !slotProp.TryGetInt32(out var slotNo))
@@ -197,7 +172,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 default: throw new ApiException(400, "INVALID_ACTION", "Unknown match action.");
             }
             var nextTurnEvents = new List<object>();
-            if (type is "move" or "team_skill" or "hero_active")
+            if (type is "move" or "team_skill")
             {
                 // Resolve mate after all turn-start effects and skills.
                 if (next.Result is null && !TurnLifecycle.IsTurnProcessed(next, next.SideToMove, next.TurnIndex))
@@ -228,11 +203,16 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 ActorSide = participant.Side, Kind = type!, RequestPayload = GameJson.Document(request.Action), ResolvedEvents = resolved,
                 StateAfter = GameJson.Document(next), StateSchemaVersion = next.StateSchemaVersion, ReceivedAt = received, CommittedAt = now };
             db.MatchActions.Add(log);
+            var rulesMs = Stopwatch.GetElapsedTime(rulesStartedAt).TotalMilliseconds;
+            var saveStartedAt = Stopwatch.GetTimestamp();
             await db.SaveChangesAsync(ct);
+            var saveMs = Stopwatch.GetElapsedTime(saveStartedAt).TotalMilliseconds;
+            var commitStartedAt = Stopwatch.GetTimestamp();
             await transaction.CommitAsync(ct);
+            var commitMs = Stopwatch.GetElapsedTime(commitStartedAt).TotalMilliseconds;
             // The committed command must finish independently of the caller disconnecting.
             ct = CancellationToken.None;
-            if (match.Status == "active") bots.Schedule(matchId, next.Version);
+            if (match.Status == "active" && match.Mode == "bot" && row.SideToMove == "black") bots.Schedule(matchId, next.Version);
             var dto = new MatchCommandResultDto(matchId, request.CommandId, log.SequenceNo, false,
                 MatchStateProjection.Events(resolved.RootElement, actorSide), MatchReadService.ToDto(match, row, clock.GetUtcNow(), actorSide));
             await hub.BroadcastAsync(matchId, new { type = "match.changed", payload = new { matchId, version = next.Version } }, ct);
@@ -241,6 +221,8 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 await hub.BroadcastAsync(matchId, new { type = "match.ended", payload = new { matchId, match.Result, match.EndReason } }, ct);
                 await TrySettleAsync(matchId);
             }
+            logger.LogInformation("match.command timing match={MatchId} version={Version} kind={Kind} gateMs={GateMs:F1} readMs={ReadMs:F1} rulesMs={RulesMs:F1} saveMs={SaveMs:F1} commitMs={CommitMs:F1} totalMs={TotalMs:F1}",
+                matchId, next.Version, type, gateMs, readMs, rulesMs, saveMs, commitMs, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds);
             return dto;
         }
         finally { gate.Release(); }
@@ -320,7 +302,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 RequestPayload = GameJson.Document(new { expectedVersion }), ResolvedEvents = resolved, StateAfter = GameJson.Document(state), StateSchemaVersion = state.StateSchemaVersion, ReceivedAt = receivedAt, CommittedAt = now });
             await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
             ct = CancellationToken.None;
-            if (match.Status == "active") bots.Schedule(matchId, state.Version);
+            if (match.Status == "active" && match.Mode == "bot" && row.SideToMove == "black") bots.Schedule(matchId, state.Version);
             await hub.BroadcastAsync(matchId, new { type = "match.changed", payload = new { matchId, version = state.Version } }, ct);
             if (match.Status is "completed" or "cancelled")
             {
@@ -345,6 +327,10 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
         // Invalid: Helper local tạo lỗi INVALID_ACTION 400 dùng chung khi JSON action sai shape/kiểu/range.
         static ApiException Invalid() => new(400, "INVALID_ACTION", "Action fields have an invalid shape or value.");
         if (action.ValueKind != JsonValueKind.Object || !action.TryGetProperty("type", out var kind) || kind.ValueKind != JsonValueKind.String) throw Invalid();
+        if (kind.GetString() == "hero_active" &&
+            (!action.TryGetProperty("pieceId", out var heroPiece) || heroPiece.ValueKind != JsonValueKind.String || !heroPiece.TryGetGuid(out _) ||
+             !action.TryGetProperty("skillCode", out var skillCode) || skillCode.ValueKind != JsonValueKind.String ||
+             !action.TryGetProperty("target", out var heroTarget) || heroTarget.ValueKind != JsonValueKind.Object)) throw Invalid();
         if (kind.GetString() == "move")
         {
             if (!action.TryGetProperty("pieceId", out var piece) || piece.ValueKind != JsonValueKind.String || !piece.TryGetGuid(out _) ||
@@ -354,10 +340,8 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
         }
         if (kind.GetString() == "undo" && (!action.TryGetProperty("targetSequence", out var target) ||
             target.ValueKind != JsonValueKind.Number || !target.TryGetInt32(out var sequence) || sequence < 0)) throw Invalid();
-        if (kind.GetString() == "hero_active" &&
-            (!action.TryGetProperty("pieceId", out var hero) || hero.ValueKind != JsonValueKind.String || !hero.TryGetGuid(out _) ||
-             !action.TryGetProperty("skillCode", out var skill) || skill.ValueKind != JsonValueKind.String ||
-             !action.TryGetProperty("target", out var skillTarget) || skillTarget.ValueKind != JsonValueKind.Object)) throw Invalid();
+        if (kind.GetString() == "team_skill" && (!action.TryGetProperty("slot", out var slot) ||
+            slot.ValueKind != JsonValueKind.Number || !slot.TryGetInt32(out _))) throw Invalid();
     }
 
     // ApplyActionLimit: Nếu chưa có kết quả trực tiếp và đạt giới hạn, so tổng SP frozen quân còn sống; bằng nhau hòa.
@@ -403,28 +387,6 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 var result = dispatcher.Dispatch(state, side, FrozenSkillSnapshotFactory.FromSkillState(skill), action);
                 if (result.Accepted && !engine.IsInCheck(result.State, side)) return action;
             }
-        }
-        foreach (var hero in state.Pieces.Where(p => p.Side == side && p.Status == PieceStatus.Alive &&
-            p.TraitKind == "active" && p.TraitImplementationKey == SkillKeys.ThDTuongCoc &&
-            p.TraitState.GetValueOrDefault(SkillKeys.HeroCooldownRemainingKey) is not > 0))
-        {
-            for (var x = 0; x < 9; x++)
-            for (var y = 4; y <= 5; y++)
-            {
-                var target = JsonSerializer.SerializeToElement(new { position = new { x, y } }, GameJson.Options);
-                var result = BachDangGiang.Execute(state, side, hero.PieceId, target);
-                if (result.Accepted && !engine.IsInCheck(result.State, side))
-                    return JsonSerializer.SerializeToElement(new { type = "hero_active", pieceId = hero.PieceId,
-                        skillCode = SkillKeys.ThDTuongCoc, target = new { position = new { x, y } } }, GameJson.Options);
-            }
-        }
-        foreach (var hero in state.Pieces.Where(p => p.Side == side && p.Status == PieceStatus.Alive &&
-            p.TraitImplementationKey is SkillKeys.QuangTrungSpecialMove or "general.orthogonal_range_3"))
-        {
-            var move = engine.GenerateQuangTrungSpecialMoves(state, hero.PieceId).FirstOrDefault();
-            if (move is not null)
-                return JsonSerializer.SerializeToElement(new { type = "hero_active", pieceId = hero.PieceId,
-                    skillCode = SkillKeys.QuangTrungSpecialMove, target = new { to = new { x = move.To.X, y = move.To.Y } } }, GameJson.Options);
         }
         return null;
     }

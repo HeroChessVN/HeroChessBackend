@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
 
-const backend = process.env.HERO_CHESS_API_URL || 'http://localhost:5012';
+const backend = process.env.HERO_CHESS_API_URL || 'https://herochessbackend.onrender.com';
 
 export default defineConfig({
   base: '/react/',

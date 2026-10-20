@@ -1,6 +1,5 @@
 // Vai trò file: Admin đã triển khai đổi giá hero/cosmetic và đọc audit. Chưa có API khóa player hay chỉnh SP/skill.
 using System.Globalization;
-using System.Text;
 using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
@@ -51,12 +50,7 @@ public sealed class AdminService(AppDbContext db, TimeProvider clock)
         var query = db.AdminAuditLogs.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(cursor))
         {
-            string[] parts;
-            try { parts = Encoding.UTF8.GetString(Convert.FromBase64String(cursor)).Split('|'); }
-            catch (FormatException) { throw new ApiException(400, "INVALID_CURSOR", "The cursor is invalid."); }
-            if (parts.Length != 2 || !long.TryParse(parts[0], out var ticks) || !Guid.TryParse(parts[1], out var id))
-                throw new ApiException(400, "INVALID_CURSOR", "The cursor is invalid.");
-            var at = new DateTimeOffset(ticks, TimeSpan.Zero);
+            var (at, id) = CursorCodec.Parse(cursor);
             query = query.Where(x => x.CreatedAt < at || (x.CreatedAt == at && x.Id.CompareTo(id) < 0));
         }
         var rows = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Take(limit + 1).ToListAsync(ct);
@@ -65,7 +59,7 @@ public sealed class AdminService(AppDbContext db, TimeProvider clock)
         string? next = null;
         if (rows.Count > limit)
         {
-            var last = rows[limit - 1]; next = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{last.CreatedAt.UtcTicks}|{last.Id}"));
+            var last = rows[limit - 1]; next = CursorCodec.Format(last.CreatedAt, last.Id);
         }
         return new(items, next);
     }

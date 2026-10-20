@@ -4,11 +4,11 @@ Frontend dùng API ASP.NET hiện có. Server quyết định lineup hợp lệ,
 
 ## Chạy local
 
-Hãy cấu hình API trỏ tới PostgreSQL **test/local riêng** trước khi đăng ký, mua hero hoặc chơi trận; các thao tác này ghi DB. Không bật development fixtures trên production DB.
+Mặc định FE kết nối backend Render; đăng ký, mua hero và chơi trận sẽ ghi vào database mà service Render đang dùng. Muốn thử mà không ảnh hưởng dữ liệu đó, trỏ FE sang API/DB test local như bước 3. Không bật development fixtures trên production DB.
 
-1. Từ thư mục gốc repo, chạy API: `dotnet run --project HeroChess.Api --launch-profile http`.
-2. Trong terminal khác: `cd frontend`, `npm ci`, rồi `npm run dev`.
-3. Mở `http://127.0.0.1:5173/react/`. Vite chuyển tiếp API và WebSocket đến `http://localhost:5012`. Nếu API chạy cổng khác, đặt biến `HERO_CHESS_API_URL` trước khi chạy Vite.
+1. Chạy `cd frontend`, `npm ci`, rồi `npm run dev`.
+2. Mở `http://127.0.0.1:5173/react/`. Vite chuyển tiếp API và WebSocket đến `https://herochessbackend.onrender.com`; trình duyệt vẫn truy cập qua cổng 5173.
+3. Để thử BE local thay vì Render, chạy `dotnet run --project HeroChess.Api --launch-profile http` từ thư mục gốc. Trong terminal PowerShell chạy FE, đặt `$env:HERO_CHESS_API_URL = 'http://localhost:5012'` trước `npm run dev`. Khởi động lại Vite sau khi đổi biến này.
 
 Nếu chạy bằng Visual Studio, frontend đã được build vào `HeroChess.Api/wwwroot/react`. Mở `http://localhost:5012/react/` hoặc `https://localhost:7297/react/`. Sau khi sửa React, chạy `npm run build` để cập nhật bản Visual Studio phục vụ. Swagger vẫn ở `/swagger` trong môi trường Development.
 

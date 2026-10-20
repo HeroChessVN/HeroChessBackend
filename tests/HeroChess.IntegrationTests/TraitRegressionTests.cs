@@ -13,8 +13,8 @@ public sealed partial class MatchFlowTests
     [Theory]
     [InlineData("passive")]
     [InlineData("active")]
-    // Non_movement_trait_keeps_base_moves_and_frozen_trait_metadata: Với passive/active trait, giữ base moves nhưng vẫn lưu metadata trait trong snapshot.
-    public async Task Non_movement_trait_keeps_base_moves_and_frozen_trait_metadata(string kind)
+    // Non_movement_trait_keeps_base_moves_without_exposing_trait: Trait trong DB không đi vào trận mới.
+    public async Task Non_movement_trait_keeps_base_moves_without_exposing_trait(string kind)
     {
         var human = await CreatePlayerWithLineup();
         Guid heroId, traitId = Guid.NewGuid(); Guid? previousTrait;
@@ -33,8 +33,8 @@ public sealed partial class MatchFlowTests
             (await human.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
             var state = (await human.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{id}/state", Json))!;
             var piece = state.State.GetProperty("pieces").EnumerateArray().Single(x => x.GetProperty("heroId").GetGuid() == heroId && x.GetProperty("side").GetString() == "red");
-            Assert.Equal(kind, piece.GetProperty("traitKind").GetString());
-            Assert.True(!piece.TryGetProperty("movementImplementationKey", out var movement) || movement.ValueKind == JsonValueKind.Null);
+            Assert.False(piece.TryGetProperty("traitKind", out _));
+            Assert.False(piece.TryGetProperty("movementImplementationKey", out _));
             var moves = (await human.Client.GetFromJsonAsync<LegalMoveDto[]>($"/api/v1/matches/{id}/legal-actions", Json))!;
             Assert.Contains(moves, x => x.PieceId == piece.GetProperty("pieceId").GetGuid());
             await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{id}/commands", new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(new { type = "resign" })));

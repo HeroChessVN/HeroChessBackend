@@ -32,4 +32,15 @@ public sealed class MatchActionAvailabilityTests
         state.SkillStates[Side.Black][0] = state.SkillStates[Side.Black][0] with { CooldownRemaining = 1 };
         Assert.Null(MatchCommandService.FindLegalSkillAction(state, engine, dispatcher));
     }
+
+    [Fact]
+    public void Legacy_hero_skill_is_not_a_legal_rescue()
+    {
+        var state = new GameState { SideToMove = Side.Red };
+        state.Pieces.Add(new PieceState { PieceId = Guid.NewGuid(), Side = Side.Red, Class = PieceClass.Elephant,
+            Status = PieceStatus.Alive, Position = new BoardPoint(4, 4), TraitKind = "active",
+            TraitImplementationKey = SkillKeys.ThDTuongCoc });
+        var dispatcher = new CommandSkillDispatcher(new CommandSkillRegistry(Array.Empty<ICommandSkillHandler>()));
+        Assert.Null(MatchCommandService.FindLegalSkillAction(state, new XiangqiRulesEngine(), dispatcher));
+    }
 }

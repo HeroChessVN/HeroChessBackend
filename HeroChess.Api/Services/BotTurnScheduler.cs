@@ -54,7 +54,7 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
                 var chosen = moves.OrderByDescending(x => x.CapturedPieceId is null ? -1 : state.Pieces.Single(p => p.PieceId == x.CapturedPieceId).SetupPoints)
                     .ThenBy(x => x.PieceId).ThenBy(x => x.To.X).ThenBy(x => x.To.Y).First();
                 if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromMilliseconds(options.Value.BotThinkMilliseconds))
-                { logger.LogWarning("Bot search exceeded its {Budget} ms budget for match {MatchId}.", options.Value.BotThinkMilliseconds, work.MatchId); continue; }
+                    logger.LogWarning("Bot search exceeded its {Budget} ms budget for match {MatchId}.", options.Value.BotThinkMilliseconds, work.MatchId);
                 var action = JsonSerializer.SerializeToElement(new { type = "move", pieceId = chosen.PieceId, to = new { x = chosen.To.X, y = chosen.To.Y } }, GameJson.Options);
                 await scope.ServiceProvider.GetRequiredService<MatchCommandService>().ExecuteBotAsync(work.MatchId,
                     new MatchCommandRequest(Guid.NewGuid(), work.Version, action), DateTimeOffset.UtcNow, stoppingToken);

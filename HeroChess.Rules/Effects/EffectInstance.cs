@@ -1,3 +1,7 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Globalization;
+
 namespace HeroChess.Rules.Effects;
 
 /// <summary>
@@ -39,6 +43,7 @@ public sealed class EffectInstance
     /// Every position in TargetPositions has an entry here.
     /// Mutable — updated by control transfer operations.
     /// </summary>
+    [JsonConverter(typeof(PositionControllersJsonConverter))]
     public Dictionary<BoardPoint, Side> PositionControllers { get; set; } = new();
 
     /// <summary>
@@ -84,6 +89,20 @@ public sealed class EffectInstance
     public IReadOnlyDictionary<string, object?> Payload { get; init; } =
         new Dictionary<string, object?>(StringComparer.Ordinal);
 
+    public string? PayloadString(string key) => Payload.TryGetValue(key, out var value) ? value switch
+    {
+        string text => text,
+        JsonElement { ValueKind: JsonValueKind.String } json => json.GetString(),
+        _ => null
+    } : null;
+
+    public Guid? PayloadGuid(string key) => Payload.TryGetValue(key, out var value) ? value switch
+    {
+        Guid id => id,
+        JsonElement { ValueKind: JsonValueKind.String } json when json.TryGetGuid(out var id) => id,
+        _ => null
+    } : null;
+
     /// <summary>
     /// Creates a deep clone of this EffectInstance.
     /// All fields are copied; collections are cloned to avoid shared references.
@@ -107,5 +126,35 @@ public sealed class EffectInstance
         foreach (var kvp in PositionControllers)
             copy.PositionControllers[kvp.Key] = kvp.Value;
         return copy;
+    }
+}
+
+public sealed class PositionControllersJsonConverter : JsonConverter<Dictionary<BoardPoint, Side>>
+{
+    public override Dictionary<BoardPoint, Side> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject) throw new JsonException();
+        var controllers = new Dictionary<BoardPoint, Side>();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName) throw new JsonException();
+            var parts = (reader.GetString() ?? string.Empty).Split(',');
+            if (parts.Length != 2 || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var x) ||
+                !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var y)) throw new JsonException("Invalid board position key.");
+            reader.Read();
+            controllers.Add(new BoardPoint(x, y), JsonSerializer.Deserialize<Side>(ref reader, options));
+        }
+        return controllers;
+    }
+
+    public override void Write(Utf8JsonWriter writer, Dictionary<BoardPoint, Side> value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        foreach (var (position, side) in value)
+        {
+            writer.WritePropertyName(FormattableString.Invariant($"{position.X},{position.Y}"));
+            JsonSerializer.Serialize(writer, side, options);
+        }
+        writer.WriteEndObject();
     }
 }

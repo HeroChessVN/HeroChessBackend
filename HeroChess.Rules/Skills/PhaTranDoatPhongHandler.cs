@@ -64,13 +64,13 @@ public sealed class PhaTranDoatPhongHandler : ICommandSkillHandler
 
         // --- A4: Validate Effect is assigned to one of the actor's alive pieces ---
         // Read from Effect.Payload["assignedPieceId"]
-        if (!effect.Payload.TryGetValue("assignedPieceId", out var assignedPieceIdVal) ||
-            assignedPieceIdVal is not Guid assignedPieceId)
+        var assignedPieceId = effect.PayloadGuid("assignedPieceId");
+        if (!assignedPieceId.HasValue)
             return CommandSkillResult.Failure(ctx.State, "EFFECT_NOT_ASSIGNED",
                 "The Effect is not assigned to any of your pieces.");
 
         var assignedPiece = ctx.State.Pieces.FirstOrDefault(p =>
-            p.PieceId == assignedPieceId && p.Side == ctx.ActorSide && p.Status == PieceStatus.Alive);
+            p.PieceId == assignedPieceId.Value && p.Side == ctx.ActorSide && p.Status == PieceStatus.Alive);
 
         if (assignedPiece == null)
             return CommandSkillResult.Failure(ctx.State, "ASSIGNED_PIECE_NOT_FOUND",
