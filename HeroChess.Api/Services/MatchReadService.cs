@@ -5,20 +5,32 @@ using HeroChess.Contracts;
 using HeroChess.Rules;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace HeroChess.Api.Services;
 
-public sealed class MatchReadService(AppDbContext db, TimeProvider clock)
+public sealed class MatchReadService(AppDbContext db, TimeProvider clock, ILogger<MatchReadService> logger)
 {
     // StateAsync: Authorize rồi đọc match/state hiện tại, báo chưa start nếu chưa có bàn cờ.
     public async Task<MatchStateDto> StateAsync(Guid playerId, Guid matchId, CancellationToken ct)
     {
-        var participant = await db.MatchParticipants.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId && x.PlayerId == playerId, ct)
+        var startedAt = Stopwatch.GetTimestamp();
+        var result = await (from participant in db.MatchParticipants.AsNoTracking()
+            join match in db.Matches.AsNoTracking() on participant.MatchId equals match.Id
+            join state in db.MatchStates.AsNoTracking() on match.Id equals state.MatchId into states
+            from state in states.DefaultIfEmpty()
+            where participant.MatchId == matchId && participant.PlayerId == playerId
+            select new { match.Id, match.Mode, match.Status, match.SettledAt, State = state, participant.Side }).SingleOrDefaultAsync(ct)
             ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
-        var row = await db.MatchStates.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId, ct)
-            ?? throw new ApiException(409, "MATCH_NOT_STARTED", "The match has not started.");
-        var match = await db.Matches.AsNoTracking().SingleAsync(x => x.Id == matchId, ct);
-        return ToDto(match, row, clock.GetUtcNow(), participant.Side == "red" ? Side.Red : Side.Black);
+        if (result.State is null) throw new ApiException(409, "MATCH_NOT_STARTED", "The match has not started.");
+        var queryMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+        var row = result.State;
+        var dto = new MatchStateDto(result.Id, result.Mode, result.Status, row.Version, row.SideToMove, row.TurnIndex,
+            row.CountedActions, row.TurnDeadlineAt, clock.GetUtcNow(), row.StateSchemaVersion,
+            MatchStateProjection.State(row.State.RootElement, result.Side == "red" ? Side.Red : Side.Black), result.SettledAt);
+        logger.LogDebug("match.state timing match={MatchId} version={Version} queryMs={QueryMs:F1} totalMs={TotalMs:F1}",
+            matchId, row.Version, queryMs, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds);
+        return dto;
     }
 
     // LegalAsync: Sinh nước hợp lệ từ snapshot server bằng Rules chung; không ghi state.
@@ -35,16 +47,8 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock)
 
     public async Task<IReadOnlyList<LegalMoveDto>> HeroActionsAsync(Guid playerId, Guid matchId, Guid pieceId, CancellationToken ct)
     {
-        var participant = await db.MatchParticipants.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId && x.PlayerId == playerId, ct)
-            ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
-        var row = await db.MatchStates.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId, ct)
-            ?? throw new ApiException(409, "MATCH_NOT_STARTED", "The match has not started.");
-        var state = StateSchemaUpgrade.UpgradeToCurrent(GameJson.Read<GameState>(row.State));
-        var side = participant.Side == "red" ? Side.Red : Side.Black;
-        if (state.SideToMove != side || !state.Pieces.Any(p => p.PieceId == pieceId && p.Side == side))
-            return Array.Empty<LegalMoveDto>();
-        return new XiangqiRulesEngine().GenerateQuangTrungSpecialMoves(state, pieceId)
-            .Select(x => new LegalMoveDto(x.PieceId, x.From.X, x.From.Y, x.To.X, x.To.Y, x.CapturedPieceId)).ToArray();
+        await Authorize(playerId, matchId, ct);
+        return Array.Empty<LegalMoveDto>();
     }
 
     // Authorize: Chỉ cho player có participant trong trận đi tiếp.

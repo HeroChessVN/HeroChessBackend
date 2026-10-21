@@ -30,7 +30,7 @@ public sealed record TraitDto(Guid Id, string Code, string Name, string Kind, st
 // FactionDto: Metadata phe.
 public sealed record FactionDto(Guid Id, string Code, string Name, string? Description);
 // TeamSkillDto: Metadata skill và điều kiện/charge/cooldown thiết kế.
-public sealed record TeamSkillDto(Guid Id, string Code, string Name, Guid? FactionId, string ImplementationKey, JsonElement Parameters, JsonElement Eligibility, int? MaxUses, int? CooldownTurns, string? AssetKey);
+public sealed record TeamSkillDto(Guid Id, string Code, string Name, Guid? FactionId, string ImplementationKey, JsonElement Parameters, JsonElement Eligibility, int? MaxUses, int? CooldownTurns, string? AssetKey, string? Description);
 // HeroDto: Hero catalog kèm quyền sở hữu của actor; FactionIds còn là list vì contract/schema cũ.
 public sealed record HeroDto(Guid Id, string Code, string Name, Guid? CharacterId, string ClassCode, int SetupPoints, TraitDto? Trait, IReadOnlyList<Guid> FactionIds, string? AssetKey, bool IsOwned, string CoinPrice);
 

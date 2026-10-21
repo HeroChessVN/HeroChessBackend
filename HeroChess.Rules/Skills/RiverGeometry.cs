@@ -119,9 +119,10 @@ public static class RiverGeometry
         if (target.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, null);
         var effectId = TryParseEffectId(target);
         if (!target.TryGetProperty("position", out var posProp)) return (effectId, null);
-        if (posProp.ValueKind != System.Text.Json.JsonValueKind.Object) return (effectId, null);
-        if (!posProp.TryGetProperty("x", out var xProp) || !xProp.TryGetInt32(out var x)) return (effectId, null);
-        if (!posProp.TryGetProperty("y", out var yProp) || !yProp.TryGetInt32(out var y)) return (effectId, null);
+        if (posProp.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, null);
+        if (!posProp.TryGetProperty("x", out var xProp) || xProp.ValueKind != System.Text.Json.JsonValueKind.Number || !xProp.TryGetInt32(out var x)) return (null, null);
+        if (!posProp.TryGetProperty("y", out var yProp) || yProp.ValueKind != System.Text.Json.JsonValueKind.Number || !yProp.TryGetInt32(out var y)) return (null, null);
+        if (!IsOnBoard(new BoardPoint(x, y))) return (null, null);
         return (effectId, new BoardPoint(x, y));
     }
 

@@ -124,8 +124,7 @@ public sealed class XiangqiRulesEngine
                 // For "river_blocking" kind: only the creator can cross.
                 bool canCross;
                 Side? controllerInColumn = null;
-                if (effect.Payload.TryGetValue("kind", out var kindObj) &&
-                    string.Equals(kindObj as string, "terrain", StringComparison.Ordinal))
+                if (string.Equals(effect.PayloadString("kind"), "terrain", StringComparison.Ordinal))
                 {
                     foreach (var kvp in effect.PositionControllers)
                     {
@@ -176,8 +175,7 @@ public sealed class XiangqiRulesEngine
         var terrainEffects = new List<EffectInstance>();
         foreach (var e in activeEffectsAtPos)
         {
-            if (e.Payload.TryGetValue("kind", out var kindObj) &&
-                string.Equals(kindObj as string, "terrain", StringComparison.Ordinal))
+            if (string.Equals(e.PayloadString("kind"), "terrain", StringComparison.Ordinal))
                 terrainEffects.Add(e);
         }
 

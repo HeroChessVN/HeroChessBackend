@@ -109,23 +109,18 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
         match.Participants.SingleOrDefault(x => x.PlayerId == playerId)
         ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
 
-    // Freeze: Sao chép hero/class/SP, vị trí, key trait và skill để trận không phụ thuộc lineup nguồn về sau.
+    // Freeze: Sao chép hero/class/SP, vị trí và team skill để trận không phụ thuộc lineup nguồn về sau.
     private async Task<FrozenLineup> Freeze(SavedLineup lineup, int totalSp, CancellationToken ct)
     {
         var heroIds = lineup.Entries.Select(x => x.HeroId).ToArray();
-        var heroes = await db.Heroes.AsNoTracking().Include(x => x.Trait).Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        var heroes = await db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
         var slots = await db.LineupSlots.AsNoTracking().ToDictionaryAsync(x => x.SlotNo, ct);
         var skillIds = lineup.Skills.Select(x => x.TeamSkillId).ToArray();
         var skills = await db.TeamSkills.AsNoTracking().Where(x => skillIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
         return new FrozenLineup(lineup.Id, lineup.Revision, totalSp,
             lineup.Entries.OrderBy(x => x.SlotNo).Select(x => new FrozenPiece(x.SlotNo, x.HeroId, x.ClassCode, heroes[x.HeroId].SetupPoints,
                 slots[x.SlotNo].StartX, slots[x.SlotNo].StartY,
-                heroes[x.HeroId].Trait?.ImplementationKey == HeroChess.Rules.Skills.SkillKeys.QuangTrungSpecialMove
-                    ? "general.orthogonal_range_1_no_palace"
-                    : heroes[x.HeroId].Trait?.Kind == "special_move" ? heroes[x.HeroId].Trait!.ImplementationKey : null,
-                x.CosmeticId, heroes[x.HeroId].Trait?.Kind, heroes[x.HeroId].Trait?.ImplementationKey,
-                heroes[x.HeroId].Name, heroes[x.HeroId].Trait?.Name, heroes[x.HeroId].Trait?.Description,
-                heroes[x.HeroId].Trait?.Parameters.RootElement.Clone())).ToArray(),
+                x.CosmeticId, heroes[x.HeroId].Name)).ToArray(),
             lineup.Skills.OrderBy(x => x.SlotNo).Select(x => new FrozenSkill(x.SlotNo, x.TeamSkillId, skills[x.TeamSkillId].ImplementationKey,
                 skills[x.TeamSkillId].MaxUses, skills[x.TeamSkillId].CooldownTurns ?? 0,
                 skills[x.TeamSkillId].Name, skills[x.TeamSkillId].Description, skills[x.TeamSkillId].Parameters.RootElement.Clone())).ToArray());
@@ -146,12 +141,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 var start = side == Side.Red ? new BoardPoint(frozen.StartX, frozen.StartY) : new BoardPoint(8 - frozen.StartX, 9 - frozen.StartY);
                 if (!Enum.TryParse<PieceClass>(frozen.ClassCode, true, out var pieceClass)) throw new ApiException(422, "UNSUPPORTED_CLASS", $"Unsupported class {frozen.ClassCode}.");
                 var piece = new PieceState { PieceId = Guid.NewGuid(), HeroId = frozen.HeroId, Side = side, Class = pieceClass,
-                    SetupPoints = frozen.SetupPoints, Position = start, StartPosition = start, MovementImplementationKey = frozen.MovementImplementationKey,
-                    TraitKind = frozen.TraitKind, TraitImplementationKey = frozen.TraitImplementationKey,
-                    HeroName = frozen.HeroName, TraitName = frozen.TraitName, TraitDescription = frozen.TraitDescription,
-                    TraitParameters = frozen.TraitParameters };
-                if (piece.TraitImplementationKey is HeroChess.Rules.Skills.SkillKeys.QuangTrungSpecialMove or "general.orthogonal_range_3")
-                    piece.TraitState[HeroChess.Rules.Skills.SkillKeys.QuangTrungCooldownKey] = 1;
+                    SetupPoints = frozen.SetupPoints, Position = start, StartPosition = start, HeroName = frozen.HeroName };
                 state.Pieces.Add(piece);
             }
             state.SkillStates[side].AddRange(lineup.Skills.Select(x => new SkillState(x.SlotNo, x.SkillId, x.MaxUses, 0,

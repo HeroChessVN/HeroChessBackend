@@ -5,10 +5,9 @@ namespace HeroChess.Api.Services;
 
 // FrozenLineup: Bản sao lineup dùng trong trận; sửa/xóa lineup nguồn không sửa snapshot.
 public sealed record FrozenLineup(Guid LineupId, int Revision, int TotalSp, IReadOnlyList<FrozenPiece> Pieces, IReadOnlyList<FrozenSkill> Skills);
-// FrozenPiece: Hero/class/SP/vị trí/trait key đã đóng băng cho một slot.
-public sealed record FrozenPiece(int SlotNo, Guid HeroId, string ClassCode, int SetupPoints, int StartX, int StartY, string? MovementImplementationKey, Guid? CosmeticId,
-    string? TraitKind = null, string? TraitImplementationKey = null, string? HeroName = null, string? TraitName = null,
-    string? TraitDescription = null, JsonElement? TraitParameters = null);
+// FrozenPiece: Hero/class/SP/vị trí đã đóng băng cho một slot; snapshot cũ có thêm trait vẫn đọc được.
+public sealed record FrozenPiece(int SlotNo, Guid HeroId, string ClassCode, int SetupPoints, int StartX, int StartY, Guid? CosmeticId,
+    string? HeroName = null);
 // FrozenSkill: Skill key, charge và cooldown đã đóng băng; chưa thực thi gameplay.
 public sealed record FrozenSkill(int SlotNo, Guid SkillId, string ImplementationKey, int? MaxUses, int CooldownTurns,
     string? Name = null, string? Description = null, JsonElement? Parameters = null);

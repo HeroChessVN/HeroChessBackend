@@ -25,7 +25,10 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
     {
         var human = await CreatePlayerWithLineup();
         var catalog = (await human.Client.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
+        Assert.Empty(catalog.Traits);
+        Assert.All(catalog.Heroes, hero => Assert.Null(hero.Trait));
         var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == "thanh");
+        Assert.False(string.IsNullOrWhiteSpace(skill.Description));
         var otherSkills = human.Lineup.Skills.Skip(1).ToArray();
         var updated = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
             new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
@@ -34,6 +37,16 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var matchId = ticket.MatchId!.Value;
         await Post<MatchSelectionDto>(human.Client, $"/api/v1/matches/{matchId}/selection", new SelectLineupRequest(updated.Id, updated.Revision), HttpMethod.Put);
         await human.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null);
+        var initial = (await human.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{matchId}/state", Json))!;
+        Assert.All(initial.State.GetProperty("pieces").EnumerateArray(), piece => Assert.False(piece.TryGetProperty("traitKind", out _)));
+        var pieceId = initial.State.GetProperty("pieces")[0].GetProperty("pieceId").GetGuid();
+        Assert.Empty((await human.Client.GetFromJsonAsync<LegalMoveDto[]>($"/api/v1/matches/{matchId}/hero-actions?pieceId={pieceId}", Json))!);
+        using (var blocked = await human.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/commands",
+            new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(new { type = "hero_active", pieceId, skillCode = "quang_trung.special_move", target = new { } }, Json)), Json))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
+            Assert.Equal("HERO_SKILL_NOT_AVAILABLE", (await blocked.Content.ReadFromJsonAsync<ApiError>(Json))!.Code);
+        }
         var action = JsonSerializer.SerializeToElement(new { type = "team_skill", slot = 1, target = new { position = new { x = 4, y = 2 } } }, Json);
         var request = new MatchCommandRequest(Guid.NewGuid(), 0, action);
 
@@ -157,18 +170,10 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var legal = await human.Client.GetFromJsonAsync<LegalMoveDto[]>($"/api/v1/matches/{matchId}/legal-actions", Json);
         var legalMoves = legal ?? throw new InvalidOperationException("Legal moves response was empty.");
         Assert.NotEmpty(legalMoves);
-        var specialId = initial!.State.GetProperty("pieces").EnumerateArray()
-            .Where(x => x.GetProperty("side").GetString() == "red" && x.TryGetProperty("movementImplementationKey", out var key) && key.GetString() == "elephant.alternating_distance")
-            .Select(x => x.GetProperty("pieceId").GetGuid()).FirstOrDefault();
-        Assert.NotEqual(Guid.Empty, specialId);
-        var selectedMove = legalMoves.FirstOrDefault(x => x.PieceId == specialId) ?? legalMoves[0];
+        Assert.All(initial!.State.GetProperty("pieces").EnumerateArray(), x => Assert.False(x.TryGetProperty("traitKind", out _)));
+        var selectedMove = legalMoves[0];
         var move = Command(initial.Version, selectedMove);
         var moved = await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", move);
-        if (selectedMove.PieceId == specialId)
-        {
-            var specialAfterMove = moved.Snapshot.State.GetProperty("pieces").EnumerateArray().Single(x => x.GetProperty("pieceId").GetGuid() == specialId);
-            Assert.True(specialAfterMove.GetProperty("traitState").TryGetProperty("lastMoveDistance", out _));
-        }
         MatchStateDto afterBot = initial;
         for (var i = 0; i < 50 && afterBot.Version < 2; i++)
         {
@@ -180,11 +185,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var undone = await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", undo);
         Assert.True(undone.SequenceNo > afterBot.Version);
         Assert.Equal("red", undone.Snapshot.SideToMove);
-        if (specialId != Guid.Empty)
-        {
-            var specialAfterUndo = undone.Snapshot.State.GetProperty("pieces").EnumerateArray().Single(x => x.GetProperty("pieceId").GetGuid() == specialId);
-            Assert.Empty(specialAfterUndo.GetProperty("traitState").EnumerateObject().ToArray());
-        }
+        Assert.All(undone.Snapshot.State.GetProperty("pieces").EnumerateArray(), x => Assert.False(x.TryGetProperty("traitState", out _)));
         var resign = new MatchCommandRequest(Guid.NewGuid(), undone.Snapshot.Version, JsonSerializer.SerializeToElement(new { type = "resign" }, Json));
         await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", resign);
         var replay = await human.Client.GetFromJsonAsync<ReplayPageDto>($"/api/v1/matches/{matchId}/replay?afterSequence=-1&limit=100", Json);

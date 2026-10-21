@@ -39,7 +39,7 @@ public sealed class PhanKyDoatTheHandler : ICommandSkillHandler
         var (effectId, position) = RiverGeometry.TryParseEffectIdAndPosition(ctx.Target);
         if (!effectId.HasValue)
             return CommandSkillResult.Failure(ctx.State, "INVALID_TARGET",
-                "Phản Kỳ requires a target with effectId and position.");
+                "Phản Kỳ requires a valid effectId and optional valid position.");
 
         // --- Find the target Effect ---
         if (!ctx.State.TryGetEffect(effectId.Value, out var effect))
@@ -63,8 +63,7 @@ public sealed class PhanKyDoatTheHandler : ICommandSkillHandler
 
         // --- Validate: only terrain-affecting Effects are stealable (U7 = A) ---
         // Check payload for terrain kind
-        if (!effect.Payload.TryGetValue("kind", out var kindVal) ||
-            !string.Equals(kindVal as string, "terrain", StringComparison.Ordinal))
+        if (!string.Equals(effect.PayloadString("kind"), "terrain", StringComparison.Ordinal))
             return CommandSkillResult.Failure(ctx.State, "EFFECT_NOT_STEALABLE",
                 "Phản Kỳ can only target terrain-affecting Effects.");
 
