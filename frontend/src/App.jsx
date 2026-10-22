@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { api } from './api.js';
 import LineupEditor from './Lineup.jsx';
 import MatchView from './Match.jsx';
+import MatchDetail from './MatchDetail.jsx';
+import MatchHistory from './MatchHistory.jsx';
+import Ranking from './Ranking.jsx';
+import { modeLabel, outcomeLabel, statusLabel } from './records.js';
 
 const savedSession = () => {
   try { return JSON.parse(sessionStorage.getItem('heroChessSession') || 'null'); }
@@ -31,6 +35,7 @@ export default function App() {
   const [matches, setMatches] = useState([]);
   const [ticket, setTicket] = useState(savedTicket);
   const [matchId, setMatchId] = useState(() => sessionStorage.getItem('heroChessMatchId'));
+  const [detailId, setDetailId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const token = session?.accessToken;
@@ -39,7 +44,7 @@ export default function App() {
     sessionStorage.removeItem('heroChessSession');
     sessionStorage.removeItem('heroChessMatchId');
     sessionStorage.removeItem('heroChessTicket');
-    setSession(null); setMe(null); setCatalog(null); setTicket(null); setMatchId(null); setPage('lobby');
+    setSession(null); setMe(null); setCatalog(null); setTicket(null); setMatchId(null); setDetailId(null); setPage('lobby');
   }
   function rememberTicket(next) {
     if (next?.status === 'waiting' || next?.status === 'matching') sessionStorage.setItem('heroChessTicket', JSON.stringify(next));
@@ -92,6 +97,13 @@ export default function App() {
     else sessionStorage.removeItem('heroChessMatchId');
     setMatchId(id); setPage('match');
   }
+  // openDetail: Mở trang chi tiết trận đã kết thúc từ lịch sử; không ghi đè trận đang chơi.
+  function openDetail(id) { setDetailId(id); setPage('detail'); }
+  // openReplay: Mở bàn cờ replay của một trận đã kết thúc.
+  function openReplay(id) {
+    sessionStorage.setItem('heroChessMatchId', id);
+    setMatchId(id); setDetailId(null); setPage('match');
+  }
   const currentMatch = matches.find(match => match.matchId === matchId);
   const ongoingMatch = currentMatch && (currentMatch.status === 'selecting' || currentMatch.status === 'active');
   useEffect(() => {
@@ -142,6 +154,9 @@ export default function App() {
     <header className="topbar"><div><span className="brand-mark">♜</span><strong>HERO CHESS</strong><span className="subbrand">API test console</span></div>
       <nav><button className={page === 'lobby' ? 'active' : ''} onClick={() => { setPage('lobby'); refresh(); }}>Sảnh</button>
         <button className={page === 'lineup' ? 'active' : ''} onClick={() => { setPage('lineup'); refresh(); }}>Đội hình</button>
+        <button className={page === 'history' ? 'active' : ''} onClick={() => setPage('history')}>Lịch sử</button>
+        <button className={page === 'ranking' ? 'active' : ''} onClick={() => setPage('ranking')}>Xếp hạng</button>
+        {detailId && <button className={page === 'detail' ? 'active' : ''} onClick={() => setPage('detail')}>Chi tiết trận</button>}
         {matchId && (page === 'match' || ongoingMatch) && <button className={page === 'match' ? 'active' : ''} onClick={() => setPage('match')}>{currentMatch?.status === 'completed' ? 'Xem replay' : 'Trận đang chơi'}</button>}</nav>
       <button className="secondary" onClick={logout}>Đăng xuất</button>
     </header>
@@ -156,12 +171,18 @@ export default function App() {
         {['waiting', 'matching'].includes(ticket?.status) && <div className="status-row">{ticket.status === 'matching' ? 'Đang tạo trận…' : 'Đang chờ ghép trận…'} <code>{ticket.ticketId}</code>
           {ticket.status === 'waiting' && <button className="secondary" onClick={() => run(async () => { await api(token, `/matchmaking/tickets/${ticket.ticketId}`, { method: 'DELETE' }); rememberTicket(null); })}>Hủy tìm trận</button>}</div>}
         {ongoingMatch && <div className="status-row">Trận đang chơi: <code>{matchId}</code><button onClick={() => setPage('match')}>Tiếp tục</button></div>}
-        <div className="split"><section className="card"><div className="section-head"><h2>Lịch sử trận</h2><button className="secondary" onClick={() => run(refresh)}>Làm mới</button></div>
-          {matches.length ? matches.map(match => <button className="list-row" key={match.matchId} onClick={() => openMatch(match.matchId, match.status)}><span>{match.mode === 'bot' ? 'BOT' : 'PVP'} · {match.status}</span><small>{match.result || match.endReason || new Date(match.createdAt).toLocaleString('vi-VN')}</small></button>) : <p className="muted">Chưa có trận.</p>}</section>
+        <div className="split"><section className="card"><div className="section-head"><h2>Lịch sử trận</h2>
+          <button className="secondary" onClick={() => setPage('history')}>Xem tất cả</button></div>
+          {matches.length ? matches.slice(0, 6).map(match => <button className="list-row" key={match.matchId} onClick={() => openDetail(match.matchId)}>
+            <span>{modeLabel(match.mode)} · {statusLabel(match.status)}</span>
+            <small>{match.outcome ? outcomeLabel(match.outcome) : match.endReason || new Date(match.createdAt).toLocaleString('vi-VN')}</small></button>) : <p className="muted">Chưa có trận.</p>}</section>
           <section className="card"><h2>Hero trong catalog</h2><div className="catalog-list">{catalog?.heroes?.map(hero => <div className="catalog-row" key={hero.id}><div><strong>{hero.name}</strong><small>{hero.classCode} · {hero.setupPoints} SP{hero.trait ? ` · ${hero.trait.name}` : ''}</small></div>
             {hero.isOwned ? <span className="owned">Đã sở hữu</span> : <button disabled={busy} className="secondary" onClick={() => run(async () => { await api(token, `/shop/heroes/${hero.id}/purchase`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } }); await refresh(); })}>Mua {hero.coinPrice}</button>}</div>)}</div></section></div>
       </>}
       {page === 'lineup' && catalog && <LineupEditor token={token} catalog={catalog} lineups={lineups} onChanged={refresh} onError={setError} />}
+      {page === 'history' && <MatchHistory token={token} onOpenMatch={openDetail} onError={setError} />}
+      {page === 'ranking' && <Ranking token={token} onError={setError} />}
+      {page === 'detail' && detailId && <MatchDetail token={token} matchId={detailId} onOpenReplay={openReplay} onBack={() => setPage('history')} onError={setError} />}
       {page === 'match' && matchId && <MatchView key={matchId} token={token} matchId={matchId} catalog={catalog} lineups={lineups} onBack={ended => { if (ended) { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); } setPage('lobby'); refresh(); }} onCancel={() => { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); setPage('lobby'); refresh(); }} onError={setError} />}
     </div>
   </div>;

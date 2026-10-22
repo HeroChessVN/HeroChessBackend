@@ -92,6 +92,7 @@ builder.Services.AddScoped<HeroChess.Rules.Skills.CommandSkillDispatcher>();
 builder.Services.AddScoped<MatchCommandService>();
 builder.Services.AddScoped<SettlementService>();
 builder.Services.AddScoped<MatchHistoryService>();
+builder.Services.AddScoped<RankingService>();
 builder.Services.AddScoped<ShopService>();
 builder.Services.AddScoped<AdminService>();
 // Worker startup phục hồi trận; các BackgroundService sau đó theo dõi bot, timeout và việc cần retry.

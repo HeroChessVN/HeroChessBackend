@@ -95,8 +95,12 @@ public sealed record LegalMoveDto(Guid PieceId, int FromX, int FromY, int ToX, i
 public sealed record MatchCommandRequest(Guid CommandId, int ExpectedVersion, JsonElement Action);
 // MatchCommandResultDto: ACK action gồm duplicate flag, sequence, events và snapshot.
 public sealed record MatchCommandResultDto(Guid MatchId, Guid CommandId, int SequenceNo, bool Duplicate, JsonElement ResolvedEvents, MatchStateDto Snapshot);
-// MatchListItemDto: Một mục lịch sử trận.
-public sealed record MatchListItemDto(Guid MatchId, string Mode, string Status, string? Side, string? Result, string? EndReason, DateTimeOffset CreatedAt, DateTimeOffset? EndedAt);
+// MatchListItemDto: Một mục lịch sử trận kèm đối thủ, đổi Elo, thời lượng và cờ replay sẵn có.
+public sealed record MatchListItemDto(Guid MatchId, string Mode, string Status, string? Side, string? Result, string? EndReason,
+    DateTimeOffset CreatedAt, DateTimeOffset? EndedAt,
+    string? Outcome = null, Guid? OpponentPlayerId = null, string? OpponentDisplayName = null,
+    int? EloBefore = null, int? EloAfter = null, int? EloDelta = null,
+    double? DurationSeconds = null, bool ReplayAvailable = false);
 // MatchPageDto: Trang lịch sử cùng cursor tiếp theo.
 public sealed record MatchPageDto(IReadOnlyList<MatchListItemDto> Items, string? NextCursor);
 // ReplayEntryDto: Một action lịch sử với stateAfter frozen.
@@ -115,3 +119,28 @@ public sealed record AdminAuditDto(Guid Id, Guid ActorUserId, string Action, str
     JsonElement? BeforeData, JsonElement? AfterData, string? Reason, DateTimeOffset CreatedAt);
 // AdminAuditPageDto: Trang audit cùng cursor.
 public sealed record AdminAuditPageDto(IReadOnlyList<AdminAuditDto> Items, string? NextCursor);
+
+// RankingEntryDto: Một dòng bảng xếp hạng; chỉ có dữ liệu công khai, không lộ email hay thông tin nhạy cảm.
+public sealed record RankingEntryDto(int Rank, Guid PlayerId, string DisplayName, int Rating,
+    int GamesPlayed, int Wins, int Draws, int Losses);
+// RankingPageDto: Trang bảng xếp hạng cùng cursor tiếp theo (keyset theo rating rồi playerId).
+public sealed record RankingPageDto(IReadOnlyList<RankingEntryDto> Items, string? NextCursor, int Total);
+// MyRankingDto: Thông tin xếp hạng của người chơi hiện tại; null khi chưa có hồ sơ rating.
+public sealed record MyRankingDto(int? Rank, Guid PlayerId, string DisplayName, int Rating,
+    int GamesPlayed, int Wins, int Draws, int Losses, int Total);
+// MatchDetailDto: Chi tiết một trận đã kết thúc: hai bên, kết quả, Elo, thời lượng, replay và lineup đã đóng băng.
+public sealed record MatchDetailDto(Guid MatchId, string Mode, string Status, string? Result, string? EndReason,
+    DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? EndedAt,
+    IReadOnlyList<MatchSideDto> Sides, bool ReplayAvailable, int ActionCount);
+// MatchSideDto: Một bên trong trận kèm người chơi, kết quả và lineup đã dùng lúc đấu.
+public sealed record MatchSideDto(string Side, Guid? PlayerId, string? DisplayName, string ParticipantType,
+    string? Outcome, int? EloBefore, int? EloAfter, long CoinReward, MatchSideLineupDto Lineup);
+// MatchLineupDto: Lineup của các bên trong trận; bên đối thủ chỉ hiện khi trận đã bắt đầu.
+public sealed record MatchLineupDto(Guid MatchId, IReadOnlyList<MatchSideLineupDto> Sides);
+// MatchSideLineupDto: Lineup đã đóng băng của một bên.
+public sealed record MatchSideLineupDto(string Side, IReadOnlyList<MatchLineupEntryDto> Entries, IReadOnlyList<MatchLineupSkillDto> Skills);
+// MatchLineupEntryDto: Một hero trong lineup snapshot của trận; dữ liệu đóng băng tại thời điểm trận.
+public sealed record MatchLineupEntryDto(int SlotNo, Guid HeroId, string? HeroCode, string? HeroName,
+    string ClassCode, int SetupPoints, string? FactionCode, int StartX, int StartY, Guid? CosmeticId);
+// MatchLineupSkillDto: Command skill đã trang bị tại thời điểm trận.
+public sealed record MatchLineupSkillDto(int SlotNo, Guid SkillId, string? Code, string? Name, string? ImplementationKey);

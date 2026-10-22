@@ -3,3 +3,35 @@
 .hero-card{margin-top:1rem}
 .cell.hero-target{box-shadow:inset 0 0 0 3px #3fa6a8}.hero-skill-list{max-height:280px;overflow:auto}
 .match-error-toast{position:fixed;top:1rem;right:1rem;z-index:1000;width:min(420px,calc(100vw - 2rem));padding-right:3rem;box-shadow:0 12px 32px #0008}
+
+/* Ranking, match history và match detail: dùng lại token màu/size của trang sảnh. */
+.rank-table{width:100%;border-collapse:collapse;font-size:.92rem}
+/* Bảng 5 cột rộng hơn màn hình điện thoại: cuộn ngang trong thẻ thay vì làm trang tràn ngang. */
+.table-scroll{overflow-x:auto}
+.rank-table th{text-align:left;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:#9fb2bd;padding:.5rem .6rem;border-bottom:1px solid #35484f}
+.rank-table td{padding:.6rem;border-bottom:1px solid #2c3d46}
+.rank-table td.name{max-width:16rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rank-table tr.me td{background:#24363d;color:#f0dfbc}
+.rank-badge{display:inline-block;min-width:3.1rem;font-weight:800;color:#e6bf84}
+.my-rank{display:flex;align-items:center;gap:1rem;margin-bottom:1rem}
+.my-rank>div{display:grid;gap:.2rem;flex:1}
+.filters{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.filters label{min-width:170px}
+.match-list{display:grid;gap:.5rem}
+.match-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.9rem;width:100%;text-align:left;background:#22323c;border:1px solid #3b505a;font-weight:400;padding:.7rem .8rem}
+.match-row:hover:not(:disabled){border-color:#ddbd82}
+.match-row-main{display:grid;gap:.2rem;min-width:0}
+.match-row-main small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.match-row-meta{display:grid;gap:.2rem;text-align:right;white-space:nowrap}
+.result-pill{border-radius:99px;padding:.2rem .7rem;font-size:.8rem;font-weight:700;background:#3a4b53;color:#cfe0e6}
+.result-pill.win{background:#2f5c45;color:#b6e6c7}
+.result-pill.loss{background:#5c3236;color:#f0bcbc}
+.result-pill.draw{background:#4b4433;color:#eed9a8}
+.elo.up{color:#8fd6ac}.elo.down{color:#e79a9a}.elo{font-weight:700}
+.actions.more{justify-content:center;margin-top:1rem}
+.lineup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.55rem;margin:.5rem 0 1rem}
+.lineup-cell{display:grid;gap:.15rem;padding:.55rem;border:1px solid #364c57;border-radius:8px;background:#202f39}
+.lineup-cell .slot-no{font-size:.7rem;color:#e6bf84}
+.skill-list{display:grid;gap:.4rem;margin:.5rem 0;padding:0;list-style:none}
+.skill-list li{display:grid;gap:.15rem;padding:.5rem .6rem;border:1px solid #364c57;border-radius:8px;background:#202f39}
+@media(max-width:700px){.match-row{grid-template-columns:auto 1fr}.match-row-meta{grid-column:1/-1;text-align:left}.rank-table{font-size:.82rem}}

@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 
-const backend = process.env.HERO_CHESS_API_URL || 'https://herochessbackend.onrender.com';
+// Dev mặc định trỏ về API local (5012) để tính năng mới chưa deploy vẫn chạy được.
+// Trỏ sang production bằng HERO_CHESS_API_URL=https://herochessbackend.onrender.com khi cần.
+const backend = process.env.HERO_CHESS_API_URL || 'http://127.0.0.1:5012';
 
 export default defineConfig({
   base: '/react/',

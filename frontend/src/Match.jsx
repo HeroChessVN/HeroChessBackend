@@ -29,6 +29,7 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
   const [historyRetry, setHistoryRetry] = useState(0);
   const [replay, setReplay] = useState(null);
   const [replayIndex, setReplayIndex] = useState(0);
+  const [replayPlaying, setReplayPlaying] = useState(false);
   const [flipped, setFlipped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -178,6 +179,14 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
     return () => { current = false; };
   }, [token, matchId, snapshot?.version, snapshot?.status, historyRetry]);
 
+  // Replay autoplay: Bước tiếp theo mỗi 900ms; dừng ở bước cuối.
+  useEffect(() => {
+    if (!replayPlaying || !replay) return;
+    if (replayIndex >= replay.length - 1) { setReplayPlaying(false); return; }
+    const timer = setTimeout(() => setReplayIndex(index => index + 1), 900);
+    return () => clearTimeout(timer);
+  }, [replayPlaying, replay, replayIndex]);
+
   const ownSide = selection?.sides?.find(side => side.ownLineupId)?.side;
   const ourTurn = ownSide && snapshot?.sideToMove === ownSide;
   useEffect(() => {
@@ -271,7 +280,12 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
         {snapshot?.mode === 'bot' && <><select value={undoTarget} onChange={event => setUndoTarget(Number(event.target.value))}>{Array.from({ length: snapshot.version }, (_, index) => <option key={index} value={index}>Về action #{index}</option>)}</select><button className="secondary" disabled={status !== 'active' || !snapshot.version || !!pending || busy} onClick={() => command({ type: 'undo', targetSequence: undoTarget })}>Undo</button></>}</div>
         {pending && <div className="pending"><small>Lệnh #{pending.commandId} chưa xác nhận.</small><button disabled={busy} onClick={() => submit(pending)}>Thử lại cùng mã lệnh</button></div>}
         {snapshot?.state?.result && <p>Kết quả: <strong>{snapshot.state.result}</strong> · {snapshot.state.endReason}</p>}
-        {replay && <div className="replay-controls"><button className="secondary" disabled={replayIndex === 0} onClick={() => setReplayIndex(replayIndex - 1)}>←</button><span>Bước {replayStep?.sequenceNo ?? 0}/{replayEnd}</span><button className="secondary" disabled={replayIndex === replay.length - 1} onClick={() => setReplayIndex(replayIndex + 1)}>→</button></div>}</section>
+        {replay && <div className="replay-controls"><button className="secondary" disabled={replayIndex === 0} onClick={() => { setReplayPlaying(false); setReplayIndex(replayIndex - 1); }}>←</button>
+          <button className="secondary" onClick={() => { if (replayIndex >= replay.length - 1) setReplayIndex(0); setReplayPlaying(!replayPlaying); }} aria-label={replayPlaying ? 'Tạm dừng' : 'Phát'}>
+            {replayPlaying ? '⏸' : '▶'}</button>
+          <span>Bước {replayStep?.sequenceNo ?? 0}/{replayEnd}</span>
+          <button className="secondary" disabled={replayIndex === replay.length - 1} onClick={() => { setReplayPlaying(false); setReplayIndex(replayIndex + 1); }}>→</button>
+          <button className="secondary" onClick={() => { setReplayPlaying(false); setReplayIndex(0); }}>⏮</button></div>}</section>
       <section className="card"><h2>Lịch sử nước đi</h2><p className="muted">Bước 0 là bàn cờ ban đầu. Skill, hết giờ và hoàn tác cũng là một bước.</p><div className="history-list">{history.length > 1 ? history.slice(1).map((entry, index) => <button key={entry.sequenceNo} type="button" className={`history-row ${replayStep?.sequenceNo === entry.sequenceNo ? 'active' : ''}`} onClick={() => replay && setReplayIndex(index + 1)} disabled={!replay}><strong>#{entry.sequenceNo}</strong><span>{actionLabel(entry, history[index], catalog)}</span></button>) : <p className="muted">Chưa có nước đi.</p>}</div></section>
       <section className="card"><h2>Hiệu ứng trên bàn</h2><p className="muted">{effects.length} hiệu ứng · {obstacles.length} vật cản</p>{effects.map(effect => <p key={effect.effectId}>{effect.code || effect.effectId} · còn {effect.remainingDuration} lượt</p>)}{obstacles.map(obstacle => <p key={obstacle.obstacleId || `${obstacle.position?.x}-${obstacle.position?.y}`}>{obstacle.kind} · ô {obstacle.position?.x},{obstacle.position?.y}</p>)}<details className="event-debug"><summary>Sự kiện kỹ thuật (API)</summary><p>turn.started: bắt đầu lượt; piece.moved: quân đã di chuyển. Đây là log server, không phải ký hiệu nước cờ.</p><div className="event-list">{events.map((event, index) => <div key={index}>{event.type || JSON.stringify(event)}</div>)}</div></details></section>
     </aside></div>}
