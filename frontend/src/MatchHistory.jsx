@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from './api.js';
-import { query, durationLabel, eloClass, eloLabel, modeLabel, outcomeClass, outcomeLabel, statusLabel } from './records.js';
+import { query, durationLabel, eloClass, eloLabel, endReasonLabel, modeLabel, outcomeClass, outcomeLabel, playerName, sideLabel, statusLabel } from './records.js';
 
 export default function MatchHistory({ token, onOpenMatch, onError }) {
   const [items, setItems] = useState([]);
@@ -48,17 +48,23 @@ export default function MatchHistory({ token, onOpenMatch, onError }) {
     {loading ? <p className="muted">Đang tải lịch sử…</p>
       : !items.length ? <section className="card"><p className="muted">Chưa có trận nào. Hãy vào sảnh để tìm đối thủ.</p></section>
         : <section className="card">
-          <div className="match-list">{items.map(item => <button key={item.matchId} className="match-row" onClick={() => onOpenMatch(item.matchId, item.status)}>
+          <div className="match-list">{items.map(item => {
+            const mine = item.sides?.find(side => side.side === item.side);
+            const opponent = item.sides?.find(side => side.side !== item.side);
+            return <button key={item.matchId} className="match-row" onClick={() => onOpenMatch(item.matchId, item.status)}>
             <span className={`result-pill ${outcomeClass(item.outcome)}`}>{outcomeLabel(item.outcome)}</span>
             <div className="match-row-main">
               <strong>{modeLabel(item.mode)} · {statusLabel(item.status)}</strong>
-              <small>{item.opponentDisplayName ? `vs ${item.opponentDisplayName}` : 'vs Bot'} · {new Date(item.createdAt).toLocaleString('vi-VN')} · {durationLabel(item.durationSeconds)}</small>
+              <small>vs {opponent ? playerName(opponent.player) : (item.opponentDisplayName || 'Bot')} · {new Date(item.createdAt).toLocaleString('vi-VN')} · {durationLabel(item.durationSeconds)}</small>
+              {item.endReason && <small>Lý do: {endReasonLabel(item.endReason)}</small>}
             </div>
             <div className="match-row-meta">
               <span className={`elo ${eloClass(item.eloDelta)}`}>{eloLabel(item.eloDelta)} Elo</span>
+              {item.ratingChange !== 0 && <small>Đổi điểm: {eloLabel(item.ratingChange)}</small>}
+              {item.bonus !== 0 && <small>Thưởng: {item.bonus} coin</small>}
               <small>{item.replayAvailable ? 'Có replay' : item.status === 'completed' ? 'Không có replay' : 'Chưa kết thúc'}</small>
             </div>
-          </button>)}</div>
+          </button>;})}</div>
           {cursor && <div className="actions more"><button className="secondary" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Đang tải…' : 'Xem thêm'}</button></div>}
         </section>}
   </div>;

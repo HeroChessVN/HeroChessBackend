@@ -1,5 +1,6 @@
 // Vai trò file: Các record request/response dùng chung giữa API và client, gần Java record DTO; không có logic truy cập DB.
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace HeroChess.Contracts;
 
@@ -7,7 +8,18 @@ namespace HeroChess.Contracts;
 public sealed record ApiError(string Code, string Message, string? RequestId = null, object? Details = null);
 
 // MeDto: userId/role/status chung; chỉ Player có playerId/isGuest/coinBalance/elo, Admin trả các trường game null.
-public sealed record MeDto(Guid UserId, string DisplayName, string Role, string Status, Guid? PlayerId = null, bool? IsGuest = null, string? CoinBalance = null, int? Elo = null);
+public sealed record MeDto(Guid UserId, string DisplayName, string Role, string Status, Guid? PlayerId = null, bool? IsGuest = null, string? CoinBalance = null, int? Elo = null,
+    string? AvatarName = null, string? FrameName = null, string? AvatarUrl = null);
+
+// UpdateProfileRequest: Sửa hồ sơ hiển thị; field null nghĩa là giữ nguyên giá trị đang lưu.
+public sealed record UpdateProfileRequest(string? DisplayName = null, string? AvatarName = null, string? FrameName = null);
+
+// PlayerProfileDto: Hồ sơ công khai của một tài khoản trong trận; không chứa email hay dữ liệu riêng tư.
+public sealed record PlayerProfileDto(Guid PlayerId, string DisplayName, int Elo, string? AvatarName, string? FrameName, string? AvatarUrl);
+
+// MatchSidePlayerDto: Một phe trong trận kèm hồ sơ người chơi; phe bot không có hồ sơ.
+public sealed record MatchSidePlayerDto(string Side, bool IsBot,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PlayerProfileDto? Player);
 
 // CatalogDto: Gói catalog để client xây đội hình.
 public sealed record CatalogDto(
@@ -67,14 +79,25 @@ public sealed record CreateMatchmakingTicketRequest(string Mode = "ranked");
 public sealed record MatchmakingTicketDto(Guid TicketId, string Mode, string Status, Guid? MatchId, DateTimeOffset CreatedAt);
 // SelectLineupRequest: Chọn lineup có revision mong đợi.
 public sealed record SelectLineupRequest(Guid LineupId, int ExpectedRevision);
-// MatchSelectionSideDto: Thông tin selection được phép xem; lineup ID của đối thủ bị ẩn.
-public sealed record MatchSelectionSideDto(string Side, bool Confirmed, IReadOnlyList<Guid> PublicSkillIds, Guid? OwnLineupId = null, int? OwnLineupRevision = null);
+// MatchSelectionSideDto: Thông tin selection của một phe; ownLineupId chỉ có ở phe người xem, selectedLineup là đội hình đã chọn cho trận này.
+public sealed record MatchSelectionSideDto(string Side, bool Confirmed, bool IsBot,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PlayerProfileDto? Player,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? OwnLineupId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? OwnLineupRevision = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchSelectedLineupDto? SelectedLineup = null);
+// MatchSelectedLineupDto: Đội hình đã chọn cho trận này, không phải mọi đội hình đã lưu.
+public sealed record MatchSelectedLineupDto(Guid Id, string Name, int TotalSp,
+    IReadOnlyList<MatchSelectedLineupEntryDto> Entries, IReadOnlyList<MatchSelectedLineupSkillDto> Skills);
+// MatchSelectedLineupEntryDto: Một hero trong đội hình đã chọn; heroId trùng id trong catalog.
+public sealed record MatchSelectedLineupEntryDto(int SlotNo, Guid HeroId);
+// MatchSelectedLineupSkillDto: Một command skill đã chọn; skillId trùng id trong catalog.
+public sealed record MatchSelectedLineupSkillDto(int SlotNo, Guid SkillId);
 // MatchSelectionDto: Selection hai bên và trạng thái trận.
 public sealed record MatchSelectionDto(Guid MatchId, string Mode, string Status, IReadOnlyList<MatchSelectionSideDto> Sides);
 // WsTicketDto: Vé mở socket một lần cùng hạn dùng.
 public sealed record WsTicketDto(string Ticket, DateTimeOffset ExpiresAt);
 
-// MatchStateDto: State JSON kèm version/deadline/serverNow và dấu settlement.
+// MatchStateDto: State JSON kèm version/deadline/serverNow, dấu settlement và hồ sơ người chơi hai phe.
 public sealed record MatchStateDto(
     Guid MatchId,
     string Mode,
@@ -87,7 +110,8 @@ public sealed record MatchStateDto(
     DateTimeOffset ServerNow,
     int StateSchemaVersion,
     JsonElement State,
-    DateTimeOffset? SettledAt);
+    DateTimeOffset? SettledAt,
+    IReadOnlyList<MatchSidePlayerDto>? Sides = null);
 
 // LegalMoveDto: Nước hợp lệ server tính để UI tô ô.
 public sealed record LegalMoveDto(Guid PieceId, int FromX, int FromY, int ToX, int ToY, Guid? CapturedPieceId);
@@ -95,12 +119,13 @@ public sealed record LegalMoveDto(Guid PieceId, int FromX, int FromY, int ToX, i
 public sealed record MatchCommandRequest(Guid CommandId, int ExpectedVersion, JsonElement Action);
 // MatchCommandResultDto: ACK action gồm duplicate flag, sequence, events và snapshot.
 public sealed record MatchCommandResultDto(Guid MatchId, Guid CommandId, int SequenceNo, bool Duplicate, JsonElement ResolvedEvents, MatchStateDto Snapshot);
-// MatchListItemDto: Một mục lịch sử trận kèm đối thủ, đổi Elo, thời lượng và cờ replay sẵn có.
+// MatchListItemDto: Một mục lịch sử trận kèm hồ sơ hai phe, đổi Elo, thưởng, thời lượng và cờ replay sẵn có.
 public sealed record MatchListItemDto(Guid MatchId, string Mode, string Status, string? Side, string? Result, string? EndReason,
     DateTimeOffset CreatedAt, DateTimeOffset? EndedAt,
     string? Outcome = null, Guid? OpponentPlayerId = null, string? OpponentDisplayName = null,
     int? EloBefore = null, int? EloAfter = null, int? EloDelta = null,
-    double? DurationSeconds = null, bool ReplayAvailable = false);
+    double? DurationSeconds = null, bool ReplayAvailable = false,
+    int RatingChange = 0, int Bonus = 0, IReadOnlyList<MatchSidePlayerDto>? Sides = null);
 // MatchPageDto: Trang lịch sử cùng cursor tiếp theo.
 public sealed record MatchPageDto(IReadOnlyList<MatchListItemDto> Items, string? NextCursor);
 // ReplayEntryDto: Một action lịch sử với stateAfter frozen.
@@ -132,9 +157,10 @@ public sealed record MyRankingDto(int? Rank, Guid PlayerId, string DisplayName, 
 public sealed record MatchDetailDto(Guid MatchId, string Mode, string Status, string? Result, string? EndReason,
     DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? EndedAt,
     IReadOnlyList<MatchSideDto> Sides, bool ReplayAvailable, int ActionCount);
-// MatchSideDto: Một bên trong trận kèm người chơi, kết quả và lineup đã dùng lúc đấu.
+// MatchSideDto: Một bên trong trận kèm hồ sơ người chơi, kết quả và lineup đã dùng lúc đấu.
 public sealed record MatchSideDto(string Side, Guid? PlayerId, string? DisplayName, string ParticipantType,
-    string? Outcome, int? EloBefore, int? EloAfter, long CoinReward, MatchSideLineupDto Lineup);
+    string? Outcome, int? EloBefore, int? EloAfter, long CoinReward, MatchSideLineupDto Lineup,
+    bool IsBot = false, PlayerProfileDto? Player = null);
 // MatchLineupDto: Lineup của các bên trong trận; bên đối thủ chỉ hiện khi trận đã bắt đầu.
 public sealed record MatchLineupDto(Guid MatchId, IReadOnlyList<MatchSideLineupDto> Sides);
 // MatchSideLineupDto: Lineup đã đóng băng của một bên.

@@ -105,8 +105,15 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
 
         await Select(red, matchId); await Select(black, matchId);
         var beforeReveal = await red.Client.GetFromJsonAsync<MatchSelectionDto>($"/api/v1/matches/{matchId}/selection", Json);
-        Assert.All(beforeReveal!.Sides, side => Assert.Equal(3, side.PublicSkillIds.Count));
+        // Mỗi phe đã chọn đội hình nên hiện đủ 3 skill của đội hình đã chọn.
+        Assert.All(beforeReveal!.Sides, side => Assert.Equal(3, side.SelectedLineup!.Skills.Count));
+        // ownLineupId chỉ có ở phe người đang gọi API.
         Assert.Null(beforeReveal.Sides.Single(x => x.Side == "black").OwnLineupId);
+        Assert.NotNull(beforeReveal.Sides.Single(x => x.Side == "red").OwnLineupId);
+        // Cả hai phe đều có hồ sơ người chơi để client hiện tên, điểm, ảnh và khung.
+        Assert.All(beforeReveal.Sides, side => Assert.NotNull(side.Player));
+        Assert.All(beforeReveal.Sides, side => Assert.False(side.IsBot));
+        Assert.Equal(0, beforeReveal.Sides.Single(x => x.Side == "red").Player!.Elo >= 0 ? 0 : 1);
         Assert.Equal(HttpStatusCode.Conflict, (await red.Client.GetAsync($"/api/v1/matches/{matchId}/replay")).StatusCode);
         var confirmations = await Task.WhenAll(red.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null), black.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null));
         Assert.All(confirmations, x => Assert.Equal(HttpStatusCode.OK, x.StatusCode));

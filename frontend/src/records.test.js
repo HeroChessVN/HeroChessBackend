@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { durationLabel, eloClass, eloLabel, modeLabel, outcomeClass, outcomeLabel, query, rankBadge, recordLabel, statusLabel } from './records.js';
+import { durationLabel, eloClass, eloLabel, endReasonLabel, modeLabel, outcomeClass, outcomeLabel, playerAvatar, playerFrame, playerName, query, rankBadge, recordLabel, resultLabel, sideLabel, statusLabel } from './records.js';
 
 test('outcome labels cover win/loss/draw and never invent a value', () => {
   assert.equal(outcomeLabel('win'), 'Thắng');
@@ -53,4 +53,35 @@ test('query drops empty values so filters stay optional', () => {
   assert.equal(query({ limit: 20, mode: '', outcome: null }), '?limit=20');
   assert.equal(query({ cursor: 'abc' }), '?cursor=abc');
   assert.equal(query({}), '');
+});
+
+test('player profile helpers read the public profile fields and fall back safely', () => {
+  const profile = { displayName: 'Lê Lợi', elo: 1500, avatarUrl: 'https://cdn.test/a.png', avatarName: 'leloi', frameName: 'khung' };
+  assert.equal(playerName(profile), 'Lê Lợi');
+  assert.equal(playerName(null), 'Bot');
+  assert.equal(playerAvatar(profile), 'https://cdn.test/a.png');
+  assert.equal(playerAvatar({ displayName: 'x' }), null);
+  assert.equal(playerFrame(profile), 'khung');
+  assert.equal(playerFrame(null), null);
+});
+
+test('result label compares the match result against the viewer side', () => {
+  assert.equal(resultLabel('red_win', 'red'), 'Thắng');
+  assert.equal(resultLabel('red_win', 'black'), 'Thua');
+  assert.equal(resultLabel('draw', 'red'), 'Hòa');
+  assert.equal(resultLabel(null, 'red'), '—');
+});
+
+test('end reason label maps known reasons and keeps unknown raw values', () => {
+  assert.equal(endReasonLabel('checkmate'), 'Chiếu hết');
+  assert.equal(endReasonLabel('resign'), 'Đầu hàng');
+  assert.equal(endReasonLabel('timeout'), 'Hết giờ');
+  assert.equal(endReasonLabel('unknown_reason'), 'unknown_reason');
+  assert.equal(endReasonLabel(null), '—');
+});
+
+test('side label names the two sides', () => {
+  assert.equal(sideLabel('red'), 'Đỏ');
+  assert.equal(sideLabel('black'), 'Đen');
+  assert.equal(sideLabel(null), '—');
 });

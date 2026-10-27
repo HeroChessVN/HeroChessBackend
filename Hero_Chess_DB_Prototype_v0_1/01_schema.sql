@@ -14,6 +14,11 @@ CREATE TABLE player (
  is_guest boolean NOT NULL DEFAULT true,
  role varchar(16) NOT NULL DEFAULT 'player' CHECK (role IN ('player','admin')),
  status varchar(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+ -- Profile cosmetics: token codes for avatar/frame plus the uploaded image file name.
+ -- Tokens are whitespace-free and contain no '/' or '\' so they are safe to build URLs from.
+ avatar_name varchar(80) CHECK (avatar_name IS NULL OR avatar_name !~ '[\s/\\]'),
+ frame_name varchar(80) CHECK (frame_name IS NULL OR frame_name !~ '[\s/\\]'),
+ avatar_path varchar(160) CHECK (avatar_path IS NULL OR avatar_path !~ '[\s/\\]' AND avatar_path !~ '\.\.'),
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now()
 );

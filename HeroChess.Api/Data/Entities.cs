@@ -19,6 +19,9 @@ public class User
     public string DisplayName { get; set; } = "";
     public string Role { get; private set; } = "unassigned";
     public string Status { get; set; } = "active";
+    public string? AvatarName { get; set; }
+    public string? FrameName { get; set; }
+    public string? AvatarPath { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

@@ -38,6 +38,9 @@ export default function App() {
   const [detailId, setDetailId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [draftName, setDraftName] = useState('');
+  const [draftAvatar, setDraftAvatar] = useState('');
+  const [draftFrame, setDraftFrame] = useState('');
   const token = session?.accessToken;
 
   function logout() {
@@ -59,6 +62,10 @@ export default function App() {
         api(token, '/me'), api(token, '/catalog'), api(token, '/lineups'), api(token, '/matches?limit=20')
       ]);
       setMe(profile); setCatalog(book); setLineups(teams); setMatches(history.items);
+      // Ô nhập hồ sơ lấy giá trị hiện tại, trừ khi người dùng đang sửa dở.
+      setDraftName(previous => previous || profile.displayName || '');
+      setDraftAvatar(previous => previous || profile.avatarName || '');
+      setDraftFrame(previous => previous || profile.frameName || '');
     } catch (failure) {
       if (failure.status === 401) logout();
       setError(failure);
@@ -96,6 +103,8 @@ export default function App() {
     if (status === 'selecting' || status === 'active') sessionStorage.setItem('heroChessMatchId', id);
     else sessionStorage.removeItem('heroChessMatchId');
     setMatchId(id); setPage('match');
+    // Nạp lại lịch sử để có createdAt và phe của trận vừa tạo cho màn chờ.
+    refresh();
   }
   // openDetail: Mở trang chi tiết trận đã kết thúc từ lịch sử; không ghi đè trận đang chơi.
   function openDetail(id) { setDetailId(id); setPage('detail'); }
@@ -163,7 +172,21 @@ export default function App() {
     <div className="content"><ErrorBox error={error} onClose={() => setError(null)} />
       {page === 'lobby' && <>
         <div className="hero-banner"><div><span className="eyebrow">SẢNH CHỜ</span><h1>Chọn trận đấu của bạn.</h1><p>Đội hình và luật được kiểm tra trên server. Bàn cờ chỉ gửi nước hợp lệ và lệnh skill thật.</p></div>
-          <div className="profile"><span>{me?.displayName || email || 'Player'}</span><strong>Elo {me?.elo ?? '—'}</strong><small>{me?.coinBalance ?? '—'} coin · {me?.role || '...'}</small></div></div>
+          <div className="profile">{me?.avatarUrl ? <img className="avatar" src={me.avatarUrl} alt="" /> : <span className="avatar placeholder">{(me?.displayName || 'P').slice(0, 1)}</span>}
+            <span>{me?.displayName || email || 'Player'}</span><strong>Elo {me?.elo ?? '—'}</strong><small>{me?.coinBalance ?? '—'} coin · {me?.role || '...'}</small></div></div>
+        <section className="card profile-edit"><h2>Hồ sơ</h2>
+          <div className="filters">
+            <label>Tên hiển thị<input value={draftName} onChange={event => setDraftName(event.target.value)} maxLength={80} /></label>
+            <label>Ảnh đại diện (mã)<input value={draftAvatar} onChange={event => setDraftAvatar(event.target.value)} placeholder="leloi" /></label>
+            <label>Khung (mã)<input value={draftFrame} onChange={event => setDraftFrame(event.target.value)} placeholder="khung-rong" /></label>
+          </div>
+          <div className="actions">
+            <button className="secondary" disabled={busy || !draftName.trim()} onClick={() => run(async () => { await api(token, '/me', { method: 'PATCH', body: { displayName: draftName, avatarName: draftAvatar || null, frameName: draftFrame || null } }); await refresh(); })}>Lưu hồ sơ</button>
+            <label className="file-label">Tải ảnh từ máy<input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy}
+              onChange={event => { const file = event.target.files?.[0]; if (!file) return; const form = new FormData(); form.append('file', file); run(async () => { await api(token, '/me/avatar', { method: 'POST', body: form }); await refresh(); }); event.target.value = ''; }} /></label>
+          </div>
+          {me?.avatarUrl ? <small>Ảnh hiện tại: {me.avatarUrl}</small> : <small className="muted">Chưa có ảnh tải lên từ máy.</small>}
+        </section>
         <div className="cards"><section className="card"><h2>Chơi với bot</h2><p>Vào trận ngay, chọn đội hình và đấu với bot.</p><button disabled={busy || !lineups.length} onClick={() => queue('bot')}>Bắt đầu trận bot</button></section>
           <section className="card"><h2>Ghép trận PvP</h2><p>Hai tài khoản cùng vào hàng đợi để ghép trận.</p><button disabled={busy || !lineups.length || ['waiting', 'matching'].includes(ticket?.status)} onClick={() => queue('ranked')}>Tìm đối thủ</button></section>
           <section className="card"><h2>Đội hình</h2><p>{lineups.length} đội hình đã lưu · {catalog?.heroes?.filter(x => x.isOwned).length ?? 0} hero sở hữu.</p><button className="secondary" onClick={() => setPage('lineup')}>Mở trình xếp đội</button></section></div>
@@ -183,7 +206,7 @@ export default function App() {
       {page === 'history' && <MatchHistory token={token} onOpenMatch={openDetail} onError={setError} />}
       {page === 'ranking' && <Ranking token={token} onError={setError} />}
       {page === 'detail' && detailId && <MatchDetail token={token} matchId={detailId} onOpenReplay={openReplay} onBack={() => setPage('history')} onError={setError} />}
-      {page === 'match' && matchId && <MatchView key={matchId} token={token} matchId={matchId} catalog={catalog} lineups={lineups} onBack={ended => { if (ended) { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); } setPage('lobby'); refresh(); }} onCancel={() => { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); setPage('lobby'); refresh(); }} onError={setError} />}
+      {page === 'match' && matchId && <MatchView key={matchId} token={token} matchId={matchId} catalog={catalog} lineups={lineups} matchInfo={currentMatch} playerId={me?.playerId} onBack={ended => { if (ended) { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); } setPage('lobby'); refresh(); }} onCancel={() => { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); setPage('lobby'); refresh(); }} onError={setError} />}
     </div>
   </div>;
 }

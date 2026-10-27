@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, canPlaceStructure, pollRetryDelay, skillTarget } from './api.js';
 import { actionLabel } from './history.js';
+import { playerAvatar, playerName, sideLabel } from './records.js';
+import MatchSelection from './MatchSelection.jsx';
 
 const classes = { general: 'TƯỚNG', advisor: 'SĨ', elephant: 'TƯỢNG', rook: 'XE', cannon: 'PHÁO', horse: 'MÃ', soldier: 'TỐT' };
 const pointSkills = new Set(['thanh', 'rao']);
 const effectSkills = new Set(['phan_ky_doat_the', 'pha_tran_doat_phong']);
 const knownSkills = new Set([...pointSkills, ...effectSkills, 'khien', 'van_coc_tran_giang', 'binh_lam_thuy_hien']);
 
-export default function MatchView({ token, matchId, catalog, lineups, onBack, onCancel, onError }) {
+export default function MatchView({ token, matchId, catalog, lineups, matchInfo, playerId, onBack, onCancel, onError }) {
   const [selection, setSelection] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
   const [legal, setLegal] = useState([]);
@@ -187,7 +189,8 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
     return () => clearTimeout(timer);
   }, [replayPlaying, replay, replayIndex]);
 
-  const ownSide = selection?.sides?.find(side => side.ownLineupId)?.side;
+  // ownSide: Phe của người đang chơi; /matches trả sẵn nên dùng khi chưa chọn đội hình.
+  const ownSide = matchInfo?.side || selection?.sides?.find(side => side.ownLineupId)?.side;
   const ourTurn = ownSide && snapshot?.sideToMove === ownSide;
   useEffect(() => {
     if (heroTargetMode !== 'quangtrung' || !selectedPiece || !ourTurn) { setHeroMoves([]); return; }
@@ -242,10 +245,9 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
   return <div className="match-page">{actionError && <div className="error match-error-toast" role="alert">{actionError}<button type="button" className="close" aria-label="Đóng thông báo" onClick={() => setActionError('')}>×</button></div>}<div className="section-head"><div><span className="eyebrow">{snapshot?.mode === 'bot' ? 'CHƠI VỚI BOT' : 'TRẬN ĐẤU'}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
     <div className="match-controls"><button className="secondary" onClick={() => onBack(snapshot?.status === 'completed' || selection?.status === 'cancelled')}>← Sảnh</button><button className="secondary" onClick={() => refresh().catch(onError)}>Đồng bộ</button><button className="secondary" onClick={() => setFlipped(!flipped)}>Xoay bàn</button></div></div>
     <div className="match-meta"><span className="pill">{replay ? 'replay' : status}</span>{replay ? <><span>Bước {replayStep?.sequenceNo ?? 0}/{replayEnd}</span><span>{actionLabel(replayStep, replay[replayIndex - 1], catalog)}</span></> : <><span>Lượt: <strong>{snapshot?.sideToMove || '—'}</strong>{ownSide ? ` · bạn: ${ownSide}` : ''}</span><span>#{snapshot?.countedActions ?? 0}/{catalog?.ruleset?.actionLimit ?? 150}</span><span className="timer">{timeLeft == null ? '—' : `${timeLeft}s`}</span><span>Socket: {socketStatus}</span></>}</div>
-    {status === 'selecting' && <section className="card selection"><h2>Chọn đội hình</h2><p>Hai bên có 120 giây để chọn và xác nhận.</p>
-      <div className="actions"><select value={selectedLineupId} onChange={event => setSelectedLineupId(event.target.value)}>{lineups.map(lineup => <option key={lineup.id} value={lineup.id}>{lineup.name} · {lineup.totalSp} SP</option>)}</select>
-        <button disabled={busy || !selectedLineupId} onClick={selectLineup}>Chọn</button><button disabled={busy || !selection?.sides?.some(side => side.ownLineupId)} onClick={confirm}>Xác nhận</button><button className="danger" disabled={busy} onClick={cancel}>Hủy tham gia</button></div>
-      <div className="side-status">{selection?.sides?.map(side => <span key={side.side}>{side.side}: {side.confirmed ? 'đã xác nhận' : 'đang chọn'} · {side.publicSkillIds?.length || 0} skill</span>)}</div></section>}
+    {status === 'selecting' && <MatchSelection selection={selection} catalog={catalog} lineups={lineups} ownSide={matchInfo?.side} playerId={playerId}
+      matchCreatedAt={matchInfo?.createdAt} selectedLineupId={selectedLineupId}
+      onPickLineup={setSelectedLineupId} onSelect={selectLineup} onConfirm={confirm} onCancel={cancel} busy={busy} />}
     {snapshot?.status === 'completed' && !replay ? <div className="card"><p className="hint">{historyError ? 'Không tải được replay.' : 'Đang tải replay từ bước 0…'}</p>{historyError && <button onClick={() => setHistoryRetry(value => value + 1)}>Thử lại</button>}</div> : <div className="battle-layout"><section className="board-wrap"><div className="board" role="grid" aria-label="Bàn cờ Hero Chess">{ys.flatMap(y => xs.map(x => {
       const piece = pieces.find(item => item.position.x === x && item.position.y === y);
       const obstacle = obstacles.find(item => item.position?.x === x && item.position?.y === y);
@@ -262,7 +264,20 @@ export default function MatchView({ token, matchId, catalog, lineups, onBack, on
         {inspectedPiece.traitImplementationKey === 'rook.hoanh_soc' && <p>Hoành Sóc Giang Sơn: {inspectedPiece.traitState?.hoanhSocCharged === 1 ? 'sẵn sàng xuyên 1 quân đồng minh ở nước đi kế tiếp' : 'chưa tích điện'}</p>}
         {heroTargetMode && <div className="target-panel"><p>{heroTargetMode === 'stake' ? 'Chọn ô trống ở hàng sông y=4 hoặc y=5.' : 'Chọn ô sáng cho nước đi kỹ năng.'}</p><button disabled={!targetPoint || !!pending || busy} onClick={() => command({ type: 'hero_active', pieceId: inspectedPiece.pieceId, skillCode: heroTargetMode === 'stake' ? inspectedPiece.traitImplementationKey : 'quang_trung.special_move', target: heroTargetMode === 'stake' ? { position: targetPoint } : { to: targetPoint } })}>Xác nhận {targetPoint && `(${targetPoint.x},${targetPoint.y})`}</button><button className="secondary" onClick={() => { setHeroTargetMode(null); setTargetPoint(null); }}>Hủy</button></div>}
       </div>}</section>
-    <aside className="battle-side"><section className="card"><h2>Command skill</h2>{!ownSide && <p className="muted">Chọn đội hình để hiện skill của bạn.</p>}
+    <aside className="battle-side"><section className="card"><h2>Người chơi</h2>
+      {(snapshot?.sides || selection?.sides || []).map(side => {
+        const profile = side.player;
+        const avatar = playerAvatar(profile);
+        return <div key={side.side} className="side-card">
+          <div className="side-card-head">
+            {avatar ? <img className="avatar" src={avatar} alt="" /> : <span className="avatar placeholder">{sideLabel(side.side).slice(0, 1)}</span>}
+            <div><strong>{side.isBot ? 'Bot' : playerName(profile)}</strong>
+              <small>{sideLabel(side.side)}{profile ? ` · Elo ${profile.elo}` : ''}{profile?.avatarName ? ` · ${profile.avatarName}` : ''}{profile?.frameName ? ` · ${profile.frameName}` : ''}</small></div>
+          </div>
+        </div>;
+      })}
+      {!snapshot?.sides?.length && !selection?.sides?.length && <p className="muted">Chưa có dữ liệu người chơi.</p>}
+    </section><section className="card"><h2>Command skill</h2>{!ownSide && <p className="muted">Chọn đội hình để hiện skill của bạn.</p>}
       {sideSkills.map(skill => {
         const info = catalog?.teamSkills?.find(item => item.id === skill.skillId);
         const turnAlreadyProcessed = view?.processedTurns?.[ownSide]?.includes(snapshot?.turnIndex);

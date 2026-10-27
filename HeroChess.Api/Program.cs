@@ -56,6 +56,7 @@ builder.Services.AddIdentityApiEndpoints<User>(options =>
 builder.Services.AddScoped<IUserStore<User>, UserStore>();
 builder.Services.AddScoped<IUserClaimsPrincipalFactory<User>, UserClaimsPrincipalFactory>();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+builder.Services.AddScoped<PlayerProfileService>();
 builder.Services.AddScoped<LineupValidator>();
 builder.Services.AddScoped<LineupService>();
 builder.Services.Configure<MatchmakingOptions>(builder.Configuration.GetSection("Matchmaking"));

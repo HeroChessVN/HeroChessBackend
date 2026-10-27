@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HeroChess.Api.Services;
 
-public sealed class MatchHistoryService(AppDbContext db)
+public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService profiles)
 {
     // ListAsync: Phân trang keyset theo thời điểm/ID; chỉ liệt kê trận actor tham gia. Lọc theo mode và kết quả nếu có.
     public async Task<MatchPageDto> ListAsync(Guid playerId, string? cursor, int limit, string? mode, string? outcome, CancellationToken ct)
@@ -38,17 +38,25 @@ public sealed class MatchHistoryService(AppDbContext db)
         var rows = await query.OrderByDescending(x => x.Match.CreatedAt).ThenByDescending(x => x.Match.Id).Take(limit + 1).ToListAsync(ct);
         var page = rows.Take(limit).ToArray();
         var sides = await SidesOfAsync(page.Select(x => x.Match.Id), ct);
+        // Hồ sơ hai phe: điểm là điểm sau trận (eloAfter) nếu trận đã settle.
+        var eloAfter = sides.Where(x => x.EloAfter is not null).ToDictionary(x => x.PlayerId!.Value, x => x.EloAfter!.Value);
+        var playerProfiles = await profiles.ForPlayersAsync(sides.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value), eloAfter, ct);
         var items = page.Select(x =>
         {
             var mine = sides.First(s => s.MatchId == x.Match.Id && s.PlayerId == playerId);
             var opponent = sides.FirstOrDefault(s => s.MatchId == x.Match.Id && s.PlayerId != playerId);
-            return new MatchListItemDto(x.Match.Id, x.Match.Mode, x.Match.Status, x.Side, x.Match.Result, x.Match.EndReason,
+            var matchSides = sides.Where(s => s.MatchId == x.Match.Id).OrderBy(s => s.Side).Select(s => new MatchSidePlayerDto(s.Side,
+                s.ParticipantType == "bot",
+                s.PlayerId is not null && playerProfiles.TryGetValue(s.PlayerId.Value, out var profile) ? profile : null)).ToArray();
+            return new MatchListItemDto(x.Match.Id, x.Match.Mode, x.Match.Status, x.Side, x.Match.Result, EndReason(x.Match.EndReason),
                 x.Match.CreatedAt, x.Match.EndedAt, Outcome(x.Match.Result, x.Side),
                 opponent?.PlayerId, opponent?.DisplayName,
                 mine.EloBefore, mine.EloAfter,
                 mine.EloBefore is not null && mine.EloAfter is not null ? mine.EloAfter - mine.EloBefore : null,
                 Duration(x.Match.StartedAt, x.Match.EndedAt),
-                sides.Any(s => s.MatchId == x.Match.Id && s.ReplayAvailable));
+                sides.Any(s => s.MatchId == x.Match.Id && s.ReplayAvailable),
+                mine.EloBefore is not null && mine.EloAfter is not null ? (int)(mine.EloAfter - mine.EloBefore) : 0,
+                (int)mine.CoinReward, matchSides);
         }).ToArray();
         string? next = null;
         if (rows.Count > limit && page.Length > 0)
@@ -68,9 +76,13 @@ public sealed class MatchHistoryService(AppDbContext db)
         if (!sides.Any(x => x.PlayerId == playerId)) throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
         var actionCount = await db.MatchActions.AsNoTracking().CountAsync(x => x.MatchId == matchId, ct);
         var lineups = await LineupOfAsync(matchId, sides, ct);
+        var eloAfter = sides.Where(x => x.EloAfter is not null).ToDictionary(x => x.PlayerId!.Value, x => x.EloAfter!.Value);
+        var playerProfiles = await profiles.ForPlayersAsync(sides.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value), eloAfter, ct);
         var dtoSides = sides.OrderBy(x => x.Side).Select(side => new MatchSideDto(side.Side, side.PlayerId, side.DisplayName, side.ParticipantType,
-            Outcome(match.Result, side.Side), side.EloBefore, side.EloAfter, side.CoinReward, lineups[side.Side])).ToArray();
-        return new(match.Id, match.Mode, match.Status, match.Result, match.EndReason, match.CreatedAt, match.StartedAt, match.EndedAt,
+            Outcome(match.Result, side.Side), side.EloBefore, side.EloAfter, side.CoinReward, lineups[side.Side],
+            side.ParticipantType == "bot",
+            side.PlayerId is not null && playerProfiles.TryGetValue(side.PlayerId.Value, out var profile) ? profile : null)).ToArray();
+        return new(match.Id, match.Mode, match.Status, match.Result, EndReason(match.EndReason), match.CreatedAt, match.StartedAt, match.EndedAt,
             dtoSides, actionCount > 0, actionCount);
     }
 
@@ -98,9 +110,22 @@ public sealed class MatchHistoryService(AppDbContext db)
         if (match.Status is not ("active" or "completed" or "cancelled")) throw new ApiException(409, "REPLAY_NOT_AVAILABLE", "Actions are available after the match starts.");
         var rows = await db.MatchActions.AsNoTracking().Where(x => x.MatchId == matchId && x.SequenceNo > afterSequence).OrderBy(x => x.SequenceNo).Take(limit + 1).ToListAsync(ct);
         var viewer = participant.Side == "red" ? Side.Red : Side.Black;
+        // Tên tướng để bù cho stateAfter lưu từ trước khi có heroName.
+        var heroNames = await HeroNamesAsync(rows.Select(x => x.StateAfter.RootElement), ct);
         var entries = rows.Take(limit).Select(x => new ReplayEntryDto(x.SequenceNo, x.Kind == "hero_active" ? "legacy_action" : x.Kind, x.ActorSide,
-            MatchStateProjection.Events(x.ResolvedEvents.RootElement, viewer), MatchStateProjection.State(x.StateAfter.RootElement, viewer), x.CommittedAt)).ToArray();
+            MatchStateProjection.Events(x.ResolvedEvents.RootElement, viewer),
+            MatchStateProjection.State(x.StateAfter.RootElement, viewer, heroNames), x.CommittedAt)).ToArray();
         return new(matchId, entries, rows.Count > limit ? entries[^1].SequenceNo : null);
+    }
+
+    // HeroNamesAsync: Tên tướng theo heroId cho các state snapshot cần hiển thị tên quân.
+    private async Task<Dictionary<Guid, string>> HeroNamesAsync(IEnumerable<JsonElement> states, CancellationToken ct)
+    {
+        var heroIds = states.SelectMany(stored => stored.TryGetProperty("pieces", out var pieces) && pieces.ValueKind == JsonValueKind.Array
+            ? pieces.EnumerateArray().Where(p => p.TryGetProperty("heroId", out _)).Select(p => p.GetProperty("heroId").GetGuid())
+            : []).Distinct().ToArray();
+        if (heroIds.Length == 0) return [];
+        return await db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
     }
 
     // SideRow: Một bên của trận gộp participant, tên hiển thị và cờ replay có dữ liệu.
@@ -176,4 +201,19 @@ public sealed class MatchHistoryService(AppDbContext db)
     // Duration: Thời lượng trận tính bằng giây từ lúc bắt đầu đến lúc kết thúc.
     private static double? Duration(DateTimeOffset? startedAt, DateTimeOffset? endedAt) =>
         startedAt is null || endedAt is null ? null : Math.Round((endedAt.Value - startedAt.Value).TotalSeconds, 1);
+
+    // EndReason: Quy đổi endReason nội bộ sang từ vựng client đọc: checkmate, resign, timeout, stalemate, draw, agreement.
+    private static string? EndReason(string? endReason) => endReason switch
+    {
+        null => null,
+        "checkmate" => "checkmate",
+        "resign" => "resign",
+        "agreement" => "agreement",
+        "stalemate" => "stalemate",
+        "draw" => "draw",
+        "no_legal_actions" => "stalemate",
+        "afk" or "timeout_in_check" or "selection_timeout" => "timeout",
+        "action_limit_sp" or "selection_cancelled" or "server_restart" => "draw",
+        _ => endReason
+    };
 }

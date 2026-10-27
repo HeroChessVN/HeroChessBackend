@@ -38,3 +38,27 @@ export function query(params) {
   const text = search.toString();
   return text ? `?${text}` : '';
 }
+
+// sideLabel: Tên phe hiển thị.
+export const sideLabel = side => ({ red: 'Đỏ', black: 'Đen' }[side] ?? side ?? '—');
+
+// playerName: Tên người chơi trong hồ sơ; bot không có hồ sơ nên hiện "Bot".
+export const playerName = player => player?.displayName || 'Bot';
+
+// playerAvatar: URL ảnh đại diện; chỉ có khi người chơi đã tải ảnh từ máy.
+export const playerAvatar = player => player?.avatarUrl || null;
+
+// playerFrame: Mã khung đại diện để client dựng ảnh khung.
+export const playerFrame = player => player?.frameName || null;
+
+// resultLabel: Kết quả trận theo phe đang xem.
+export function resultLabel(result, side) {
+  if (!result) return '—';
+  if (result === 'draw') return 'Hòa';
+  if (result === `${side}_win`) return 'Thắng';
+  return 'Thua';
+}
+
+// endReasonLabel: Lý do kết thúc trận.
+export const endReasonLabel = reason =>
+  ({ checkmate: 'Chiếu hết', resign: 'Đầu hàng', timeout: 'Hết giờ', stalemate: 'Hòa do bế tắc', draw: 'Hòa', agreement: 'Thỏa thuận' }[reason] ?? reason ?? '—');

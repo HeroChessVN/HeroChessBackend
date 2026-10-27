@@ -8,7 +8,7 @@ namespace HeroChess.Api.Services;
 
 public static class MatchStateProjection
 {
-    public static JsonElement State(JsonElement stored, Side viewer)
+    public static JsonElement State(JsonElement stored, Side viewer, IReadOnlyDictionary<Guid, string>? heroNames = null)
     {
         var state = stored.Deserialize<GameState>(GameJson.Options) ?? throw new InvalidOperationException("Invalid stored state.");
         var hidden = state.Obstacles.Where(o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc)
@@ -26,6 +26,12 @@ public static class MatchStateProjection
             var data = piece!.AsObject();
             foreach (var key in new[] { "movementImplementationKey", "traitKind", "traitImplementationKey", "traitName", "traitDescription", "traitParameters", "traitState" })
                 data.Remove(key);
+            // Quân cũ lưu state trước khi có heroName: bù tên tướng từ catalog để bàn cờ hiện đủ cho cả hai phe.
+            if (heroNames is not null && (data["heroName"] is null || data["heroName"]!.GetValueKind() == JsonValueKind.Null))
+            {
+                var heroId = data["heroId"]?.GetValue<Guid>();
+                if (heroId is not null && heroNames.TryGetValue(heroId.Value, out var name)) data["heroName"] = name;
+            }
         }
         return GameJson.Element(projected);
     }

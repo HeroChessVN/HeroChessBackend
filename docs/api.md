@@ -24,7 +24,9 @@ Mọi REST route bên dưới bắt đầu bằng `/api/v1`. Ví dụ `GET /me` 
 | `POST` | `/auth/register` | `{ "email": "...", "password": "..." }`; tạo tài khoản Player. |
 | `POST` | `/auth/login?useCookies=false` | Cùng body; nhận `accessToken`, `refreshToken`, `expiresIn`, `tokenType`. |
 | `POST` | `/auth/refresh` | `{ "refreshToken": "..." }`; nhận cặp token mới. |
-| `GET` | `/me` | `userId`, `displayName`, `role`, `status`, `playerId`, `coinBalance`, `elo`. |
+| `GET` | `/me` | `userId`, `displayName`, `role`, `status`, `playerId`, `coinBalance`, `elo`, `avatarName`, `frameName`, `avatarUrl`. |
+| `PATCH` | `/me` | Sửa `displayName`, `avatarName`, `frameName`; trả lại hồ sơ đã cập nhật. |
+| `POST` | `/me/avatar` | Upload ảnh từ máy (multipart, field `file`); trả lại hồ sơ kèm `avatarUrl`. |
 | `GET` | `/catalog` | `ruleset`, `classes`, `slots`, `heroes`, `traits`, `factions`, `teamSkills`. |
 | `GET` | `/me/heroes` | Mảng UUID hero đang sở hữu. Trong `/catalog`, mỗi hero cũng có `isOwned`. |
 | `POST` | `/shop/heroes/{heroId}/purchase` | Gửi header `Idempotency-Key: <UUID>`; nhận `heroId`, `acquired`, `coinBalance`, `charged`. |
@@ -65,7 +67,7 @@ Body tạo/sửa:
 4. Mỗi người `POST /matches/{matchId}/confirm` (body rỗng). Trận bot cần Player confirm; PvP cần cả hai confirm. Trong lúc chọn đội, `DELETE /matches/{matchId}/selection` để hủy. Khi trận đã active, muốn rời trận phải gửi lệnh `resign`.
 5. Khi active, `GET /matches/{matchId}/state`. Trước đó route này có thể trả `409 MATCH_NOT_STARTED`.
 
-`/selection` chỉ cho xem `ownLineupId`/`ownLineupRevision` của chính mình; không được dựa vào client để đọc lineup bí mật của đối thủ. Ticket matchmaking nằm trong RAM backend; sau restart phải kiểm tra lịch sử trận và tạo ticket mới nếu ticket cũ mất.
+`/selection` trả **cả hai phe** kèm hồ sơ công khai và đội hình đã chọn cho trận này: mỗi side có `side`, `confirmed`, `isBot`, `player` (`playerId`, `displayName`, `elo`, `avatarName`, `frameName`, `avatarUrl`) và `selectedLineup` (`id`, `name`, `totalSp`, `entries`, `skills`). `ownLineupId`/`ownLineupRevision` chỉ có ở phe người đang gọi API. Phe bot chỉ có `isBot: true`, không có `player` hay `selectedLineup`. `elo` bằng 0 vẫn phải trả; `avatarUrl` là `null` nếu người chơi chưa tải ảnh từ máy. Ticket matchmaking nằm trong RAM backend; sau restart phải kiểm tra lịch sử trận và tạo ticket mới nếu ticket cũ mất.
 
 ## 5. Bàn cờ, nước đi và skill
 
@@ -76,7 +78,7 @@ Body tạo/sửa:
 | `GET` | `/matches/{matchId}/hero-actions?pieceId={pieceId}` | Route tương thích; luôn trả mảng rỗng cho participant. |
 | `POST` | `/matches/{matchId}/commands` | Gửi nước đi, skill, undo hoặc đầu hàng. |
 
-`/state` trả các field ngoài cùng: `matchId`, `mode`, `status`, `version`, `sideToMove`, `turnIndex`, `countedActions`, `deadlineAt`, `serverNow`, `stateSchemaVersion`, `state`, `settledAt`. Trong `state` có `pieces`, `obstacles`, `skillStates`, `effectInstances`, `result`, `endReason`. Mỗi quân có `pieceId`, `heroId`, `side`, `class`, `position`, `status`, `effects`; metadata trait và Hero skill không được gửi. `skillStates.red` và `.black` chứa `slotNo`, `implementationKey`, `usesRemaining`, `cooldownRemaining`, `name`, `description` để hiển thị Command skill/CD cho cả hai phe. Cọc Hero skill cũ được backend lọc khỏi snapshot/replay.
+`/state` trả các field ngoài cùng: `matchId`, `mode`, `status`, `version`, `sideToMove`, `turnIndex`, `countedActions`, `deadlineAt`, `serverNow`, `stateSchemaVersion`, `state`, `settledAt`, `sides`. Trong `state` có `pieces`, `obstacles`, `skillStates`, `effectInstances`, `result`, `endReason`. Mỗi quân có `pieceId`, `heroId`, `heroName`, `side`, `class`, `position`, `status`, `effects`, `traitState` và metadata hero/trait. `skillStates.red` và `.black` chứa `slotNo`, `implementationKey`, `usesRemaining`, `cooldownRemaining`, `name`, `description` để hiển thị Command skill/CD cho cả hai phe. `sides` là hồ sơ người chơi của cả hai phe, cùng shape với `sides` của `/selection`. Cọc Hero skill cũ được backend lọc khỏi snapshot/replay.
 
 `/legal-actions` trả mảng `{ pieceId, fromX, fromY, toX, toY, capturedPieceId }`. Chỉ gửi nước trong danh sách server. Mỗi command gửi UUID mới ở `commandId`, `expectedVersion` bằng `version` mới nhất:
 
@@ -116,16 +118,16 @@ Có thể gửi `match.command` qua socket với payload `{ "matchId": "<UUID>",
 
 | Method | Route | Kết quả |
 |---|---|---|
-| `GET` | `/matches?limit=20&cursor=<nextCursor>&mode=<bot\|ranked>&outcome=<win\|loss\|draw>` | `items`, `nextCursor`; mỗi item có `matchId`, `status`, `side`, `result`, `endReason`, `outcome`, `opponentDisplayName`, `eloBefore`/`eloAfter`/`eloDelta`, `durationSeconds`, `replayAvailable`. |
-| `GET` | `/matches/{matchId}` | Chi tiết trận: `sides[]` (mỗi bên có `side`, `displayName`, `outcome`, `eloBefore`/`eloAfter`, `coinReward`, `lineup`), `replayAvailable`, `actionCount`. Chỉ participant được xem. |
+| `GET` | `/matches?limit=20&cursor=<nextCursor>&mode=<bot\|ranked>&outcome=<win\|loss\|draw>` | `items`, `nextCursor`; mỗi item có `matchId`, `status`, `side`, `result`, `endReason`, `outcome`, `opponentDisplayName`, `eloBefore`/`eloAfter`/`eloDelta`, `ratingChange`, `bonus`, `durationSeconds`, `replayAvailable`, `sides` (hồ sơ người chơi của cả hai phe). |
+| `GET` | `/matches/{matchId}` | Chi tiết trận: `sides[]` (mỗi bên có `side`, `displayName`, `outcome`, `eloBefore`/`eloAfter`, `coinReward`, `lineup`, `player`), `replayAvailable`, `actionCount`. Chỉ participant được xem. |
 | `GET` | `/matches/{matchId}/lineup` | Lineup **đã đóng băng** lúc trận: `sides[]` với `entries[]` (hero, class, SP, phe, ô xuất phát) và `skills[]`. Bên đối thủ chỉ hiện khi trận đã bắt đầu. |
-| `GET` | `/matches/{matchId}/replay?afterSequence=-1&limit=50` | `entries`, `nextAfterSequence`; mỗi entry có `sequenceNo`, `kind`, `actorSide`, `resolvedEvents`, `stateAfter`. |
+| `GET` | `/matches/{matchId}/replay?afterSequence=-1&limit=50` | `entries`, `nextAfterSequence`; mỗi entry có `sequenceNo`, `kind`, `actorSide`, `resolvedEvents`, `stateAfter`, `committedAt`. |
 | `GET` | `/ranking?limit=50&cursor=<nextCursor>` | Bảng xếp hạng công khai: `items[]` (`rank`, `playerId`, `displayName`, `rating`, `gamesPlayed`, `wins`, `draws`, `losses`), `nextCursor`, `total`. |
 | `GET` | `/ranking/me` | Hạng và rating của người chơi đang đăng nhập: `rank` (null nếu chưa có hồ sơ rating), `rating`, `gamesPlayed`, `wins`, `draws`, `losses`, `total`. |
 
 Xếp hạng sắp theo `rating` (Elo) giảm dần; khi bằng nhau thì xếp theo `playerId` tăng dần — quy tắc tie-break duy nhất, `rank` là hạng tuyệt đối. Bảng xếp hạng **không** trả email hay thông tin nhạy cảm; chỉ `displayName`, rating và thống kê. Lịch sử trận chỉ trả trận của chính người gọi (`/me`); người khác gọi `/matches/{matchId}` hoặc `/lineup` nhận `404 MATCH_NOT_FOUND`.
 
-`outcome` là `win` / `loss` / `draw` tính theo phe của người xem; trận chưa có `result` thì `outcome` là `null`, không suy đoán. `replayAvailable` cho biết trận đã có action lưu để xem replay.
+`outcome` là `win` / `loss` / `draw` tính theo phe của người xem; trận chưa có `result` thì `outcome` là `null`, không suy đoán. `result` là `red_win` / `black_win` / `draw`; `endReason` là `checkmate` / `resign` / `timeout` / `stalemate` / `draw` / `agreement`. `ratingChange` là điểm Elo người gọi API được/mất (0 = hòa hoặc không đổi), `bonus` là điểm thưởng thêm của trận (0 nếu không có). `replayAvailable` cho biết trận đã có action lưu để xem replay; mỗi entry replay có `committedAt` để tính thời gian suy nghĩ.
 
 Replay bắt đầu bằng action `start` ở `sequenceNo = 0`: đó là bàn cờ ban đầu **chưa ai đi**. Các nước tiếp theo là sequence 1..N. Phân trang tiếp bằng `afterSequence=nextAfterSequence`. `resolvedEvents` là sự kiện máy đọc như `piece.moved`, `turn.started`, `shield.applied`; UI có thể chuyển thành câu tiếng Việt. `stateAfter` là snapshot đã lưu sau action, không cần tính lại luật trong FE.
 

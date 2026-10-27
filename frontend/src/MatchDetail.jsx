@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from './api.js';
-import { durationLabel, eloClass, eloLabel, modeLabel, outcomeClass, outcomeLabel, statusLabel } from './records.js';
+import { durationLabel, eloClass, eloLabel, endReasonLabel, modeLabel, outcomeClass, outcomeLabel, playerAvatar, playerName, sideLabel, statusLabel } from './records.js';
 
 const classes = { general: 'TƯỚNG', advisor: 'SĨ', elephant: 'TƯỢNG', rook: 'XE', cannon: 'PHÁO', horse: 'MÃ', soldier: 'TỐT' };
 
@@ -34,7 +34,7 @@ export default function MatchDetail({ token, matchId, onOpenReplay, onBack, onEr
 
     <div className="match-meta">
       <span className="pill">{detail.result || statusLabel(detail.status)}</span>
-      {detail.endReason && <span>Lý do: {detail.endReason}</span>}
+      {detail.endReason && <span>Lý do: {endReasonLabel(detail.endReason)}</span>}
       <span>Bắt đầu: {detail.startedAt ? new Date(detail.startedAt).toLocaleString('vi-VN') : '—'}</span>
       <span>Kết thúc: {detail.endedAt ? new Date(detail.endedAt).toLocaleString('vi-VN') : '—'}</span>
       <span>Thời lượng: {durationLabel(detail.endedAt && detail.startedAt ? (new Date(detail.endedAt) - new Date(detail.startedAt)) / 1000 : null)}</span>
@@ -42,10 +42,17 @@ export default function MatchDetail({ token, matchId, onOpenReplay, onBack, onEr
     </div>
 
     <div className="split">
-      {detail.sides.map(side => <section className="card" key={side.side}>
-        <div className="section-head"><h2>{side.side === 'red' ? 'Đỏ' : 'Đen'}</h2>
+      {detail.sides.map(side => {
+        const profile = side.player;
+        const avatar = playerAvatar(profile);
+        return <section className="card" key={side.side}>
+        <div className="section-head"><h2>{sideLabel(side.side)}</h2>
           <span className={`result-pill ${outcomeClass(side.outcome)}`}>{outcomeLabel(side.outcome)}</span></div>
-        <p>{side.displayName || (side.participantType === 'bot' ? 'Bot' : '—')}</p>
+        <div className="side-card-head">
+          {avatar ? <img className="avatar" src={avatar} alt="" /> : <span className="avatar placeholder">{sideLabel(side.side).slice(0, 1)}</span>}
+          <div><strong>{side.isBot ? 'Bot' : playerName(profile)}</strong>
+            <small>{profile ? `Elo ${profile.elo}` : '—'}{profile?.avatarName ? ` · ảnh: ${profile.avatarName}` : ''}{profile?.frameName ? ` · khung: ${profile.frameName}` : ''}</small></div>
+        </div>
         <small>Elo {side.eloBefore ?? '—'} → {side.eloAfter ?? '—'}
           {side.eloBefore != null && side.eloAfter != null && <> (<span className={`elo ${eloClass(side.eloAfter - side.eloBefore)}`}>{eloLabel(side.eloAfter - side.eloBefore)}</span>)</>}
           {' · '}thưởng {side.coinReward} coin</small>
@@ -63,7 +70,8 @@ export default function MatchDetail({ token, matchId, onOpenReplay, onBack, onEr
             {skill.implementationKey && <small>{skill.implementationKey}</small>}
           </li>)}</ul>
         </>}
-      </section>)}
+      </section>;
+      })}
     </div>
   </div>;
 }

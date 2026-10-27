@@ -2,7 +2,38 @@
 .history-list{max-height:400px;overflow:auto;display:grid;gap:.4rem}.history-row{width:100%;display:flex;gap:.6rem;align-items:start;text-align:left;padding:.55rem .65rem;background:#22323c;border:1px solid #3b505a;font-weight:400}.history-row strong{color:#e6bf84;min-width:2.5rem}.history-row.active{border-color:#e6bf84;background:#3b4140}.history-row:disabled{opacity:1;cursor:default}.event-debug{margin-top:.75rem;border-top:1px solid #3b505a;padding-top:.75rem;color:#a0b1bc}.event-debug summary{cursor:pointer}.event-debug p{font-size:.82rem}
 .hero-card{margin-top:1rem}
 .cell.hero-target{box-shadow:inset 0 0 0 3px #3fa6a8}.hero-skill-list{max-height:280px;overflow:auto}
+/* Hồ sơ người chơi: ảnh đại diện, khung và thẻ phe */
+.side-card{display:grid;gap:.35rem;min-width:220px;flex:1;padding:.7rem;border:1px solid #3c4e58;border-radius:9px;background:#202f39}
+.side-card-head{display:flex;align-items:center;gap:.7rem}
+.side-card-head>div{display:grid;gap:.1rem;min-width:0}
+.side-card-head strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-confirm{margin-left:auto;font-size:.78rem;color:#e6bf84;white-space:nowrap}
+.avatar{width:38px;height:38px;border-radius:50%;object-fit:cover;border:2px solid #466473;flex:none}
+.avatar.placeholder{display:grid;place-items:center;background:#2b3d48;color:#cfe0e6;font-weight:800}
+.profile-edit{margin-bottom:1.2rem}
+.profile-edit .filters{margin:.5rem 0 .8rem}
+.file-label{display:inline-flex;align-items:center;gap:.5rem;padding:.7rem 1rem;border:1px dashed #466473;border-radius:8px;cursor:pointer}
+.file-label input{width:auto}
+
 .match-error-toast{position:fixed;top:1rem;right:1rem;z-index:1000;width:min(420px,calc(100vw - 2rem));padding-right:3rem;box-shadow:0 12px 32px #0008}
+
+/* Màn chờ trận: hai phe đối diện nhau, đội hình và hồ sơ hiện song song. */
+.waiting-room{display:grid;gap:1rem;margin:1rem 0}
+.wait-versus{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:1rem;align-items:start}
+.wait-vs{align-self:center;font-weight:900;font-size:1.3rem;color:#e6bf84;padding:.3rem .5rem}
+.wait-side{display:grid;gap:.75rem;align-content:start}
+.wait-side.own{border-color:#4d6f7c}
+.wait-side.ready{border-color:#3f7a5c}
+.wait-side-head{display:flex;align-items:center;gap:.7rem}
+.wait-side-head>div{display:grid;gap:.1rem;min-width:0}
+.wait-side-head strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wait-state{margin-left:auto;flex:none;font-size:.78rem;padding:.2rem .6rem;border-radius:99px;background:#3a4b53;color:#cfe0e6}
+.wait-state.ready{background:#2f5c45;color:#b6e6c7}
+.wait-picker{display:grid;gap:.6rem;padding-top:.6rem;border-top:1px solid #3c4e58}
+.wait-picker select{width:100%}
+.wait-lineup h3{margin:0 0 .4rem;font-size:.95rem}
+.wait-lineup h3 small{font-weight:400}
+@media(max-width:900px){.wait-versus{grid-template-columns:1fr}.wait-vs{justify-self:center}}
 
 /* Ranking, match history và match detail: dùng lại token màu/size của trang sảnh. */
 .rank-table{width:100%;border-collapse:collapse;font-size:.92rem}

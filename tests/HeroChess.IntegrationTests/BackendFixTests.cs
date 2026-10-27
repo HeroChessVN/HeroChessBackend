@@ -45,7 +45,7 @@ public sealed class BackendFixTests
         var cursor = decoded == "!" ? decoded : Convert.ToBase64String(Encoding.UTF8.GetBytes(decoded));
         var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql("Host=localhost;Database=unused;Username=unused;Password=unused").Options;
         await using var db = new AppDbContext(options);
-        var error = await Assert.ThrowsAsync<ApiException>(() => new MatchHistoryService(db).ListAsync(Guid.NewGuid(), cursor, 10, null, null, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<ApiException>(() => new MatchHistoryService(db, new PlayerProfileService(db)).ListAsync(Guid.NewGuid(), cursor, 10, null, null, CancellationToken.None));
         Assert.Equal(400, error.StatusCode);
         Assert.Equal("INVALID_CURSOR", error.Code);
         var auditError = await Assert.ThrowsAsync<ApiException>(() => new AdminService(db, TimeProvider.System).AuditAsync(cursor, 10, CancellationToken.None));

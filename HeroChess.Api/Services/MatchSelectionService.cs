@@ -4,11 +4,12 @@ using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
 using HeroChess.Rules;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace HeroChess.Api.Services;
 
 public sealed class MatchSelectionService(AppDbContext db, LineupValidator validator, MatchLockRegistry locks, TimeProvider clock,
-    CatalogVersionService catalogVersions)
+    CatalogVersionService catalogVersions, PlayerProfileService profiles)
 {
     // SelectAsync: Kiểm tra quyền/revision/ruleset, validate và snapshot đội hình; bot dùng bản sao đội hình người chơi.
     public async Task<MatchSelectionDto> SelectAsync(Guid playerId, Guid matchId, SelectLineupRequest request, CancellationToken ct)
@@ -44,7 +45,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             }
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
-            return ToDto(match, playerId);
+            return await ToDto(match, playerId, ct);
         }
         finally { gate.Release(); }
     }
@@ -58,9 +59,9 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             var match = await LoadLockedMatch(matchId, ct);
             var participant = RequireHuman(match, playerId);
-            if (match.Status == "active") { await transaction.CommitAsync(ct); return ToDto(match, playerId); }
+            if (match.Status == "active") { await transaction.CommitAsync(ct); return await ToDto(match, playerId, ct); }
             if (match.Status != "selecting") throw new ApiException(409, "MATCH_NOT_SELECTING", "The match cannot be confirmed.");
-            if (participant.ConfirmedAt is not null) { await transaction.CommitAsync(ct); return ToDto(match, playerId); }
+            if (participant.ConfirmedAt is not null) { await transaction.CommitAsync(ct); return await ToDto(match, playerId, ct); }
             if (participant.SourceLineupId is null) throw new ApiException(422, "SELECTION_REQUIRED", "Select a lineup before confirming.");
             if (match.ContentVersion != await catalogVersions.ComputeAsync(db, ct))
                 throw new ApiException(409, "CONTENT_VERSION_CHANGED", "Catalog content changed. Cancel this selection and create a new match.");
@@ -84,7 +85,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             if (match.Participants.All(x => x.ConfirmedAt is not null)) Start(match);
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
-            return ToDto(match, playerId);
+            return await ToDto(match, playerId, ct);
         }
         finally { gate.Release(); }
     }
@@ -95,7 +96,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
         var match = await db.Matches.AsNoTracking().Include(x => x.Participants).SingleOrDefaultAsync(x => x.Id == matchId, ct)
             ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
         _ = RequireHuman(match, playerId);
-        return ToDto(match, playerId);
+        return await ToDto(match, playerId, ct);
     }
 
     // LoadLockedMatch: Lấy match cùng participant dưới row lock PostgreSQL để serialize mutation.
@@ -123,7 +124,8 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 x.CosmeticId, heroes[x.HeroId].Name)).ToArray(),
             lineup.Skills.OrderBy(x => x.SlotNo).Select(x => new FrozenSkill(x.SlotNo, x.TeamSkillId, skills[x.TeamSkillId].ImplementationKey,
                 skills[x.TeamSkillId].MaxUses, skills[x.TeamSkillId].CooldownTurns ?? 0,
-                skills[x.TeamSkillId].Name, skills[x.TeamSkillId].Description, skills[x.TeamSkillId].Parameters.RootElement.Clone())).ToArray());
+                skills[x.TeamSkillId].Name, skills[x.TeamSkillId].Description, skills[x.TeamSkillId].Parameters.RootElement.Clone())).ToArray(),
+            lineup.Name);
     }
 
     // Start: Tạo 32 piece với ID riêng, xoay vị trí Black, lưu state version 0 và action start; không chạy gameplay skill.
@@ -157,16 +159,36 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             StateAfter = GameJson.Document(state), StateSchemaVersion = state.StateSchemaVersion, ReceivedAt = now, CommittedAt = now });
     }
 
-    // ToDto: Trả trạng thái confirm và skill công khai; chỉ trả ID/revision lineup của chính người xem.
-    private static MatchSelectionDto ToDto(GameMatch match, Guid viewer)
+    // ToDto: Trả trạng thái confirm, hồ sơ người chơi và đội hình đã chọn của cả hai phe; ownLineupId chỉ ở phe người xem.
+    private async Task<MatchSelectionDto> ToDto(GameMatch match, Guid viewer, CancellationToken ct)
     {
-        var sides = match.Participants.OrderBy(x => x.Side).Select(x =>
+        var participants = match.Participants.OrderBy(x => x.Side).ToArray();
+        var playerIds = participants.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value).ToArray();
+        var playerProfiles = await profiles.ForPlayersAsync(playerIds, null, ct);
+        var sides = new List<MatchSelectionSideDto>(participants.Length);
+        foreach (var participant in participants)
         {
-            var skills = x.LineupSnapshot.RootElement.TryGetProperty("skills", out var values)
-                ? values.EnumerateArray().Select(v => v.GetProperty("skillId").GetGuid()).ToArray() : Array.Empty<Guid>();
-            var own = x.PlayerId == viewer;
-            return new MatchSelectionSideDto(x.Side, x.ConfirmedAt is not null, skills, own ? x.SourceLineupId : null, own ? x.SourceLineupRevision : null);
-        }).ToArray();
+            var own = participant.PlayerId == viewer;
+            var isBot = participant.ParticipantType == "bot";
+            // Đội hình đã chọn cho trận này: đọc từ snapshot đã đóng băng, không phải mọi lineup đã lưu.
+            var selected = Selected(participant);
+            sides.Add(new MatchSelectionSideDto(participant.Side, participant.ConfirmedAt is not null, isBot,
+                participant.PlayerId is not null && playerProfiles.TryGetValue(participant.PlayerId.Value, out var profile) ? profile : null,
+                own ? participant.SourceLineupId : null, own ? participant.SourceLineupRevision : null, selected));
+        }
         return new(match.Id, match.Mode, match.Status, sides);
+    }
+
+    // Selected: Dựng đội hình đã chọn từ snapshot; bot không có đội hình riêng và chưa chọn thì trả null.
+    private static MatchSelectedLineupDto? Selected(MatchParticipant participant)
+    {
+        if (participant.ParticipantType == "bot") return null;
+        if (participant.LineupSnapshot.RootElement.ValueKind != JsonValueKind.Object ||
+            !participant.LineupSnapshot.RootElement.TryGetProperty("pieces", out _)) return null;
+        var frozen = GameJson.Read<FrozenLineup>(participant.LineupSnapshot);
+        if (frozen.Pieces.Count == 0) return null;
+        return new MatchSelectedLineupDto(frozen.LineupId, frozen.Name ?? "", frozen.TotalSp,
+            frozen.Pieces.OrderBy(x => x.SlotNo).Select(x => new MatchSelectedLineupEntryDto(x.SlotNo, x.HeroId)).ToArray(),
+            frozen.Skills.OrderBy(x => x.SlotNo).Select(x => new MatchSelectedLineupSkillDto(x.SlotNo, x.SkillId)).ToArray());
     }
 }

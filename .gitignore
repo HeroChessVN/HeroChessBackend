@@ -365,3 +365,6 @@ FodyWeavers.xsd
 # Hero Chess local secrets and persisted development keys
 .env
 HeroChess.Api/keys/
+
+# Player avatars uploaded at runtime; filenames are player ids, not source assets
+HeroChess.Api/wwwroot/avatars/

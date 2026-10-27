@@ -9,7 +9,7 @@ using System.Diagnostics;
 
 namespace HeroChess.Api.Services;
 
-public sealed class MatchReadService(AppDbContext db, TimeProvider clock, ILogger<MatchReadService> logger)
+public sealed class MatchReadService(AppDbContext db, TimeProvider clock, PlayerProfileService profiles, ILogger<MatchReadService> logger)
 {
     // StateAsync: Authorize rồi đọc match/state hiện tại, báo chưa start nếu chưa có bàn cờ.
     public async Task<MatchStateDto> StateAsync(Guid playerId, Guid matchId, CancellationToken ct)
@@ -25,9 +25,11 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, ILogge
         if (result.State is null) throw new ApiException(409, "MATCH_NOT_STARTED", "The match has not started.");
         var queryMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
         var row = result.State;
+        var sides = await SidesAsync(matchId, ct);
+        var heroNames = await HeroNamesAsync(row.State.RootElement, ct);
         var dto = new MatchStateDto(result.Id, result.Mode, result.Status, row.Version, row.SideToMove, row.TurnIndex,
             row.CountedActions, row.TurnDeadlineAt, clock.GetUtcNow(), row.StateSchemaVersion,
-            MatchStateProjection.State(row.State.RootElement, result.Side == "red" ? Side.Red : Side.Black), result.SettledAt);
+            MatchStateProjection.State(row.State.RootElement, result.Side == "red" ? Side.Red : Side.Black, heroNames), result.SettledAt, sides);
         logger.LogDebug("match.state timing match={MatchId} version={Version} queryMs={QueryMs:F1} totalMs={TotalMs:F1}",
             matchId, row.Version, queryMs, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds);
         return dto;
@@ -56,6 +58,26 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, ILogge
     {
         if (!await db.MatchParticipants.AsNoTracking().AnyAsync(x => x.MatchId == matchId && x.PlayerId == playerId, ct))
             throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
+    }
+
+    // SidesAsync: Hồ sơ người chơi của cả hai phe; phe bot chỉ có isBot.
+    public async Task<IReadOnlyList<MatchSidePlayerDto>> SidesAsync(Guid matchId, CancellationToken ct)
+    {
+        var participants = await db.MatchParticipants.AsNoTracking().Where(x => x.MatchId == matchId).OrderBy(x => x.Side).ToListAsync(ct);
+        var playerIds = participants.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value).ToArray();
+        var playerProfiles = await profiles.ForPlayersAsync(playerIds, null, ct);
+        return participants.Select(x => new MatchSidePlayerDto(x.Side, x.ParticipantType == "bot",
+            x.PlayerId is not null && playerProfiles.TryGetValue(x.PlayerId.Value, out var profile) ? profile : null)).ToArray();
+    }
+
+    // HeroNamesAsync: Tên tướng theo heroId để bù cho quân lưu từ state cũ chưa có heroName.
+    private async Task<Dictionary<Guid, string>> HeroNamesAsync(JsonElement stored, CancellationToken ct)
+    {
+        var heroIds = stored.TryGetProperty("pieces", out var pieces) && pieces.ValueKind == JsonValueKind.Array
+            ? pieces.EnumerateArray().Where(p => p.TryGetProperty("heroId", out _)).Select(p => p.GetProperty("heroId").GetGuid()).Distinct().ToArray()
+            : [];
+        if (heroIds.Length == 0) return [];
+        return await db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
     }
 
     // ToDto: Gộp metadata trận, state, deadline và giờ server thành DTO đồng bộ client.

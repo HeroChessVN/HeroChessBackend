@@ -1,7 +1,9 @@
 export async function api(token, path, options = {}) {
   const headers = { ...options.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
-  const body = options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body;
-  if (body) headers['Content-Type'] = 'application/json';
+  // FormData (tải ảnh) phải để trình duyệt tự đặt Content-Type, không stringify.
+  const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const body = isForm || typeof options.body === 'string' ? options.body : options.body ? JSON.stringify(options.body) : options.body;
+  if (body && !isForm) headers['Content-Type'] = 'application/json';
   const response = await fetch(`/api/v1${path}`, { ...options, headers, body });
   const data = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
