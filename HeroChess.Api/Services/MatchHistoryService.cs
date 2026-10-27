@@ -38,16 +38,16 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
         var rows = await query.OrderByDescending(x => x.Match.CreatedAt).ThenByDescending(x => x.Match.Id).Take(limit + 1).ToListAsync(ct);
         var page = rows.Take(limit).ToArray();
         var sides = await SidesOfAsync(page.Select(x => x.Match.Id), ct);
-        // Hồ sơ hai phe: điểm là điểm sau trận (eloAfter) nếu trận đã settle.
-        var eloAfter = sides.Where(x => x.EloAfter is not null).ToDictionary(x => x.PlayerId!.Value, x => x.EloAfter!.Value);
-        var playerProfiles = await profiles.ForPlayersAsync(sides.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value), eloAfter, ct);
+        var playerProfiles = await profiles.ForPlayersAsync(sides.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value), null, ct);
         var items = page.Select(x =>
         {
             var mine = sides.First(s => s.MatchId == x.Match.Id && s.PlayerId == playerId);
             var opponent = sides.FirstOrDefault(s => s.MatchId == x.Match.Id && s.PlayerId != playerId);
             var matchSides = sides.Where(s => s.MatchId == x.Match.Id).OrderBy(s => s.Side).Select(s => new MatchSidePlayerDto(s.Side,
                 s.ParticipantType == "bot",
-                s.PlayerId is not null && playerProfiles.TryGetValue(s.PlayerId.Value, out var profile) ? profile : null)).ToArray();
+                // Một player có thể xuất hiện nhiều trận; Elo lấy riêng từ participant của từng trận.
+                s.PlayerId is not null && playerProfiles.TryGetValue(s.PlayerId.Value, out var profile)
+                    ? profile with { Elo = s.EloAfter ?? profile.Elo } : null)).ToArray();
             return new MatchListItemDto(x.Match.Id, x.Match.Mode, x.Match.Status, x.Side, x.Match.Result, EndReason(x.Match.EndReason),
                 x.Match.CreatedAt, x.Match.EndedAt, Outcome(x.Match.Result, x.Side),
                 opponent?.PlayerId, opponent?.DisplayName,
@@ -76,12 +76,12 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
         if (!sides.Any(x => x.PlayerId == playerId)) throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
         var actionCount = await db.MatchActions.AsNoTracking().CountAsync(x => x.MatchId == matchId, ct);
         var lineups = await LineupOfAsync(matchId, sides, ct);
-        var eloAfter = sides.Where(x => x.EloAfter is not null).ToDictionary(x => x.PlayerId!.Value, x => x.EloAfter!.Value);
-        var playerProfiles = await profiles.ForPlayersAsync(sides.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value), eloAfter, ct);
+        var playerProfiles = await profiles.ForPlayersAsync(sides.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value), null, ct);
         var dtoSides = sides.OrderBy(x => x.Side).Select(side => new MatchSideDto(side.Side, side.PlayerId, side.DisplayName, side.ParticipantType,
             Outcome(match.Result, side.Side), side.EloBefore, side.EloAfter, side.CoinReward, lineups[side.Side],
             side.ParticipantType == "bot",
-            side.PlayerId is not null && playerProfiles.TryGetValue(side.PlayerId.Value, out var profile) ? profile : null)).ToArray();
+            side.PlayerId is not null && playerProfiles.TryGetValue(side.PlayerId.Value, out var profile)
+                ? profile with { Elo = side.EloAfter ?? profile.Elo } : null)).ToArray();
         return new(match.Id, match.Mode, match.Status, match.Result, EndReason(match.EndReason), match.CreatedAt, match.StartedAt, match.EndedAt,
             dtoSides, actionCount > 0, actionCount);
     }

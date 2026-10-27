@@ -138,6 +138,44 @@ public sealed class RankingAndHistoryTests : IClassFixture<HeroChessFactory>
         Assert.All(wins!.Items, x => Assert.Equal("win", x.Outcome));
     }
 
+    [Fact]
+    // Match_history_preserves_each_matches_elo_for_repeated_players: Một player xuất hiện nhiều trận đã settle không làm lỗi lịch sử hay dùng nhầm Elo trận khác.
+    public async Task Match_history_preserves_each_matches_elo_for_repeated_players()
+    {
+        var red = await CreatePlayerWithLineup();
+        var black = await CreatePlayerWithLineup();
+        var details = new List<MatchDetailDto>();
+        for (var round = 0; round < 2; round++)
+        {
+            await Post<MatchmakingTicketDto>(red.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("ranked"));
+            var ticket = await Post<MatchmakingTicketDto>(black.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("ranked"));
+            var id = ticket.MatchId!.Value;
+            await Post<MatchSelectionDto>(red.Client, $"/api/v1/matches/{id}/selection",
+                new SelectLineupRequest(red.Lineup.Id, red.Lineup.Revision), HttpMethod.Put);
+            await Post<MatchSelectionDto>(black.Client, $"/api/v1/matches/{id}/selection",
+                new SelectLineupRequest(black.Lineup.Id, black.Lineup.Revision), HttpMethod.Put);
+            (await red.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
+            (await black.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
+            await Post<MatchCommandResultDto>(red.Client, $"/api/v1/matches/{id}/commands",
+                new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(new { type = "resign" })));
+            details.Add((await red.Client.GetFromJsonAsync<MatchDetailDto>($"/api/v1/matches/{id}", Json))!);
+        }
+
+        var history = (await red.Client.GetFromJsonAsync<MatchPageDto>("/api/v1/matches?limit=20", Json))!;
+        Assert.Equal(2, history.Items.Count);
+        Assert.Equal(2, details.Select(x => x.Sides.Single(s => s.PlayerId == red.PlayerId).EloAfter).Distinct().Count());
+        foreach (var detail in details)
+        {
+            var item = Assert.Single(history.Items, x => x.MatchId == detail.MatchId);
+            foreach (var side in detail.Sides)
+            {
+                Assert.NotNull(side.EloAfter);
+                Assert.Equal(side.EloAfter, side.Player!.Elo);
+                Assert.Equal(side.EloAfter, item.Sides!.Single(x => x.Player!.PlayerId == side.PlayerId).Player!.Elo);
+            }
+        }
+    }
+
     // CreatePlayer: Đăng ký player mới không cần đội hình; trả về client đã đăng nhập và id player.
     private async Task<(HttpClient Client, Guid PlayerId)> CreatePlayer()
     {
