@@ -105,6 +105,9 @@ public sealed class PlayerProfileTests : IClassFixture<HeroChessFactory>
         Assert.Equal("Lê Lợi", redSide.Player!.DisplayName);
         Assert.Equal("leloi", redSide.Player.AvatarName);
         Assert.Equal("Nguyễn Huy", blackSide.Player!.DisplayName);
+        // Phe của người gọi được đánh dấu trước khi dựa vào đội hình đã chọn.
+        Assert.True(redSide.IsSelf);
+        Assert.False(blackSide.IsSelf);
         // Elo luôn có mặt trong hồ sơ, kể cả khi bằng 0.
         Assert.True(blackSide.Player.Elo >= 0);
         // ownLineupId chỉ ở phe người gọi API.

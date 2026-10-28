@@ -104,28 +104,57 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
     public void Release(Guid playerId) => _reservations.TryRemove(playerId, out _);
 
     // CreateMatchAsync: Tạo selecting match, frozen ruleset/reward/rating và hai participant; bot không có player account.
-    private async Task<Guid> CreateMatchAsync(AppDbContext db, Ticket redTicket, Ticket? blackTicket, CancellationToken ct)
+    // waiting là người đã đứng trong hàng; joining là người tới sau. Bot thì joining null và người chơi luôn đỏ.
+    private async Task<Guid> CreateMatchAsync(AppDbContext db, Ticket waiting, Ticket? joining, CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var ruleset = await db.Rulesets.AsNoTracking().SingleAsync(x => x.IsActive, ct);
         var contentVersion = await catalogVersions.ComputeAsync(db, ct);
+        var red = waiting;
+        var black = joining;
+        if (joining is not null)
+        {
+            var waitingScore = await RecentColorScore(db, waiting.PlayerId, ct);
+            var joiningScore = await RecentColorScore(db, joining.PlayerId, ct);
+            // Điểm cao hơn nghĩa là vừa cầm đỏ nhiều hơn. Người đó nhận đen; hòa thì người đã chờ vẫn là đỏ.
+            if (waitingScore > joiningScore) { red = joining; black = waiting; }
+        }
         var match = new GameMatch
         {
-            Id = Guid.NewGuid(), Mode = blackTicket is null ? "bot" : "ranked", Status = "selecting", RulesetId = ruleset.Id,
+            Id = Guid.NewGuid(), Mode = joining is null ? "bot" : "ranked", Status = "selecting", RulesetId = ruleset.Id,
             RulesetSnapshot = GameJson.Document(new RulesetSnapshot(ruleset.Code, ruleset.SetupBudget, ruleset.TurnSeconds, ruleset.ActionLimit,
                 ruleset.Config.RootElement.Clone(), ratings.Version, rewards.Version, runtime.Value.EloKFactor,
                 runtime.Value.WinnerCoinReward, runtime.Value.DrawCoinReward)), ContentVersion = contentVersion, CreatedAt = DateTimeOffset.UtcNow
         };
-        var redElo = redTicket.Elo;
-        match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "red", PlayerId = redTicket.PlayerId, ParticipantType = "human", EloBefore = redElo });
-        if (blackTicket is null)
+        var redElo = red.Elo;
+        match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "red", PlayerId = red.PlayerId, ParticipantType = "human", EloBefore = redElo });
+        if (black is null)
             match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "black", ParticipantType = "bot", BotConfig = GameJson.Document(new { strategy = "capture_sp_v1" }), EloBefore = 1000 });
         else
-            match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "black", PlayerId = blackTicket.PlayerId, ParticipantType = "human", EloBefore = blackTicket.Elo });
+            match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "black", PlayerId = black.PlayerId, ParticipantType = "human", EloBefore = black.Elo });
         db.Matches.Add(match);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return match.Id;
+    }
+
+    // RecentColorScore: Tám ván xếp hạng đã bắt đầu, ván mới nặng hơn. Dương nghĩa là vừa cầm đỏ nhiều hơn.
+    private static async Task<int> RecentColorScore(AppDbContext db, Guid playerId, CancellationToken ct)
+    {
+        var sides = await (
+            from participant in db.MatchParticipants.AsNoTracking()
+            join match in db.Matches.AsNoTracking() on participant.MatchId equals match.Id
+            where participant.PlayerId == playerId && match.Mode == "ranked" && match.StartedAt != null
+            orderby match.StartedAt descending
+            select participant.Side).Take(8).ToListAsync(ct);
+        var score = 0;
+        var weight = sides.Count;
+        foreach (var side in sides)
+        {
+            score += string.Equals(side, "red", StringComparison.OrdinalIgnoreCase) ? weight : -weight;
+            weight--;
+        }
+        return score;
     }
 
     // MarkMatched: Gắn matchId vào ticket và chuyển reservation sang trận vừa tạo.

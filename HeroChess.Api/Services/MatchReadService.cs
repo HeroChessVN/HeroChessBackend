@@ -25,7 +25,7 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
         if (result.State is null) throw new ApiException(409, "MATCH_NOT_STARTED", "The match has not started.");
         var queryMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
         var row = result.State;
-        var sides = await SidesAsync(matchId, ct);
+        var sides = await SidesAsync(matchId, playerId, ct);
         var heroNames = await HeroNamesAsync(row.State.RootElement, ct);
         var dto = new MatchStateDto(result.Id, result.Mode, result.Status, row.Version, row.SideToMove, row.TurnIndex,
             row.CountedActions, row.TurnDeadlineAt, clock.GetUtcNow(), row.StateSchemaVersion,
@@ -61,13 +61,14 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
     }
 
     // SidesAsync: Hồ sơ người chơi của cả hai phe; phe bot chỉ có isBot.
-    public async Task<IReadOnlyList<MatchSidePlayerDto>> SidesAsync(Guid matchId, CancellationToken ct)
+    public async Task<IReadOnlyList<MatchSidePlayerDto>> SidesAsync(Guid matchId, Guid viewerId, CancellationToken ct)
     {
         var participants = await db.MatchParticipants.AsNoTracking().Where(x => x.MatchId == matchId).OrderBy(x => x.Side).ToListAsync(ct);
         var playerIds = participants.Where(x => x.PlayerId is not null).Select(x => x.PlayerId!.Value).ToArray();
         var playerProfiles = await profiles.ForPlayersAsync(playerIds, null, ct);
         return participants.Select(x => new MatchSidePlayerDto(x.Side, x.ParticipantType == "bot",
-            x.PlayerId is not null && playerProfiles.TryGetValue(x.PlayerId.Value, out var profile) ? profile : null)).ToArray();
+            x.PlayerId is not null && playerProfiles.TryGetValue(x.PlayerId.Value, out var profile) ? profile : null,
+            x.PlayerId == viewerId)).ToArray();
     }
 
     // HeroNamesAsync: Tên tướng theo heroId để bù cho quân lưu từ state cũ chưa có heroName.

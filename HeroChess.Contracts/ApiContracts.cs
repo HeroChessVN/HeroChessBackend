@@ -19,7 +19,8 @@ public sealed record PlayerProfileDto(Guid PlayerId, string DisplayName, int Elo
 
 // MatchSidePlayerDto: Một phe trong trận kèm hồ sơ người chơi; phe bot không có hồ sơ.
 public sealed record MatchSidePlayerDto(string Side, bool IsBot,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PlayerProfileDto? Player);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PlayerProfileDto? Player,
+    bool IsSelf = false);
 
 // CatalogDto: Gói catalog để client xây đội hình.
 public sealed record CatalogDto(
@@ -80,11 +81,13 @@ public sealed record MatchmakingTicketDto(Guid TicketId, string Mode, string Sta
 // SelectLineupRequest: Chọn lineup có revision mong đợi.
 public sealed record SelectLineupRequest(Guid LineupId, int ExpectedRevision);
 // MatchSelectionSideDto: Thông tin selection của một phe; ownLineupId chỉ có ở phe người xem, selectedLineup là đội hình đã chọn cho trận này.
+// IsSelf đánh dấu phe của người đang gọi API, kể cả khi họ chưa chọn đội hình.
 public sealed record MatchSelectionSideDto(string Side, bool Confirmed, bool IsBot,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PlayerProfileDto? Player,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? OwnLineupId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? OwnLineupRevision = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchSelectedLineupDto? SelectedLineup = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchSelectedLineupDto? SelectedLineup = null,
+    bool IsSelf = false);
 // MatchSelectedLineupDto: Đội hình đã chọn cho trận này, không phải mọi đội hình đã lưu.
 public sealed record MatchSelectedLineupDto(Guid Id, string Name, int TotalSp,
     IReadOnlyList<MatchSelectedLineupEntryDto> Entries, IReadOnlyList<MatchSelectedLineupSkillDto> Skills);

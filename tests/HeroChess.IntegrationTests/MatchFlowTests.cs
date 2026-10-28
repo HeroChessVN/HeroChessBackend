@@ -236,6 +236,45 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         Assert.Equal(settledOnce.CoinBalance, settledAgain!.CoinBalance); Assert.Equal(settledOnce.Elo, settledAgain.Elo);
     }
 
+    [Fact]
+    // Ranked_color_alternates_after_a_started_match: Hai tài khoản mới, người chờ là đỏ. Sau ván đã bắt đầu, ván sau đổi phe.
+    public async Task Ranked_color_alternates_after_a_started_match()
+    {
+        var first = await CreatePlayerWithLineup();
+        var second = await CreatePlayerWithLineup();
+        var firstId = (await first.Client.GetFromJsonAsync<MeDto>("/api/v1/me", Json))!.PlayerId!.Value;
+        var secondId = (await second.Client.GetFromJsonAsync<MeDto>("/api/v1/me", Json))!.PlayerId!.Value;
+
+        async Task<Guid> Queue()
+        {
+            var waiting = await Post<MatchmakingTicketDto>(first.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("ranked"));
+            Assert.Equal("waiting", waiting.Status);
+            var joined = await Post<MatchmakingTicketDto>(second.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("ranked"));
+            return joined.MatchId!.Value;
+        }
+
+        async Task<string> SideOf(Guid matchId, Guid playerId)
+        {
+            var selection = await first.Client.GetFromJsonAsync<MatchSelectionDto>($"/api/v1/matches/{matchId}/selection", Json);
+            return selection!.Sides.Single(x => x.Player!.PlayerId == playerId).Side;
+        }
+
+        var opened = await Queue();
+        Assert.Equal("red", await SideOf(opened, firstId));
+        Assert.Equal("black", await SideOf(opened, secondId));
+        await Select(first, opened);
+        await Select(second, opened);
+        Assert.Equal(HttpStatusCode.OK, (await first.Client.PostAsync($"/api/v1/matches/{opened}/confirm", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await second.Client.PostAsync($"/api/v1/matches/{opened}/confirm", null)).StatusCode);
+        var state = await first.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{opened}/state", Json);
+        await Post<MatchCommandResultDto>(first.Client, $"/api/v1/matches/{opened}/commands",
+            new MatchCommandRequest(Guid.NewGuid(), state!.Version, JsonSerializer.SerializeToElement(new { type = "resign" }, Json)));
+
+        var rematch = await Queue();
+        Assert.Equal("black", await SideOf(rematch, firstId));
+        Assert.Equal("red", await SideOf(rematch, secondId));
+    }
+
     // CreatePlayerWithLineup: Đăng ký/đăng nhập player và tạo đội hình fixture theo class; có tùy chọn special hero.
     private async Task<(HttpClient Client, LineupDto Lineup)> CreatePlayerWithLineup(string? requestedEmail = null, bool preferSpecialHeroes = false)
     {

@@ -47,7 +47,7 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
                 s.ParticipantType == "bot",
                 // Một player có thể xuất hiện nhiều trận; Elo lấy riêng từ participant của từng trận.
                 s.PlayerId is not null && playerProfiles.TryGetValue(s.PlayerId.Value, out var profile)
-                    ? profile with { Elo = s.EloAfter ?? profile.Elo } : null)).ToArray();
+                    ? profile with { Elo = s.EloAfter ?? profile.Elo } : null, s.PlayerId == playerId)).ToArray();
             return new MatchListItemDto(x.Match.Id, x.Match.Mode, x.Match.Status, x.Side, x.Match.Result, EndReason(x.Match.EndReason),
                 x.Match.CreatedAt, x.Match.EndedAt, Outcome(x.Match.Result, x.Side),
                 opponent?.PlayerId, opponent?.DisplayName,
