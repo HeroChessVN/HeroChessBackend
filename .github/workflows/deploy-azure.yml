@@ -1,0 +1,76 @@
+name: Deploy backend to Azure VM
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hero-chess-azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image on GitHub runner
+        run: |
+          docker build --platform linux/amd64 -t herochess-api:${GITHUB_SHA} .
+          docker save herochess-api:${GITHUB_SHA} | gzip -1 > herochess-api.tar.gz
+
+      - name: Upload and deploy
+        env:
+          DEPLOY_KEY: ${{ secrets.AZURE_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.AZURE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/id_deploy"
+          chmod 600 "$HOME/.ssh/id_deploy"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          scp -i "$HOME/.ssh/id_deploy" -o StrictHostKeyChecking=yes \
+            herochess-api.tar.gz azureuser@104.208.115.125:~/herochess-api.tar.gz
+
+          ssh -i "$HOME/.ssh/id_deploy" -o StrictHostKeyChecking=yes \
+            azureuser@104.208.115.125 "DEPLOY_SHA=$GITHUB_SHA bash -se" <<'REMOTE'
+          set -euo pipefail
+          gzip -dc ~/herochess-api.tar.gz | sudo docker load
+          rm ~/herochess-api.tar.gz
+
+          start_api() {
+            sudo docker run -d --name hc-api --restart unless-stopped \
+              --env-file /home/azureuser/herochess.env \
+              -v hc-keys:/app/keys -v hc-avatars:/app/wwwroot/avatars \
+              -p 127.0.0.1:10000:10000 "$1"
+          }
+
+          old_image=$(sudo docker inspect -f '{{.Image}}' hc-api 2>/dev/null || true)
+          sudo docker rm -f hc-api >/dev/null 2>&1 || true
+          if ! start_api "herochess-api:$DEPLOY_SHA"; then
+            if [ -n "$old_image" ]; then start_api "$old_image"; fi
+            exit 1
+          fi
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:10000/health/ready >/dev/null; then
+              sudo docker tag "herochess-api:$DEPLOY_SHA" herochess-api:azure
+              sudo docker rmi "herochess-api:$DEPLOY_SHA" >/dev/null
+              sudo docker image prune -f >/dev/null
+              exit 0
+            fi
+            sleep 2
+          done
+
+          sudo docker rm -f hc-api >/dev/null 2>&1 || true
+          if [ -n "$old_image" ]; then start_api "$old_image"; fi
+          echo 'New backend failed readiness check; restored previous image.' >&2
+          exit 1
+          REMOTE
