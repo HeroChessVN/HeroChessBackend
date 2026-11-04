@@ -14,7 +14,7 @@ Content-Type: application/json
 Ticket trả thêm:
 
 ```json
-{"bot":{"difficulty":"hard","strategyVersion":"tactical-v1","searchProfileVersion":"bounded-v1"}}
+{"bot":{"difficulty":"hard","strategyVersion":"tactical-v2","searchProfileVersion":"bounded-v1"}}
 ```
 
 Đây là một phần của response, không thay thế các trường ticketId/matchId/status hiện có. Dữ liệu tương tự có tại `state.bot`, `state.sides[].bot` của phe bot, `selection.sides[].bot`, `ACK.snapshot.bot`, lịch sử list/detail của phe bot. Bot legacy trả bot null. Config thật được lưu trong `match_participant.bot_config` JSONB, không cần migration; không nhận budget/strategy do FE gửi. Bot mới không tự nhận Elo 1000: chưa hiệu chuẩn nên Elo của bot để null.
@@ -25,7 +25,7 @@ Ticket trả thêm:
 | --- | --- | --- |
 | easy | Chọn ngẫu nhiên có seed từ nước hợp lệ và một số Command skill hợp lệ | 32 lần thử skill, 50 ms soft budget |
 | medium | Chấm điểm sau một nước: SP quân còn sống, tiến quân Tốt, chiếu Tướng | beam 12 nước + tối đa 8 target skill; 64 node, 100 ms soft budget |
-| hard | Xét thêm phản ứng mạnh của đối thủ trong tập nước được chọn; nếu chưa hoàn tất thì dùng kết quả một nước | beam 8 nước + tối đa 8 target skill mỗi vị trí; 256 node, 200 ms soft budget |
+| hard | Xét phản ứng mạnh của đối thủ trong tập nước được chọn. Khi hết thời gian, tính cả quân có thể bị bắt ngay và giữ điểm từ các phản ứng đã mô phỏng. Trận Khó đã tạo với `tactical-v1` tiếp tục dùng cấu hình cũ. | beam 8 nước + tối đa 8 target skill mỗi vị trí, 256 node, 200 ms soft budget |
 
 **Time budget là mềm:** một lần sinh nước/mô phỏng/kết thúc lượt chưa có cancellation bên trong, nên thực tế có thể vượt mốc trên. Node limit và cutoff được kiểm giữa các lần mô phỏng. Không có tác vụ search nền bị bỏ mặc; quá budget vẫn gửi fallback hợp lệ qua cùng command pipeline. Không cam kết hard có Elo cố định hoặc luôn thắng medium. Có test chiến thuật quân mồi cho thấy tìm phản ứng giúp hard tránh nước medium chọn.
 

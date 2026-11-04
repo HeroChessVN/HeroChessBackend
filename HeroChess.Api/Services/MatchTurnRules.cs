@@ -29,7 +29,7 @@ public static class MatchTurnRules
         return CommandSkillResult.Success(next, result.Events);
     }
 
-    public static (GameState State, object[] Events) AfterAction(GameState next, RulesetSnapshot rules, CommandSkillDispatcher dispatcher)
+    public static (GameState State, object[] Events, IReadOnlyList<LegalMove> Replies) AfterAction(GameState next, RulesetSnapshot rules, CommandSkillDispatcher dispatcher)
     {
         var events = new List<object>();
         if (next.Result is null && !TurnLifecycle.IsTurnProcessed(next, next.SideToMove, next.TurnIndex))
@@ -43,21 +43,23 @@ public static class MatchTurnRules
             foreach (var e in started.RemovedStakes)
                 events.Add(new { type = "stake.removed", obstacleId = e.ObstacleId, position = new { x = e.Position.X, y = e.Position.Y } });
         }
-        Finish(next, rules, dispatcher);
-        return (next, events.ToArray());
+        var replies = Finish(next, rules, dispatcher);
+        return (next, events.ToArray(), replies);
     }
 
-    public static void Finish(GameState state, RulesetSnapshot rules, CommandSkillDispatcher dispatcher)
+    public static IReadOnlyList<LegalMove> Finish(GameState state, RulesetSnapshot rules, CommandSkillDispatcher dispatcher)
     {
-        if (state.Result is not null) return;
+        if (state.Result is not null) return [];
         var engine = new XiangqiRulesEngine();
         // Never use the bot's bounded/top-K candidates to decide whether a match has ended.
-        if (engine.GenerateLegalActions(state).Count == 0 && MatchCommandService.FindLegalSkillAction(state, engine, dispatcher) is null)
+        var replies = engine.GenerateLegalActions(state);
+        if (replies.Count == 0 && MatchCommandService.FindLegalSkillAction(state, engine, dispatcher) is null)
         {
             state.Result = state.SideToMove == Side.Red ? "black_win" : "red_win";
             state.EndReason = engine.IsInCheck(state, state.SideToMove) ? "checkmate" : "no_legal_actions";
         }
         ApplyActionLimit(state, rules.ActionLimit);
+        return state.Result is null ? replies : [];
     }
 
     public static void ApplyActionLimit(GameState state, int limit)

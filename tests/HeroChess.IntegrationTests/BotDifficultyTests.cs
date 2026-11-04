@@ -24,6 +24,10 @@ public sealed class BotDifficultyTests
     public void Legacy_and_invalid_config_are_not_silently_relabelled()
     {
         Assert.Null(BotConfiguration.ForRequest("bot", null).Difficulty);
+        var hard = BotConfiguration.ForRequest("bot", "hard");
+        Assert.Equal("tactical-v2", hard.StrategyVersion);
+        var previousHard = hard with { StrategyVersion = "tactical-v1" };
+        Assert.Equal(previousHard, BotConfiguration.Read(GameJson.Document(previousHard)));
         Assert.Throws<ApiException>(() => BotConfiguration.ForRequest("ranked", "easy"));
         Assert.Throws<ApiException>(() => BotConfiguration.ForRequest("bot", ""));
         Assert.Throws<InvalidDataException>(() => BotConfiguration.Read(GameJson.Document(new { difficulty = "hard", schemaVersion = 999 })));
@@ -59,6 +63,26 @@ public sealed class BotDifficultyTests
         var hardState = engine.Simulate(state, hard.Action!.Value, Rules(), Lineups())!;
         Assert.Equal(PieceStatus.Captured, mediumState.Pieces.Single(p => p.PieceId == state.Pieces[3].PieceId).Status);
         Assert.Equal(PieceStatus.Alive, hardState.Pieces.Single(p => p.PieceId == state.Pieces[3].PieceId).Status);
+    }
+
+    [Theory]
+    [InlineData(2)] // budget gone before the regular root search
+    [InlineData(11)] // budget gone before checking the opponent's replies
+    [InlineData(12)] // budget gone during the opponent's replies
+    public void Hard_does_not_trade_a_cannon_for_a_protected_horse_on_cutoff(int cutoff)
+    {
+        var state = new GameState { SideToMove = Side.Black };
+        var cannon = Piece(PieceClass.Cannon, Side.Black, 1, 7, 6);
+        var horse = Piece(PieceClass.Horse, Side.Red, 1, 0, 4);
+        state.Pieces.AddRange([Piece(PieceClass.General, Side.Red, 3, 0, 100),
+            Piece(PieceClass.General, Side.Black, 5, 9, 100), cannon, horse,
+            Piece(PieceClass.Soldier, Side.Red, 1, 3, 1), Piece(PieceClass.Rook, Side.Red, 0, 0, 7)]);
+        var engine = Engine(new CutoffClock(cutoff));
+        var choice = engine.Choose(Guid.Empty, state, BotConfiguration.ForRequest("bot", "hard"), Rules(), Lineups(), CancellationToken.None);
+        Assert.True(choice.BudgetExhausted);
+        var after = engine.Simulate(state, choice.Action!.Value, Rules(), Lineups())!;
+        Assert.Equal(PieceStatus.Alive, after.Pieces.Single(p => p.PieceId == horse.PieceId).Status);
+        Assert.DoesNotContain(new XiangqiRulesEngine().GenerateLegalActions(after), move => move.CapturedPieceId == cannon.PieceId);
     }
 
     [Fact]
@@ -117,8 +141,8 @@ public sealed class BotDifficultyTests
         Assert.Equal(new[] { 1, 2, 3 }, slots);
     }
 
-    internal static BotEngine Engine() => new(new CommandSkillDispatcher(new CommandSkillRegistry(new ICommandSkillHandler[]
-        { new ThanhHandler(), new RaoHandler(), new KhienHandler(), new VanCocTranGiangHandler(), new BinhLamThuyHienHandler(), new PhanKyDoatTheHandler(), new PhaTranDoatPhongHandler() })), new FrozenClock());
+    internal static BotEngine Engine(TimeProvider? clock = null) => new(new CommandSkillDispatcher(new CommandSkillRegistry(new ICommandSkillHandler[]
+        { new ThanhHandler(), new RaoHandler(), new KhienHandler(), new VanCocTranGiangHandler(), new BinhLamThuyHienHandler(), new PhanKyDoatTheHandler(), new PhaTranDoatPhongHandler() })), clock ?? new FrozenClock());
     internal static RulesetSnapshot Rules() => new("test", 100, 90, 150, JsonSerializer.SerializeToElement(new { }), "test", "test", 32, 0, 0);
     internal static Dictionary<Side, FrozenLineup> Lineups() => new()
     {
@@ -138,4 +162,10 @@ public sealed class BotDifficultyTests
     internal static PieceState Piece(PieceClass type, Side side, int x, int y, int sp) => new()
         { PieceId = Guid.NewGuid(), Class = type, Side = side, Position = new(x, y), StartPosition = new(x, y), SetupPoints = sp };
     private sealed class FrozenClock : TimeProvider { public override long GetTimestamp() => 0; }
+    private sealed class CutoffClock(int cutoff) : TimeProvider
+    {
+        private int _calls;
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => ++_calls >= cutoff ? 250 : 0;
+    }
 }
