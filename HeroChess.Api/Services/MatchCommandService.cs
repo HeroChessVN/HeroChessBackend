@@ -165,7 +165,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             }
             object[] nextTurnEvents = [];
             if (type is "move" or "team_skill")
-                (next, nextTurnEvents) = MatchTurnRules.AfterAction(next, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot), dispatcher);
+                (next, nextTurnEvents, _) = MatchTurnRules.AfterAction(next, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot), dispatcher);
             // Phase 3.1: Merge lifecycle events with action events for broadcast.
             // Lifecycle events are prepended so they appear first in the event stream.
             events = lifecycleEvents.Concat(events).Concat(nextTurnEvents).ToArray();

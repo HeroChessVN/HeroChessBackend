@@ -28,6 +28,7 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             throw new InvalidDataException("Tactical bot requires a trait-free match state.");
         var state = MatchTurnRules.Prepare(original.Clone());
         var limits = config.Limits;
+        var guardRecaptures = config.StrategyVersion == BotConfiguration.RecaptureStrategy;
         var started = _clock.GetTimestamp();
         var nodes = 0;
         bool Exhausted() => nodes >= limits.Nodes || _clock.GetElapsedTime(started).TotalMilliseconds >= limits.Milliseconds;
@@ -50,35 +51,52 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             return new(actions[(int)(BinaryPrimitives.ReadUInt32LittleEndian(hash) % (uint)actions.Count)], nodes, 0, Exhausted());
         }
 
-        var roots = new List<(JsonElement Action, GameState State, int Score)>();
+        // Keep quiet options from different pieces in case the first hangs a piece.
+        var quiet = guardRecaptures ? moves.Where(m => m.CapturedPieceId is null).DistinctBy(m => m.PieceId).Take(2).ToArray() : [];
+        if (quiet.Length > 0)
+            moves = quiet.Concat(moves.Except(quiet)).ToArray();
+
+        var roots = new List<(JsonElement Action, GameState State, int Score, int CaptureLoss, IReadOnlyList<LegalMove> Replies)>();
         foreach (var action in Candidates(state, moves, limits.Width))
         {
             ct.ThrowIfCancellationRequested();
-            if (Exhausted()) break;
+            // Allow a bounded fallback check even if move generation used up the soft budget.
+            var needsFallback = guardRecaptures && (nodes == 0 && moves.Count > 0 ||
+                nodes == 1 && quiet.Length == 2 && roots.Count == 1 && roots[0].CaptureLoss > 0);
+            if (Exhausted() && !needsFallback) break;
             nodes++;
-            var next = Simulate(state, action, rules, lineups);
-            if (next is not null) roots.Add((action, next, Evaluate(next, actor)));
+            var next = Simulate(state, action, rules, lineups, out var replies);
+            if (next is not null)
+            {
+                var loss = guardRecaptures ? ImmediateCaptureLoss(next, replies) : 0;
+                roots.Add((action, next, Evaluate(next, actor), loss, replies));
+            }
         }
         if (roots.Count == 0) return new(fallback, nodes, 0, Exhausted());
         var onePly = roots.OrderByDescending(r => r.Score).First();
-        if (limits.Depth == 1 || Exhausted()) return new(onePly.Action, nodes, 1, Exhausted());
+        var scores = roots.Select(r => r.Score - r.CaptureLoss).ToArray();
+        JsonElement BestSoFar() => guardRecaptures ? roots[Array.IndexOf(scores, scores.Max())].Action : onePly.Action;
+        if (limits.Depth == 1 || Exhausted()) return new(BestSoFar(), nodes, 1, Exhausted());
 
         var best = fallback.Value;
         var bestScore = int.MinValue;
-        foreach (var root in roots.OrderByDescending(r => r.Score))
+        foreach (var index in Enumerable.Range(0, roots.Count).OrderByDescending(i => scores[i]))
         {
+            var root = roots[index];
             var worst = root.Score;
             if (root.State.Result is null)
             {
                 worst = int.MaxValue;
-                foreach (var response in Candidates(root.State, OrderedMoves(root.State), limits.Width))
+                var replies = guardRecaptures ? OrderMoves(root.State, root.Replies) : OrderedMoves(root.State);
+                foreach (var response in Candidates(root.State, replies, limits.Width))
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (Exhausted()) return new(onePly.Action, nodes, 1, true);
+                    if (Exhausted()) return new(BestSoFar(), nodes, 1, true);
                     nodes++;
                     var next = Simulate(root.State, response, rules, lineups);
                     if (next is null) continue;
                     worst = Math.Min(worst, Evaluate(next, actor));
+                    if (guardRecaptures) scores[index] = Math.Min(scores[index], worst);
                     if (worst <= bestScore) break; // minimizing opponent cannot improve this root
                 }
                 // An empty selective list is not proof of mate.
@@ -89,8 +107,13 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         return new(best, nodes, 2, false);
     }
 
-    public GameState? Simulate(GameState input, JsonElement action, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups)
+    public GameState? Simulate(GameState input, JsonElement action, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups) =>
+        Simulate(input, action, rules, lineups, out _);
+
+    private GameState? Simulate(GameState input, JsonElement action, RulesetSnapshot rules,
+        IReadOnlyDictionary<Side, FrozenLineup> lineups, out IReadOnlyList<LegalMove> replies)
     {
+        replies = [];
         var state = MatchTurnRules.Prepare(input.Clone());
         GameState next;
         if (action.GetProperty("type").GetString() == "move")
@@ -112,10 +135,20 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             if (!result.Accepted) return null;
             next = result.State;
         }
-        return MatchTurnRules.AfterAction(next, rules, dispatcher).State;
+        var resultAfterTurn = MatchTurnRules.AfterAction(next, rules, dispatcher);
+        replies = resultAfterTurn.Replies;
+        return resultAfterTurn.State;
     }
 
-    private IReadOnlyList<LegalMove> OrderedMoves(GameState state) => _rules.GenerateLegalActions(state)
+    // One opponent action can capture one piece. This is a short-horizon material estimate for cutoff, not a full exchange search.
+    private static int ImmediateCaptureLoss(GameState state, IReadOnlyList<LegalMove> replies) => replies
+        .Where(move => move.CapturedPieceId is not null)
+        .Select(move => state.Pieces.Single(p => p.PieceId == move.CapturedPieceId).SetupPoints * 100)
+        .DefaultIfEmpty(0).Max();
+
+    private IReadOnlyList<LegalMove> OrderedMoves(GameState state) => OrderMoves(state, _rules.GenerateLegalActions(state));
+
+    private static IReadOnlyList<LegalMove> OrderMoves(GameState state, IReadOnlyList<LegalMove> moves) => moves
         .OrderByDescending(m => m.CapturedPieceId is null ? -1 : state.Pieces.Single(p => p.PieceId == m.CapturedPieceId).SetupPoints)
         .ThenBy(m => m.From.X).ThenBy(m => m.From.Y).ThenBy(m => m.To.X).ThenBy(m => m.To.Y).ToArray();
 
