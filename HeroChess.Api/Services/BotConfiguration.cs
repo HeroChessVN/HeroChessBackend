@@ -10,6 +10,7 @@ public sealed record BotConfiguration(int SchemaVersion, string? Difficulty, str
     string SearchProfileVersion, string RulesEngineVersion)
 {
     public const string RecaptureStrategy = "tactical-v2";
+    public const string ExchangeStrategy = "tactical-v3";
     public static readonly BotConfiguration Legacy = new(0, null, "capture_sp_v1", "legacy", "rules-v1");
     [JsonIgnore] public (int Depth, int Width, int Nodes, int Milliseconds) Limits => Difficulty switch
     {
@@ -23,7 +24,7 @@ public sealed record BotConfiguration(int SchemaVersion, string? Difficulty, str
         var normalized = difficulty.Trim().ToLowerInvariant();
         if (mode != "bot" || normalized is not ("easy" or "medium" or "hard"))
             throw new ApiException(400, "INVALID_BOT_DIFFICULTY", "Difficulty must be easy, medium or hard, for bot mode only.");
-        return new(1, normalized, normalized == "hard" ? RecaptureStrategy : "tactical-v1", "bounded-v1", "rules-v1");
+        return new(1, normalized, normalized == "hard" ? ExchangeStrategy : "tactical-v1", "bounded-v1", "rules-v1");
     }
 
     public static BotConfiguration Read(JsonDocument? document)
@@ -39,7 +40,8 @@ public sealed record BotConfiguration(int SchemaVersion, string? Difficulty, str
             if (config?.Difficulty is null)
                 throw new InvalidDataException("Unsupported bot configuration version.");
             var current = ForRequest("bot", config.Difficulty);
-            if (config != current && config != (current with { StrategyVersion = "tactical-v1" }))
+            var previousHard = current.Difficulty == "hard" && config == (current with { StrategyVersion = RecaptureStrategy });
+            if (config != current && config != (current with { StrategyVersion = "tactical-v1" }) && !previousHard)
                 throw new InvalidDataException("Unsupported bot configuration version.");
             return config;
         }

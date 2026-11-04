@@ -25,9 +25,12 @@ public sealed class BotDifficultyTests
     {
         Assert.Null(BotConfiguration.ForRequest("bot", null).Difficulty);
         var hard = BotConfiguration.ForRequest("bot", "hard");
-        Assert.Equal("tactical-v2", hard.StrategyVersion);
-        var previousHard = hard with { StrategyVersion = "tactical-v1" };
-        Assert.Equal(previousHard, BotConfiguration.Read(GameJson.Document(previousHard)));
+        Assert.Equal("tactical-v3", hard.StrategyVersion);
+        foreach (var version in new[] { "tactical-v1", "tactical-v2" })
+        {
+            var previousHard = hard with { StrategyVersion = version };
+            Assert.Equal(previousHard, BotConfiguration.Read(GameJson.Document(previousHard)));
+        }
         Assert.Throws<ApiException>(() => BotConfiguration.ForRequest("ranked", "easy"));
         Assert.Throws<ApiException>(() => BotConfiguration.ForRequest("bot", ""));
         Assert.Throws<InvalidDataException>(() => BotConfiguration.Read(GameJson.Document(new { difficulty = "hard", schemaVersion = 999 })));
@@ -63,6 +66,52 @@ public sealed class BotDifficultyTests
         var hardState = engine.Simulate(state, hard.Action!.Value, Rules(), Lineups())!;
         Assert.Equal(PieceStatus.Captured, mediumState.Pieces.Single(p => p.PieceId == state.Pieces[3].PieceId).Status);
         Assert.Equal(PieceStatus.Alive, hardState.Pieces.Single(p => p.PieceId == state.Pieces[3].PieceId).Status);
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 12)]
+    [InlineData(true, 12)]
+    public void Hard_preserves_its_cannon_in_the_two_opening_positions(bool afterFirstExchange, int cutoff)
+    {
+        var state = new GameState { SideToMove = Side.Black };
+        PieceClass[] backRank = [PieceClass.Rook, PieceClass.Horse, PieceClass.Elephant, PieceClass.Advisor,
+            PieceClass.General, PieceClass.Advisor, PieceClass.Elephant, PieceClass.Horse, PieceClass.Rook];
+        int[] points = [7, 4, 2, 1, 0, 1, 3, 4, 7];
+        foreach (var side in new[] { Side.Red, Side.Black })
+        {
+            var back = side == Side.Red ? 0 : 9;
+            for (var x = 0; x < backRank.Length; x++)
+                state.Pieces.Add(Piece(backRank[x], side, x, back, side == Side.Black && x == 0 ? 8 : points[x]));
+            for (var x = 0; x <= 8; x += 2)
+                state.Pieces.Add(Piece(PieceClass.Soldier, side, x, side == Side.Red ? 3 : 6, 1));
+            state.Pieces.Add(Piece(PieceClass.Cannon, side, 1, side == Side.Red ? 3 : 7, 6));
+            state.Pieces.Add(Piece(PieceClass.Cannon, side, 7, side == Side.Red ? 2 : 7, 6));
+        }
+
+        var engine = Engine(cutoff == 0 ? null : new CutoffClock(cutoff));
+        var rules = Rules();
+        var lineups = Lineups();
+        if (afterFirstExchange)
+        {
+            state = engine.Simulate(state, At(1, 7, 1, 0), rules, lineups)!;
+            state = engine.Simulate(state, At(0, 0, 1, 0), rules, lineups)!;
+        }
+        var chosen = engine.Choose(Guid.Empty, state, BotConfiguration.ForRequest("bot", "hard"), rules, lineups, default);
+        Assert.Equal(cutoff != 0, chosen.BudgetExhausted);
+        var next = engine.Simulate(state, chosen.Action!.Value, rules, lineups)!;
+        var replies = new XiangqiRulesEngine().GenerateLegalActions(next);
+        Assert.DoesNotContain(replies, move => move.CapturedPieceId is { } victim &&
+            next.Pieces.Any(p => p.PieceId == victim && p.Class == PieceClass.Cannon));
+        if (afterFirstExchange)
+            Assert.DoesNotContain(replies, move => move.CapturedPieceId is not null);
+
+        JsonElement At(int x, int y, int toX, int toY) => GameJson.Element(new
+        {
+            type = "move", pieceId = state.Pieces.Single(p => p.Position == new BoardPoint(x, y)).PieceId,
+            to = new { x = toX, y = toY }
+        });
     }
 
     [Theory]
