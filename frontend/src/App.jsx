@@ -5,7 +5,7 @@ import MatchView from './Match.jsx';
 import MatchDetail from './MatchDetail.jsx';
 import MatchHistory from './MatchHistory.jsx';
 import Ranking from './Ranking.jsx';
-import { modeLabel, outcomeLabel, statusLabel } from './records.js';
+import { botDifficultyLabels, modeLabel, outcomeLabel, statusLabel } from './records.js';
 
 const savedSession = () => {
   try { return JSON.parse(sessionStorage.getItem('heroChessSession') || 'null'); }
@@ -34,6 +34,7 @@ export default function App() {
   const [lineups, setLineups] = useState([]);
   const [matches, setMatches] = useState([]);
   const [ticket, setTicket] = useState(savedTicket);
+  const [botDifficulty, setBotDifficulty] = useState('medium');
   const [matchId, setMatchId] = useState(() => sessionStorage.getItem('heroChessMatchId'));
   const [detailId, setDetailId] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -93,9 +94,13 @@ export default function App() {
 
   async function queue(mode) {
     await run(async () => {
-      const created = await api(token, '/matchmaking/tickets', { method: 'POST', body: { mode } });
+      const body = mode === 'bot' ? { mode, difficulty: botDifficulty } : { mode };
+      const created = await api(token, '/matchmaking/tickets', { method: 'POST', body });
       rememberTicket(created);
       if (created.matchId) openMatch(created.matchId);
+      if (mode === 'bot' && created.bot?.difficulty !== body.difficulty) {
+        setError(new Error('Backend chưa xác nhận cấp bot đã chọn. Hủy trận ở màn chọn đội hình và kiểm tra phiên bản API trước khi thử lại.'));
+      }
     });
   }
   function openMatch(id, status = 'selecting') {
@@ -187,7 +192,10 @@ export default function App() {
           </div>
           {me?.avatarUrl ? <small>Ảnh hiện tại: {me.avatarUrl}</small> : <small className="muted">Chưa có ảnh tải lên từ máy.</small>}
         </section>
-        <div className="cards"><section className="card"><h2>Chơi với bot</h2><p>Vào trận ngay, chọn đội hình và đấu với bot.</p><button disabled={busy || !lineups.length} onClick={() => queue('bot')}>Bắt đầu trận bot</button></section>
+        <div className="cards"><section className="card"><h2>Chơi với bot</h2><p>Chọn cấp bot và đội hình để vào trận.</p>
+          <div className="actions"><label>Độ khó<select value={botDifficulty} onChange={event => setBotDifficulty(event.target.value)} disabled={busy}>
+            {Object.entries(botDifficultyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select></label><button disabled={busy || !lineups.length || ['waiting', 'matching'].includes(ticket?.status)} onClick={() => queue('bot')}>Bắt đầu trận bot</button></div></section>
           <section className="card"><h2>Ghép trận PvP</h2><p>Hai tài khoản cùng vào hàng đợi để ghép trận.</p><button disabled={busy || !lineups.length || ['waiting', 'matching'].includes(ticket?.status)} onClick={() => queue('ranked')}>Tìm đối thủ</button></section>
           <section className="card"><h2>Đội hình</h2><p>{lineups.length} đội hình đã lưu · {catalog?.heroes?.filter(x => x.isOwned).length ?? 0} hero sở hữu.</p><button className="secondary" onClick={() => setPage('lineup')}>Mở trình xếp đội</button></section></div>
         {!lineups.length && <p className="hint">Hãy tạo đội hình trước khi tìm trận. Tài khoản test cần có đủ hero để điền 16 vị trí.</p>}

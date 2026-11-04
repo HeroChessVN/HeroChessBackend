@@ -14,7 +14,7 @@ public sealed class MatchmakingController(MatchmakingService service, ICurrentUs
     // Create: POST ranked/bot ticket, trả 201.
     public async Task<ActionResult<MatchmakingTicketDto>> Create(CreateMatchmakingTicketRequest request, CancellationToken ct)
     {
-        var ticket = await service.CreateAsync(current.UserId, request.Mode, ct);
+        var ticket = await service.CreateAsync(current.UserId, request.Mode, ct, request.Difficulty);
         return Created($"/api/v1/matchmaking/tickets/{ticket.TicketId}", ticket);
     }
     // Get: GET trạng thái ticket thuộc actor.

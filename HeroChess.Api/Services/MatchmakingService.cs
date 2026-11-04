@@ -12,7 +12,7 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
     IOptions<MatchRuntimeOptions> runtime, CatalogVersionService catalogVersions, RatingPolicy ratings, RewardPolicy rewards)
 {
     // Ticket: Ticket ghép trận mutable trong RAM; khác GameMatch đã lưu DB.
-    private sealed record Ticket(Guid Id, Guid PlayerId, string Mode, int Elo, DateTimeOffset CreatedAt)
+    private sealed record Ticket(Guid Id, Guid PlayerId, string Mode, int Elo, DateTimeOffset CreatedAt, BotConfiguration Bot)
     {
         public string Status { get; set; } = "waiting";
         public Guid? MatchId { get; set; }
@@ -24,10 +24,11 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
     private readonly ConcurrentDictionary<Guid, Guid> _reservations = new();
 
     // CreateAsync: Chặn player bận; ghép ranked trong cửa sổ Elo hoặc tạo bot match, rồi trả ticket.
-    public async Task<MatchmakingTicketDto> CreateAsync(Guid playerId, string mode, CancellationToken cancellationToken)
+    public async Task<MatchmakingTicketDto> CreateAsync(Guid playerId, string? mode, CancellationToken cancellationToken, string? difficulty = null)
     {
-        mode = mode.Trim().ToLowerInvariant();
+        mode = mode?.Trim().ToLowerInvariant();
         if (mode is not ("ranked" or "bot")) throw new ApiException(400, "INVALID_MODE", "Mode must be ranked or bot.");
+        var botConfig = BotConfiguration.ForRequest(mode, difficulty);
 
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -42,7 +43,7 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
         {
             if (_playerTickets.ContainsKey(playerId) || !_reservations.TryAdd(playerId, Guid.Empty))
                 throw new ApiException(409, "PLAYER_BUSY", "The player already has a queued or active match.");
-            ticket = new(Guid.NewGuid(), playerId, mode, elo, DateTimeOffset.UtcNow);
+            ticket = new(Guid.NewGuid(), playerId, mode, elo, DateTimeOffset.UtcNow, botConfig);
             _tickets[ticket.Id] = ticket;
             _playerTickets[playerId] = ticket.Id;
             _reservations[playerId] = ticket.Id;
@@ -129,7 +130,9 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
         var redElo = red.Elo;
         match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "red", PlayerId = red.PlayerId, ParticipantType = "human", EloBefore = redElo });
         if (black is null)
-            match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "black", ParticipantType = "bot", BotConfig = GameJson.Document(new { strategy = "capture_sp_v1" }), EloBefore = 1000 });
+            match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "black", ParticipantType = "bot",
+                BotConfig = waiting.Bot == BotConfiguration.Legacy ? GameJson.Document(new { strategy = "capture_sp_v1" }) : GameJson.Document(waiting.Bot),
+                EloBefore = waiting.Bot == BotConfiguration.Legacy ? 1000 : null });
         else
             match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "black", PlayerId = black.PlayerId, ParticipantType = "human", EloBefore = black.Elo });
         db.Matches.Add(match);
@@ -176,5 +179,6 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
         lock (_gate) { _tickets.Remove(ticket.Id); _playerTickets.Remove(ticket.PlayerId); _reservations.TryRemove(ticket.PlayerId, out _); }
     }
     // ToDto: Chuyển ticket RAM thành DTO; không để client truy cập object nội bộ.
-    private static MatchmakingTicketDto ToDto(Ticket x) => new(x.Id, x.Mode, x.Status, x.MatchId, x.CreatedAt);
+    private static MatchmakingTicketDto ToDto(Ticket x) => new(x.Id, x.Mode, x.Status, x.MatchId, x.CreatedAt,
+        x.Bot.Difficulty is null ? null : new(x.Bot.Difficulty, x.Bot.StrategyVersion, x.Bot.SearchProfileVersion));
 }

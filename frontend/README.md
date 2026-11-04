@@ -4,11 +4,13 @@ Frontend dùng API ASP.NET hiện có. Server quyết định lineup hợp lệ,
 
 ## Chạy local
 
-Mặc định FE kết nối backend Render; đăng ký, mua hero và chơi trận sẽ ghi vào database mà service Render đang dùng. Muốn thử mà không ảnh hưởng dữ liệu đó, trỏ FE sang API/DB test local như bước 3. Không bật development fixtures trên production DB.
+Mặc định FE kết nối backend Azure. Đăng ký, mua hero và chơi trận sẽ ghi vào DB mà backend Azure đang dùng. Muốn dùng DB test, trỏ FE sang API local như bước 3.
 
 1. Chạy `cd frontend`, `npm ci`, rồi `npm run dev`.
-2. Mở `http://127.0.0.1:5173/react/`. Vite chuyển tiếp API và WebSocket đến `https://herochessbackend.onrender.com`; trình duyệt vẫn truy cập qua cổng 5173.
-3. Để thử BE local thay vì Render, chạy `dotnet run --project HeroChess.Api --launch-profile http` từ thư mục gốc. Trong terminal PowerShell chạy FE, đặt `$env:HERO_CHESS_API_URL = 'http://localhost:5012'` trước `npm run dev`. Khởi động lại Vite sau khi đổi biến này.
+2. Mở `http://127.0.0.1:5173/react/`. Vite chuyển tiếp API và WebSocket đến `https://herochessbe.eastasia.cloudapp.azure.com`.
+3. Để thử BE local với DB test, chạy `dotnet run --project HeroChess.Api --launch-profile http` từ thư mục gốc. Trong terminal PowerShell chạy FE, đặt `$env:HERO_CHESS_API_URL = 'http://localhost:5012'` trước `npm run dev`. Khởi động lại Vite sau khi đổi biến này.
+
+Để thử bot ba cấp, đăng nhập, lưu đội hình, vào **Chơi với bot**, chọn **Dễ**, **Trung bình** hoặc **Khó**, rồi bấm **Bắt đầu trận bot**. Màn trận hiển thị cấp do API xác nhận. Nếu FE báo backend chưa xác nhận cấp, hủy trận ở màn chọn đội hình và kiểm tra BE đang chạy bản có hỗ trợ `difficulty`.
 
 Nếu chạy bằng Visual Studio, frontend đã được build vào `HeroChess.Api/wwwroot/react`. Mở `http://localhost:5012/react/` hoặc `https://localhost:7297/react/`. Sau khi sửa React, chạy `npm run build` để cập nhật bản Visual Studio phục vụ. Swagger vẫn ở `/swagger` trong môi trường Development.
 

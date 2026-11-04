@@ -61,6 +61,7 @@ builder.Services.AddScoped<LineupValidator>();
 builder.Services.AddScoped<LineupService>();
 builder.Services.Configure<MatchmakingOptions>(builder.Configuration.GetSection("Matchmaking"));
 builder.Services.Configure<MatchRuntimeOptions>(builder.Configuration.GetSection("MatchRuntime"));
+builder.Services.AddBotObservability(builder.Configuration);
 // Singleton sống cùng process. Các worker dùng IServiceScopeFactory để lấy service scoped cho từng công việc.
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<MatchLockRegistry>();

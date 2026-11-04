@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, canPlaceStructure, pollRetryDelay, skillTarget } from './api.js';
 import { actionLabel } from './history.js';
-import { playerAvatar, playerName, sideLabel } from './records.js';
+import { botDifficultyLabels, playerAvatar, playerName, sideLabel } from './records.js';
 import MatchSelection from './MatchSelection.jsx';
 
 const classes = { general: 'TƯỚNG', advisor: 'SĨ', elephant: 'TƯỢNG', rook: 'XE', cannon: 'PHÁO', horse: 'MÃ', soldier: 'TỐT' };
@@ -242,7 +242,9 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
     setSelectedPiece(piece?.pieceId || null);
   }
 
-  return <div className="match-page">{actionError && <div className="error match-error-toast" role="alert">{actionError}<button type="button" className="close" aria-label="Đóng thông báo" onClick={() => setActionError('')}>×</button></div>}<div className="section-head"><div><span className="eyebrow">{snapshot?.mode === 'bot' ? 'CHƠI VỚI BOT' : 'TRẬN ĐẤU'}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
+  const botDifficulty = snapshot?.bot?.difficulty ?? selection?.sides?.find(side => side.isBot)?.bot?.difficulty;
+  const botLabel = botDifficultyLabels[botDifficulty];
+  return <div className="match-page">{actionError && <div className="error match-error-toast" role="alert">{actionError}<button type="button" className="close" aria-label="Đóng thông báo" onClick={() => setActionError('')}>×</button></div>}<div className="section-head"><div><span className="eyebrow">{(snapshot?.mode ?? selection?.mode) === 'bot' ? `CHƠI VỚI BOT${botLabel ? ` · ${botLabel}` : ''}` : 'TRẬN ĐẤU'}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
     <div className="match-controls"><button className="secondary" onClick={() => onBack(snapshot?.status === 'completed' || selection?.status === 'cancelled')}>← Sảnh</button><button className="secondary" onClick={() => refresh().catch(onError)}>Đồng bộ</button><button className="secondary" onClick={() => setFlipped(!flipped)}>Xoay bàn</button></div></div>
     <div className="match-meta"><span className="pill">{replay ? 'replay' : status}</span>{replay ? <><span>Bước {replayStep?.sequenceNo ?? 0}/{replayEnd}</span><span>{actionLabel(replayStep, replay[replayIndex - 1], catalog)}</span></> : <><span>Lượt: <strong>{snapshot?.sideToMove || '—'}</strong>{ownSide ? ` · bạn: ${ownSide}` : ''}</span><span>#{snapshot?.countedActions ?? 0}/{catalog?.ruleset?.actionLimit ?? 150}</span><span className="timer">{timeLeft == null ? '—' : `${timeLeft}s`}</span><span>Socket: {socketStatus}</span></>}</div>
     {status === 'selecting' && <MatchSelection selection={selection} catalog={catalog} lineups={lineups} ownSide={matchInfo?.side} playerId={playerId}

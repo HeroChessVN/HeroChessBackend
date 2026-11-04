@@ -47,7 +47,7 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
                 s.ParticipantType == "bot",
                 // Một player có thể xuất hiện nhiều trận; Elo lấy riêng từ participant của từng trận.
                 s.PlayerId is not null && playerProfiles.TryGetValue(s.PlayerId.Value, out var profile)
-                    ? profile with { Elo = s.EloAfter ?? profile.Elo } : null, s.PlayerId == playerId)).ToArray();
+                    ? profile with { Elo = s.EloAfter ?? profile.Elo } : null, s.PlayerId == playerId, s.Bot)).ToArray();
             return new MatchListItemDto(x.Match.Id, x.Match.Mode, x.Match.Status, x.Side, x.Match.Result, EndReason(x.Match.EndReason),
                 x.Match.CreatedAt, x.Match.EndedAt, Outcome(x.Match.Result, x.Side),
                 opponent?.PlayerId, opponent?.DisplayName,
@@ -81,7 +81,7 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
             Outcome(match.Result, side.Side), side.EloBefore, side.EloAfter, side.CoinReward, lineups[side.Side],
             side.ParticipantType == "bot",
             side.PlayerId is not null && playerProfiles.TryGetValue(side.PlayerId.Value, out var profile)
-                ? profile with { Elo = side.EloAfter ?? profile.Elo } : null)).ToArray();
+                ? profile with { Elo = side.EloAfter ?? profile.Elo } : null, side.Bot)).ToArray();
         return new(match.Id, match.Mode, match.Status, match.Result, EndReason(match.EndReason), match.CreatedAt, match.StartedAt, match.EndedAt,
             dtoSides, actionCount > 0, actionCount);
     }
@@ -130,7 +130,7 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
 
     // SideRow: Một bên của trận gộp participant, tên hiển thị và cờ replay có dữ liệu.
     private sealed record SideRow(Guid MatchId, string Side, Guid? PlayerId, string? DisplayName, string ParticipantType,
-        int? EloBefore, int? EloAfter, long CoinReward, bool ReplayAvailable);
+        int? EloBefore, int? EloAfter, long CoinReward, bool ReplayAvailable, BotInfoDto? Bot);
 
     // SidesOfAsync: Nạp participant của các trận kèm tên hiển thị; cờ replay dựa trên việc trận đã có action lưu.
     private async Task<List<SideRow>> SidesOfAsync(IEnumerable<Guid> matchIds, CancellationToken ct)
@@ -145,7 +145,7 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
         var replaySet = replayed.ToHashSet();
         return participants.Select(x => new SideRow(x.MatchId, x.Side, x.PlayerId,
             x.PlayerId is not null && names.TryGetValue(x.PlayerId.Value, out var name) ? name : null,
-            x.ParticipantType, x.EloBefore, x.EloAfter, x.CoinReward, replaySet.Contains(x.MatchId))).ToList();
+            x.ParticipantType, x.EloBefore, x.EloAfter, x.CoinReward, replaySet.Contains(x.MatchId), BotConfiguration.Client(x.BotConfig))).ToList();
     }
 
     // LineupOfAsync: Đọc lineup snapshot của từng bên rồi bổ sung mã hero và phe từ catalog hiện tại.

@@ -174,7 +174,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             var selected = Selected(participant);
             sides.Add(new MatchSelectionSideDto(participant.Side, participant.ConfirmedAt is not null, isBot,
                 participant.PlayerId is not null && playerProfiles.TryGetValue(participant.PlayerId.Value, out var profile) ? profile : null,
-                own ? participant.SourceLineupId : null, own ? participant.SourceLineupRevision : null, selected, own));
+                own ? participant.SourceLineupId : null, own ? participant.SourceLineupRevision : null, selected, own, BotConfiguration.Client(participant.BotConfig)));
         }
         return new(match.Id, match.Mode, match.Status, sides);
     }

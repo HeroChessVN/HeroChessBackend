@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite';
 
-// Dev mặc định trỏ về API local (5012) để tính năng mới chưa deploy vẫn chạy được.
-// Trỏ sang production bằng HERO_CHESS_API_URL=https://herochessbackend.onrender.com khi cần.
+// Dev mặc định trỏ Azure. Đặt HERO_CHESS_API_URL=http://localhost:5012 để test BE local.
 const backend = process.env.HERO_CHESS_API_URL || 'https://herochessbe.eastasia.cloudapp.azure.com';
 
 export default defineConfig({
