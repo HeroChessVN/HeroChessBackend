@@ -29,7 +29,7 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
         var heroNames = await HeroNamesAsync(row.State.RootElement, ct);
         var dto = new MatchStateDto(result.Id, result.Mode, result.Status, row.Version, row.SideToMove, row.TurnIndex,
             row.CountedActions, row.TurnDeadlineAt, clock.GetUtcNow(), row.StateSchemaVersion,
-            MatchStateProjection.State(row.State.RootElement, result.Side == "red" ? Side.Red : Side.Black, heroNames), result.SettledAt, sides);
+            MatchStateProjection.State(row.State.RootElement, result.Side == "red" ? Side.Red : Side.Black, heroNames), result.SettledAt, sides, sides.FirstOrDefault(x => x.IsBot)?.Bot);
         logger.LogDebug("match.state timing match={MatchId} version={Version} queryMs={QueryMs:F1} totalMs={TotalMs:F1}",
             matchId, row.Version, queryMs, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds);
         return dto;
@@ -68,7 +68,7 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
         var playerProfiles = await profiles.ForPlayersAsync(playerIds, null, ct);
         return participants.Select(x => new MatchSidePlayerDto(x.Side, x.ParticipantType == "bot",
             x.PlayerId is not null && playerProfiles.TryGetValue(x.PlayerId.Value, out var profile) ? profile : null,
-            x.PlayerId == viewerId)).ToArray();
+            x.PlayerId == viewerId, BotConfiguration.Client(x.BotConfig))).ToArray();
     }
 
     // HeroNamesAsync: Tên tướng theo heroId để bù cho quân lưu từ state cũ chưa có heroName.
@@ -84,5 +84,5 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
     // ToDto: Gộp metadata trận, state, deadline và giờ server thành DTO đồng bộ client.
     public static MatchStateDto ToDto(GameMatch match, MatchState state, DateTimeOffset now, Side viewer) =>
         new(match.Id, match.Mode, match.Status, state.Version, state.SideToMove, state.TurnIndex, state.CountedActions,
-            state.TurnDeadlineAt, now, state.StateSchemaVersion, MatchStateProjection.State(state.State.RootElement, viewer), match.SettledAt);
+            state.TurnDeadlineAt, now, state.StateSchemaVersion, MatchStateProjection.State(state.State.RootElement, viewer), match.SettledAt, Bot: BotConfiguration.Client(match.Participants.FirstOrDefault(p => p.ParticipantType == "bot")?.BotConfig));
 }
