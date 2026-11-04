@@ -28,7 +28,8 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             throw new InvalidDataException("Tactical bot requires a trait-free match state.");
         var state = MatchTurnRules.Prepare(original.Clone());
         var limits = config.Limits;
-        var guardRecaptures = config.StrategyVersion == BotConfiguration.RecaptureStrategy;
+        var scoreExchanges = config.StrategyVersion == BotConfiguration.ExchangeStrategy;
+        var guardRecaptures = scoreExchanges || config.StrategyVersion == BotConfiguration.RecaptureStrategy;
         var started = _clock.GetTimestamp();
         var nodes = 0;
         bool Exhausted() => nodes >= limits.Nodes || _clock.GetElapsedTime(started).TotalMilliseconds >= limits.Milliseconds;
@@ -51,25 +52,37 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             return new(actions[(int)(BinaryPrimitives.ReadUInt32LittleEndian(hash) % (uint)actions.Count)], nodes, 0, Exhausted());
         }
 
-        // Keep quiet options from different pieces in case the first hangs a piece.
-        var quiet = guardRecaptures ? moves.Where(m => m.CapturedPieceId is null).DistinctBy(m => m.PieceId).Take(2).ToArray() : [];
+        // Reserve quiet options for distinct pieces, starting with pieces the opponent can take.
+        var quietMoves = moves.Where(m => m.CapturedPieceId is null);
+        if (scoreExchanges && moves.Count > 0 && !Exhausted())
+        {
+            var opponent = actor == Side.Red ? Side.Black : Side.Red;
+            var threatened = _rules.GenerateLegalActions(state, opponent)
+                .Where(m => m.CapturedPieceId is not null).Select(m => m.CapturedPieceId!.Value).ToHashSet();
+            quietMoves = quietMoves.OrderByDescending(m => threatened.Contains(m.PieceId));
+        }
+        var quiet = guardRecaptures ? quietMoves.DistinctBy(m => m.PieceId).Take(2).ToArray() : [];
         if (quiet.Length > 0)
             moves = quiet.Concat(moves.Except(quiet)).ToArray();
 
         var roots = new List<(JsonElement Action, GameState State, int Score, int CaptureLoss, IReadOnlyList<LegalMove> Replies)>();
+        var rootAttempts = 0;
         foreach (var action in Candidates(state, moves, limits.Width))
         {
             ct.ThrowIfCancellationRequested();
             // Allow a bounded fallback check even if move generation used up the soft budget.
-            var needsFallback = guardRecaptures && (nodes == 0 && moves.Count > 0 ||
-                nodes == 1 && quiet.Length == 2 && roots.Count == 1 && roots[0].CaptureLoss > 0);
+            var needsFallback = guardRecaptures && (rootAttempts == 0 && moves.Count > 0 ||
+                rootAttempts == 1 && quiet.Length == 2 && roots.Count == 1 && roots[0].CaptureLoss > 0);
             if (Exhausted() && !needsFallback) break;
+            rootAttempts++;
             nodes++;
             var next = Simulate(state, action, rules, lineups, out var replies);
             if (next is not null)
             {
-                var loss = guardRecaptures ? ImmediateCaptureLoss(next, replies) : 0;
-                roots.Add((action, next, Evaluate(next, actor), loss, replies));
+                var score = Evaluate(next, actor);
+                var loss = scoreExchanges ? ExchangeLoss(next, replies, score) :
+                    guardRecaptures ? ImmediateCaptureLoss(next, replies) : 0;
+                roots.Add((action, next, score, loss, replies));
             }
         }
         if (roots.Count == 0) return new(fallback, nodes, 0, Exhausted());
@@ -86,8 +99,11 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             var worst = root.Score;
             if (root.State.Result is null)
             {
-                worst = int.MaxValue;
+                worst = scoreExchanges ? scores[index] : int.MaxValue;
                 var replies = guardRecaptures ? OrderMoves(root.State, root.Replies) : OrderedMoves(root.State);
+                // Captures already contribute to the exchange score, including unexamined captures at face value.
+                if (scoreExchanges)
+                    replies = replies.Take(limits.Width).Where(m => m.CapturedPieceId is null).ToArray();
                 foreach (var response in Candidates(root.State, replies, limits.Width))
                 {
                     ct.ThrowIfCancellationRequested();
@@ -105,6 +121,30 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             if (worst > bestScore) { bestScore = worst; best = root.Action; }
         }
         return new(best, nodes, 2, false);
+
+        int ExchangeLoss(GameState position, IReadOnlyList<LegalMove> replies, int score)
+        {
+            var captures = OrderMoves(position, replies.Where(m => m.CapturedPieceId is not null).ToArray());
+            // A clean defense wins over a small positional gain that relies on a countercapture.
+            var loss = captures.Count == 0 ? 0 : 5;
+            // ponytail: probe two captures per candidate, then use face value for the rest; widen only after measuring load.
+            for (var i = 0; i < captures.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var capture = captures[i];
+                if (i == 2 || Exhausted())
+                    return Math.Max(loss, position.Pieces.Single(p => p.PieceId == capture.CapturedPieceId).SetupPoints * 100);
+
+                nodes++;
+                var after = Simulate(position, Move(capture), rules, lineups, out var counters);
+                if (after is null) continue;
+                var replyScore = Evaluate(after, actor);
+                if (after.Result is null && counters.Any(m => m.CapturedPieceId == capture.PieceId))
+                    replyScore += after.Pieces.Single(p => p.PieceId == capture.PieceId).SetupPoints * 100;
+                loss = Math.Max(loss, score - replyScore);
+            }
+            return loss;
+        }
     }
 
     public GameState? Simulate(GameState input, JsonElement action, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups) =>
