@@ -14,6 +14,7 @@ public class User
     public string? NormalizedUserName { get; set; }
     public string? Email { get; set; }
     public string? NormalizedEmail { get; set; }
+    public bool EmailConfirmed { get; set; }
     public string? PasswordHash { get; set; }
     public string SecurityStamp { get; set; } = Guid.NewGuid().ToString("N");
     public string DisplayName { get; set; } = "";
@@ -80,6 +81,34 @@ public sealed class SavedLineupEntry { public Guid LineupId { get; set; } public
 public sealed class SavedLineupSkill { public Guid LineupId { get; set; } public short SlotNo { get; set; } public Guid TeamSkillId { get; set; } }
 // GameMatch: Metadata trận và ruleset frozen; không chứa trực tiếp danh sách quân hiện tại.
 public sealed class GameMatch { public Guid Id { get; set; } public string Mode { get; set; } = ""; public string Status { get; set; } = "selecting"; public Guid RulesetId { get; set; } public JsonDocument RulesetSnapshot { get; set; } = JsonDocument.Parse("{}"); public string ContentVersion { get; set; } = "development"; public string? Result { get; set; } public string? EndReason { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset? StartedAt { get; set; } public DateTimeOffset? EndedAt { get; set; } public DateTimeOffset? SettledAt { get; set; } public List<MatchParticipant> Participants { get; set; } = new(); public MatchState? State { get; set; } }
+
+public sealed class CustomRoom
+{
+    public Guid Id { get; set; }
+    public string Code { get; set; } = "";
+    public Guid OwnerId { get; set; }
+    public Guid? CurrentMatchId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ClosedAt { get; set; }
+    public List<CustomRoomMember> Members { get; set; } = new();
+}
+
+public sealed class CustomRoomMember
+{
+    public Guid RoomId { get; set; }
+    public Guid PlayerId { get; set; }
+    public short Seat { get; set; }
+    public DateTimeOffset LastSeenAt { get; set; }
+}
+
+public sealed class CustomRoomRematch
+{
+    public Guid RoomId { get; set; }
+    public Guid RequestId { get; set; }
+    public Guid PreviousMatchId { get; set; }
+    public Guid MatchId { get; set; }
+}
+
 // MatchParticipant: Một bên Red/Black: human có PlayerId, bot có BotConfig; lưu lineup snapshot và kết quả thưởng.
 public sealed class MatchParticipant { public Guid MatchId { get; set; } public string Side { get; set; } = ""; public Guid? PlayerId { get; set; } public string ParticipantType { get; set; } = "human"; public JsonDocument? BotConfig { get; set; } public Guid? SourceLineupId { get; set; } public int? SourceLineupRevision { get; set; } public JsonDocument LineupSnapshot { get; set; } = JsonDocument.Parse("{}"); public DateTimeOffset? ConfirmedAt { get; set; } public int? EloBefore { get; set; } public int? EloAfter { get; set; } public long CoinReward { get; set; } public JsonDocument Stats { get; set; } = JsonDocument.Parse("{}"); }
 // MatchState: Snapshot hiện tại được lưu DB, version và deadline; khác GameState thuần luật.

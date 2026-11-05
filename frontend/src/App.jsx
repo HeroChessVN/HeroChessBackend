@@ -1,11 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { api } from './api.js';
+import React, { useEffect, useRef, useState } from 'react';
+import { api, pollRetryDelay } from './api.js';
+import CustomRoom from './CustomRoom.jsx';
 import LineupEditor from './Lineup.jsx';
 import MatchView from './Match.jsx';
 import MatchDetail from './MatchDetail.jsx';
 import MatchHistory from './MatchHistory.jsx';
 import Ranking from './Ranking.jsx';
 import { botDifficultyLabels, modeLabel, outcomeLabel, statusLabel } from './records.js';
+
+const roomsPath = '/matchmaking/rooms';
 
 const savedSession = () => {
   try { return JSON.parse(sessionStorage.getItem('heroChessSession') || 'null'); }
@@ -34,6 +37,7 @@ export default function App() {
   const [lineups, setLineups] = useState([]);
   const [matches, setMatches] = useState([]);
   const [ticket, setTicket] = useState(savedTicket);
+  const [room, setRoom] = useState(null);
   const [botDifficulty, setBotDifficulty] = useState('medium');
   const [matchId, setMatchId] = useState(() => sessionStorage.getItem('heroChessMatchId'));
   const [detailId, setDetailId] = useState(null);
@@ -42,13 +46,32 @@ export default function App() {
   const [draftName, setDraftName] = useState('');
   const [draftAvatar, setDraftAvatar] = useState('');
   const [draftFrame, setDraftFrame] = useState('');
+  const openedRoomMatch = useRef(null);
+  const rematchRequest = useRef(null);
   const token = session?.accessToken;
+  const roomId = room?.roomId;
+  const watchRoom = page === 'room' || !!roomId;
 
-  function logout() {
+  function clearSession() {
     sessionStorage.removeItem('heroChessSession');
     sessionStorage.removeItem('heroChessMatchId');
     sessionStorage.removeItem('heroChessTicket');
+    openedRoomMatch.current = null;
+    rematchRequest.current = null;
+    setRoom(null);
     setSession(null); setMe(null); setCatalog(null); setTicket(null); setMatchId(null); setDetailId(null); setPage('lobby');
+  }
+  async function logout() {
+    await run(async () => {
+      try {
+        const signal = AbortSignal.timeout(4000);
+        const id = roomId ?? (await api(token, `${roomsPath}/current`, { signal }))?.roomId;
+        if (id) await api(token, `${roomsPath}/${id}/leave`, { method: 'POST', body: { reason: 'end_session' }, signal });
+      } catch (failure) {
+        if (failure.status !== 401 && failure.status !== 404) throw failure;
+      }
+      clearSession();
+    });
   }
   function rememberTicket(next) {
     if (next?.status === 'waiting' || next?.status === 'matching') sessionStorage.setItem('heroChessTicket', JSON.stringify(next));
@@ -68,7 +91,7 @@ export default function App() {
       setDraftAvatar(previous => previous || profile.avatarName || '');
       setDraftFrame(previous => previous || profile.frameName || '');
     } catch (failure) {
-      if (failure.status === 401) logout();
+      if (failure.status === 401) clearSession();
       setError(failure);
     }
   }
@@ -103,6 +126,21 @@ export default function App() {
       }
     });
   }
+
+  async function changeRoom(path, body) {
+    await run(async () => {
+      const next = await api(token, `${roomsPath}${path}`, { method: 'POST', body });
+      setRoom(next);
+      if (!next) setPage('lobby');
+    });
+  }
+  function rematch() {
+    const previousMatchId = room.lastMatchId;
+    if (rematchRequest.current?.previousMatchId !== previousMatchId) {
+      rematchRequest.current = { previousMatchId, requestId: crypto.randomUUID() };
+    }
+    changeRoom(`/${roomId}/rematch`, rematchRequest.current);
+  }
   function openMatch(id, status = 'selecting') {
     rememberTicket(null);
     if (status === 'selecting' || status === 'active') sessionStorage.setItem('heroChessMatchId', id);
@@ -120,6 +158,65 @@ export default function App() {
   }
   const currentMatch = matches.find(match => match.matchId === matchId);
   const ongoingMatch = currentMatch && (currentMatch.status === 'selecting' || currentMatch.status === 'active');
+  const waitingForRanked = ['waiting', 'matching'].includes(ticket?.status);
+  const canStart = !busy && !!lineups.length && !waitingForRanked && !ongoingMatch && !room;
+  const inRoomMatch = matchId && (room?.matchId === matchId || room?.lastMatchId === matchId);
+
+  function backFromMatch(ended) {
+    if (ended) {
+      sessionStorage.removeItem('heroChessMatchId');
+      setMatchId(null);
+    }
+    setPage(inRoomMatch ? 'room' : 'lobby');
+    refresh();
+  }
+
+  useEffect(() => {
+    if (!token || busy) return;
+    const controller = new AbortController();
+    let timer;
+    async function pollRoom() {
+      let delay = 2000;
+      let retry = watchRoom;
+      try {
+        const next = await api(token, `${roomsPath}/current`, { signal: controller.signal });
+        if (!controller.signal.aborted) setRoom(next);
+      } catch (failure) {
+        if (controller.signal.aborted) return;
+        if (failure.status === 401) { clearSession(); return; }
+        delay = pollRetryDelay(failure.status);
+        retry ||= !failure.status || failure.status >= 500;
+      }
+      if (retry && !controller.signal.aborted) timer = setTimeout(pollRoom, delay);
+    }
+    pollRoom();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [token, watchRoom, busy]);
+
+  useEffect(() => {
+    if (!token || !roomId) return;
+    function presence() {
+      api(token, `${roomsPath}/${roomId}/presence`, { method: 'POST' }).catch(() => {});
+    }
+    function resumePresence() {
+      if (document.visibilityState === 'visible') presence();
+    }
+    presence();
+    const timer = setInterval(presence, 15000);
+    window.addEventListener('online', presence);
+    document.addEventListener('visibilitychange', resumePresence);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('online', presence);
+      document.removeEventListener('visibilitychange', resumePresence);
+    };
+  }, [token, roomId]);
+
+  useEffect(() => {
+    if (busy || !catalog || !room?.matchId || openedRoomMatch.current === room.matchId) return;
+    openedRoomMatch.current = room.matchId;
+    openMatch(room.matchId, room.status);
+  }, [busy, catalog, room?.matchId, room?.status]);
   useEffect(() => {
     if (page !== 'match' && currentMatch && !ongoingMatch) {
       sessionStorage.removeItem('heroChessMatchId');
@@ -167,12 +264,13 @@ export default function App() {
   return <div className="shell">
     <header className="topbar"><div><span className="brand-mark">♜</span><strong>HERO CHESS</strong><span className="subbrand">API test console</span></div>
       <nav><button className={page === 'lobby' ? 'active' : ''} onClick={() => { setPage('lobby'); refresh(); }}>Sảnh</button>
+        {room && <button className={page === 'room' ? 'active' : ''} onClick={() => setPage('room')}>Phòng riêng</button>}
         <button className={page === 'lineup' ? 'active' : ''} onClick={() => { setPage('lineup'); refresh(); }}>Đội hình</button>
         <button className={page === 'history' ? 'active' : ''} onClick={() => setPage('history')}>Lịch sử</button>
         <button className={page === 'ranking' ? 'active' : ''} onClick={() => setPage('ranking')}>Xếp hạng</button>
         {detailId && <button className={page === 'detail' ? 'active' : ''} onClick={() => setPage('detail')}>Chi tiết trận</button>}
         {matchId && (page === 'match' || ongoingMatch) && <button className={page === 'match' ? 'active' : ''} onClick={() => setPage('match')}>{currentMatch?.status === 'completed' ? 'Xem replay' : 'Trận đang chơi'}</button>}</nav>
-      <button className="secondary" onClick={logout}>Đăng xuất</button>
+      <button className="secondary" disabled={busy} onClick={logout}>Đăng xuất</button>
     </header>
     <div className="content"><ErrorBox error={error} onClose={() => setError(null)} />
       {page === 'lobby' && <>
@@ -195,11 +293,12 @@ export default function App() {
         <div className="cards"><section className="card"><h2>Chơi với bot</h2><p>Chọn cấp bot và đội hình để vào trận.</p>
           <div className="actions"><label>Độ khó<select value={botDifficulty} onChange={event => setBotDifficulty(event.target.value)} disabled={busy}>
             {Object.entries(botDifficultyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select></label><button disabled={busy || !lineups.length || ['waiting', 'matching'].includes(ticket?.status)} onClick={() => queue('bot')}>Bắt đầu trận bot</button></div></section>
-          <section className="card"><h2>Ghép trận PvP</h2><p>Hai tài khoản cùng vào hàng đợi để ghép trận.</p><button disabled={busy || !lineups.length || ['waiting', 'matching'].includes(ticket?.status)} onClick={() => queue('ranked')}>Tìm đối thủ</button></section>
+          </select></label><button disabled={!canStart} onClick={() => queue('bot')}>Bắt đầu trận bot</button></div></section>
+          <section className="card"><h2>Ghép trận PvP</h2><p>Hai tài khoản cùng vào hàng đợi để ghép trận.</p><button disabled={!canStart} onClick={() => queue('ranked')}>Tìm đối thủ</button></section>
+          <section className="card"><h2>Phòng riêng</h2><p>Tạo phòng hoặc nhập mã để đấu với bạn.</p><button className="secondary" onClick={() => setPage('room')}>Mở phòng riêng</button></section>
           <section className="card"><h2>Đội hình</h2><p>{lineups.length} đội hình đã lưu · {catalog?.heroes?.filter(x => x.isOwned).length ?? 0} hero sở hữu.</p><button className="secondary" onClick={() => setPage('lineup')}>Mở trình xếp đội</button></section></div>
         {!lineups.length && <p className="hint">Hãy tạo đội hình trước khi tìm trận. Tài khoản test cần có đủ hero để điền 16 vị trí.</p>}
-        {['waiting', 'matching'].includes(ticket?.status) && <div className="status-row">{ticket.status === 'matching' ? 'Đang tạo trận…' : 'Đang chờ ghép trận…'} <code>{ticket.ticketId}</code>
+        {waitingForRanked && <div className="status-row">{ticket.status === 'matching' ? 'Đang tạo trận…' : 'Đang chờ ghép trận…'} <code>{ticket.ticketId}</code>
           {ticket.status === 'waiting' && <button className="secondary" onClick={() => run(async () => { await api(token, `/matchmaking/tickets/${ticket.ticketId}`, { method: 'DELETE' }); rememberTicket(null); })}>Hủy tìm trận</button>}</div>}
         {ongoingMatch && <div className="status-row">Trận đang chơi: <code>{matchId}</code><button onClick={() => setPage('match')}>Tiếp tục</button></div>}
         <div className="split"><section className="card"><div className="section-head"><h2>Lịch sử trận</h2>
@@ -210,11 +309,15 @@ export default function App() {
           <section className="card"><h2>Hero trong catalog</h2><div className="catalog-list">{catalog?.heroes?.map(hero => <div className="catalog-row" key={hero.id}><div><strong>{hero.name}</strong><small>{hero.classCode} · {hero.setupPoints} SP{hero.trait ? ` · ${hero.trait.name}` : ''}</small></div>
             {hero.isOwned ? <span className="owned">Đã sở hữu</span> : <button disabled={busy} className="secondary" onClick={() => run(async () => { await api(token, `/shop/heroes/${hero.id}/purchase`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } }); await refresh(); })}>Mua {hero.coinPrice}</button>}</div>)}</div></section></div>
       </>}
+      {page === 'room' && <CustomRoom room={room} busy={busy} canStart={canStart}
+        onCreate={() => changeRoom('')} onJoin={code => changeRoom('/join', { code })}
+        onLeave={() => changeRoom(`/${roomId}/leave`, { reason: 'leave_room' })}
+        onRematch={rematch} onContinue={() => openMatch(room.matchId, room.status)} onError={setError} />}
       {page === 'lineup' && catalog && <LineupEditor token={token} catalog={catalog} lineups={lineups} onChanged={refresh} onError={setError} />}
       {page === 'history' && <MatchHistory token={token} onOpenMatch={openDetail} onError={setError} />}
       {page === 'ranking' && <Ranking token={token} onError={setError} />}
       {page === 'detail' && detailId && <MatchDetail token={token} matchId={detailId} onOpenReplay={openReplay} onBack={() => setPage('history')} onError={setError} />}
-      {page === 'match' && matchId && <MatchView key={matchId} token={token} matchId={matchId} catalog={catalog} lineups={lineups} matchInfo={currentMatch} playerId={me?.playerId} onBack={ended => { if (ended) { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); } setPage('lobby'); refresh(); }} onCancel={() => { sessionStorage.removeItem('heroChessMatchId'); setMatchId(null); setPage('lobby'); refresh(); }} onError={setError} />}
+      {page === 'match' && matchId && <MatchView key={matchId} token={token} matchId={matchId} catalog={catalog} lineups={lineups} matchInfo={currentMatch} playerId={me?.playerId} backLabel={inRoomMatch ? 'Phòng riêng' : 'Sảnh'} onBack={backFromMatch} onCancel={() => backFromMatch(true)} onError={setError} />}
     </div>
   </div>;
 }

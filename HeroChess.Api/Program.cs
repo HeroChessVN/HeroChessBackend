@@ -123,15 +123,20 @@ app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSecond
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// Liveness chỉ báo process phục vụ được; readiness phía dưới còn thử kết nối database.
+// Liveness kiểm tra process; readiness còn kiểm tra migration phòng riêng trước khi nhận traffic.
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
 app.MapGet("/health/ready", async (AppDbContext db, CancellationToken cancellationToken) =>
 {
     try
     {
-        return await db.Database.CanConnectAsync(cancellationToken)
+        var roomSchemaReady = await db.Database.SqlQueryRaw<bool>("""
+            SELECT (to_regclass('hero_chess.custom_room') IS NOT NULL
+                AND to_regclass('hero_chess.custom_room_member') IS NOT NULL
+                AND to_regclass('hero_chess.custom_room_rematch') IS NOT NULL) AS "Value"
+            """).SingleAsync(cancellationToken);
+        return roomSchemaReady
             ? Results.Ok(new { status = "ready", database = "connected" })
-            : Results.Json(new { status = "not_ready", database = "unavailable" }, statusCode: 503);
+            : Results.Json(new { status = "not_ready", database = "schema_outdated" }, statusCode: 503);
     }
     catch
     {

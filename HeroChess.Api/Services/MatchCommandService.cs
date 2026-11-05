@@ -37,6 +37,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 : await db.MatchParticipants.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId && x.PlayerId == playerId, ct))
                 ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
             ValidateAction(request.Action);
+            var type = request.Action.GetProperty("type").GetString()!;
             var previous = await db.MatchActions.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId && x.CommandId == request.CommandId, ct);
             if (previous is not null)
             {
@@ -54,7 +55,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 return new(matchId, request.CommandId, previous.SequenceNo, true,
                     MatchStateProjection.Events(previous.ResolvedEvents.RootElement, viewer), MatchReadService.ToDto(currentMatch, previousState, clock.GetUtcNow(), viewer));
             }
-            if (request.Action.GetProperty("type").GetString() == "hero_active")
+            if (type == "hero_active")
                 throw new ApiException(422, "HERO_SKILL_NOT_AVAILABLE", "Hero skills are disabled.");
             var match = await db.Matches.FromSqlInterpolated($"SELECT * FROM hero_chess.game_match WHERE id={matchId} FOR UPDATE").Include(x => x.Participants).SingleAsync(ct);
             var row = await db.MatchStates.FromSqlInterpolated($"SELECT * FROM hero_chess.match_state WHERE match_id={matchId} FOR UPDATE").SingleOrDefaultAsync(ct)
@@ -83,7 +84,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             // then applies Step 5 (Creator Cancellation) if resolveCreatorCancellation is true.
             // This eliminates the double-Apply pattern and ensures no double mutation.
             var lifecycleEvents = new List<object>();
-            if (!TurnLifecycle.IsTurnProcessed(state, actorSide, state.TurnIndex))
+            if (type != "undo" && !TurnLifecycle.IsTurnProcessed(state, actorSide, state.TurnIndex))
             {
                 // Single Apply() call handles all 5 steps:
                 // 1. Cooldown decrement
@@ -109,7 +110,6 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     lifecycleEvents.Add(new { type = "phan_ky.cancelled", effectId = r.EffectId, removedBy = r.RemovedBy.ToString().ToLowerInvariant() });
             }
 
-            var type = request.Action.TryGetProperty("type", out var typeValue) ? typeValue.GetString() : null;
             GameState next;
             object[] events;
             switch (type)
@@ -126,15 +126,17 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     next = state.Clone(); next.Version++; next.Result = actorSide == Side.Red ? "black_win" : "red_win"; next.EndReason = "resign";
                     events = new object[] { new { type = "match.resigned", side = participant.Side } }; break;
                 case "undo":
-                    if (match.Mode != "bot") throw new ApiException(422, "UNDO_NOT_ALLOWED", "Undo is available only in bot matches.");
-                    if (!request.Action.TryGetProperty("targetSequence", out var targetValue)) throw new ApiException(400, "INVALID_ACTION", "Undo requires targetSequence.");
-                    var target = targetValue.GetInt32();
-                    if (target < 0 || target >= row.Version) throw new ApiException(422, "INVALID_UNDO_TARGET", "Undo must target an earlier snapshot.");
-                    var action = await db.MatchActions.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId && x.SequenceNo == target, ct)
-                        ?? throw new ApiException(422, "INVALID_UNDO_TARGET", "The target snapshot does not exist.");
-                    next = GameJson.Read<GameState>(action.StateAfter);
-                    // Phase 3.4: v3 → v4 upgrade for undo target state. Idempotent.
-                    next = StateSchemaUpgrade.UpgradeToCurrent(next);
+                    if (bot || match.Mode != "bot") throw new ApiException(422, "UNDO_NOT_ALLOWED", "Undo is available only to players in bot matches.");
+                    var target = request.Action.TryGetProperty("targetSequence", out var targetValue)
+                        ? targetValue.GetInt32()
+                        : await FindUndoTargetAsync(matchId, row.Version, participant.Side, ct);
+                    if (target >= row.Version) throw new ApiException(422, "INVALID_UNDO_TARGET", "Undo must target an earlier snapshot.");
+                    using (var snapshot = await db.MatchActions.AsNoTracking().Where(x => x.MatchId == matchId && x.SequenceNo == target)
+                        .Select(x => x.StateAfter).SingleOrDefaultAsync(ct)
+                        ?? throw new ApiException(422, "INVALID_UNDO_TARGET", "The target snapshot does not exist."))
+                    {
+                        next = StateSchemaUpgrade.UpgradeToCurrent(GameJson.Read<GameState>(snapshot));
+                    }
                     next.Version = row.Version + 1; next.Result = null; next.EndReason = null;
                     events = new object[] { new { type = "match.undone", targetSequence = target } }; break;
                 case "team_skill":
@@ -178,7 +180,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             if (next.Result is not null) CompleteMatch(match, next, now);
             var resolved = GameJson.Document(events);
             var log = new MatchAction { Id = Guid.NewGuid(), MatchId = matchId, SequenceNo = next.Version, CommandId = request.CommandId,
-                ActorSide = participant.Side, Kind = type!, RequestPayload = GameJson.Document(request.Action), ResolvedEvents = resolved,
+                ActorSide = participant.Side, Kind = type, RequestPayload = GameJson.Document(request.Action), ResolvedEvents = resolved,
                 StateAfter = GameJson.Document(next), StateSchemaVersion = next.StateSchemaVersion, ReceivedAt = received, CommittedAt = now };
             db.MatchActions.Add(log);
             var rulesMs = Stopwatch.GetElapsedTime(rulesStartedAt).TotalMilliseconds;
@@ -205,6 +207,39 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             return dto;
         }
         finally { gate.Release(); }
+    }
+
+    private async Task<int> FindUndoTargetAsync(Guid matchId, int version, string humanSide, CancellationToken ct)
+    {
+        // ponytail: One indexed read per visited action; use a recursive SQL query if long undo chains make this slow.
+        while (version > 0)
+        {
+            var action = await db.MatchActions.AsNoTracking()
+                .Where(x => x.MatchId == matchId && x.SequenceNo == version)
+                .Select(x => new { x.Kind, x.ActorSide, UndoEvents = x.Kind == "undo" ? x.ResolvedEvents : null })
+                .SingleOrDefaultAsync(ct)
+                ?? throw new ApiException(422, "INVALID_UNDO_TARGET", "The match history is missing a snapshot.");
+            if (action.ActorSide == humanSide && action.Kind is "move" or "team_skill")
+                return version - 1;
+            if (action.Kind != "undo")
+            {
+                version--;
+                continue;
+            }
+
+            // An Undo entry points to the previous branch head, which may itself be an Undo.
+            using var events = action.UndoEvents;
+            var undo = events?.RootElement.ValueKind == JsonValueKind.Array
+                ? events.RootElement.EnumerateArray().FirstOrDefault(entry => entry.ValueKind == JsonValueKind.Object &&
+                    entry.TryGetProperty("type", out var eventType) && eventType.ValueKind == JsonValueKind.String &&
+                    eventType.ValueEquals("match.undone"))
+                : default;
+            if (undo.ValueKind == JsonValueKind.Undefined || !undo.TryGetProperty("targetSequence", out var target) ||
+                target.ValueKind != JsonValueKind.Number || !target.TryGetInt32(out var sequence) || sequence < 0 || sequence >= version)
+                throw new ApiException(422, "INVALID_UNDO_TARGET", "The match history contains an invalid undo target.");
+            version = sequence;
+        }
+        throw new ApiException(422, "NO_UNDO_AVAILABLE", "There are no player actions to undo.");
     }
 
     // TimeoutAsync: Chỉ xử lý đúng version/deadline active; tăng lượt và chuỗi timeout, xử thua AFK/đang chiếu hoặc so SP khi đạt giới hạn.
@@ -354,8 +389,8 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 !to.TryGetProperty("x", out var x) || x.ValueKind != JsonValueKind.Number || !x.TryGetInt32(out var px) || px is < 0 or > 8 ||
                 !to.TryGetProperty("y", out var y) || y.ValueKind != JsonValueKind.Number || !y.TryGetInt32(out var py) || py is < 0 or > 9) throw Invalid();
         }
-        if (kind.GetString() == "undo" && (!action.TryGetProperty("targetSequence", out var target) ||
-            target.ValueKind != JsonValueKind.Number || !target.TryGetInt32(out var sequence) || sequence < 0)) throw Invalid();
+        if (kind.GetString() == "undo" && action.TryGetProperty("targetSequence", out var target) &&
+            (target.ValueKind != JsonValueKind.Number || !target.TryGetInt32(out var sequence) || sequence < 0)) throw Invalid();
         if (kind.GetString() == "team_skill" && (!action.TryGetProperty("slot", out var slot) ||
             slot.ValueKind != JsonValueKind.Number || !slot.TryGetInt32(out _))) throw Invalid();
     }

@@ -23,6 +23,7 @@ public sealed class UserStore(AppDbContext db, IHostEnvironment environment, IOp
         User account = isDevelopmentAdmin ? new Admin() : new Player { IsGuest = false };
         account.Id = user.Id; account.UserName = user.UserName; account.NormalizedUserName = user.NormalizedUserName;
         account.Email = user.Email; account.NormalizedEmail = user.NormalizedEmail; account.PasswordHash = user.PasswordHash;
+        account.EmailConfirmed = user.EmailConfirmed;
         account.SecurityStamp = user.SecurityStamp; account.DisplayName = displayName;
         account.CreatedAt = now; account.UpdatedAt = now;
         db.Users.Add(account);
@@ -35,7 +36,7 @@ public sealed class UserStore(AppDbContext db, IHostEnvironment environment, IOp
             db.Ratings.Add(new PlayerRating { PlayerId = user.Id, Elo = options.Value.StartingElo });
     
             var heroIds = await db.Heroes.AsNoTracking()
-                .Where(x => x.IsStarter || (environment.IsDevelopment() && options.Value.GrantDevelopmentFixtureHeroes && x.IsTestFixture))
+                .Where(x => x.IsEnabled && (x.IsStarter || (environment.IsDevelopment() && options.Value.GrantDevelopmentFixtureHeroes && x.IsTestFixture)))
                 .Select(x => x.Id).ToListAsync(cancellationToken);
             foreach (var heroId in heroIds)
                 db.PlayerHeroes.Add(new PlayerHero { PlayerId = user.Id, HeroId = heroId, AcquiredVia = environment.IsDevelopment() ? "test" : "starter", AcquiredAt = now });
@@ -103,10 +104,12 @@ public sealed class UserStore(AppDbContext db, IHostEnvironment environment, IOp
     public Task SetEmailAsync(User user, string? email, CancellationToken cancellationToken) { user.Email = email; user.UserName = email; return Task.CompletedTask; }
     // GetEmailAsync: Đọc email hiện tại.
     public Task<string?> GetEmailAsync(User user, CancellationToken cancellationToken) => Task.FromResult(user.Email);
-    // GetEmailConfirmedAsync: Prototype luôn trả true: hiện chưa có quy trình xác minh email.
-    public Task<bool> GetEmailConfirmedAsync(User user, CancellationToken cancellationToken) => Task.FromResult(true);
-    // SetEmailConfirmedAsync: No-op trong prototype; không có cột lưu trạng thái xác minh email.
-    public Task SetEmailConfirmedAsync(User user, bool confirmed, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task<bool> GetEmailConfirmedAsync(User user, CancellationToken cancellationToken) => Task.FromResult(user.EmailConfirmed);
+    public Task SetEmailConfirmedAsync(User user, bool confirmed, CancellationToken cancellationToken)
+    {
+        user.EmailConfirmed = confirmed;
+        return Task.CompletedTask;
+    }
     // GetNormalizedEmailAsync: Đọc email chuẩn hóa.
     public Task<string?> GetNormalizedEmailAsync(User user, CancellationToken cancellationToken) => Task.FromResult(user.NormalizedEmail);
     // SetNormalizedEmailAsync: Đồng bộ email và username chuẩn hóa cho luồng đăng nhập bằng email.

@@ -27,6 +27,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SavedLineupEntry> LineupEntries => Set<SavedLineupEntry>();
     public DbSet<SavedLineupSkill> LineupSkills => Set<SavedLineupSkill>();
     public DbSet<GameMatch> Matches => Set<GameMatch>();
+    public DbSet<CustomRoom> CustomRooms => Set<CustomRoom>();
+    public DbSet<CustomRoomMember> CustomRoomMembers => Set<CustomRoomMember>();
+    public DbSet<CustomRoomRematch> CustomRoomRematches => Set<CustomRoomRematch>();
     public DbSet<MatchParticipant> MatchParticipants => Set<MatchParticipant>();
     public DbSet<MatchState> MatchStates => Set<MatchState>();
     public DbSet<MatchAction> MatchActions => Set<MatchAction>();
@@ -68,6 +71,31 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MatchAction>(e => { Table(e, "match_action"); e.Property(x => x.MatchId).HasColumnName("match_id"); e.Property(x => x.SequenceNo).HasColumnName("sequence_no"); e.Property(x => x.CommandId).HasColumnName("command_id"); e.Property(x => x.ActorSide).HasColumnName("actor_side"); e.Property(x => x.RequestPayload).HasColumnName("request_payload").HasColumnType("jsonb"); e.Property(x => x.ResolvedEvents).HasColumnName("resolved_events").HasColumnType("jsonb"); e.Property(x => x.StateAfter).HasColumnName("state_after").HasColumnType("jsonb"); e.Property(x => x.StateSchemaVersion).HasColumnName("state_schema_version"); e.Property(x => x.ReceivedAt).HasColumnName("received_at"); e.Property(x => x.CommittedAt).HasColumnName("committed_at"); });
         model.Entity<CoinTransaction>(e => { Table(e, "coin_transaction"); e.Property(x => x.PlayerId).HasColumnName("player_id"); e.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key"); e.Property(x => x.BalanceAfter).HasColumnName("balance_after"); e.Property(x => x.MatchId).HasColumnName("match_id"); e.Property(x => x.MatchSide).HasColumnName("match_side"); e.Property(x => x.HeroId).HasColumnName("hero_id"); e.Property(x => x.CosmeticId).HasColumnName("cosmetic_id"); e.Property(x => x.CreatedAt).HasColumnName("created_at"); e.HasOne<PlayerWallet>().WithMany().HasForeignKey(x => x.PlayerId); });
         model.Entity<AdminAuditLog>(e => { Table(e, "admin_audit_log"); e.Property(x => x.ActorUserId).HasColumnName("actor_user_id"); e.Property(x => x.EntityType).HasColumnName("entity_type"); e.Property(x => x.EntityId).HasColumnName("entity_id"); e.Property(x => x.BeforeData).HasColumnName("before_data").HasColumnType("jsonb"); e.Property(x => x.AfterData).HasColumnName("after_data").HasColumnType("jsonb"); e.Property(x => x.CreatedAt).HasColumnName("created_at"); });
+        model.Entity<CustomRoom>(e =>
+        {
+            Table(e, "custom_room");
+            e.Property(x => x.Code).HasMaxLength(8);
+            e.HasIndex(x => x.Code).IsUnique().HasDatabaseName("uq_custom_room_code");
+            e.HasOne<Player>().WithMany().HasForeignKey(x => x.OwnerId).OnDelete(DeleteBehavior.NoAction);
+            e.HasOne<GameMatch>().WithMany().HasForeignKey(x => x.CurrentMatchId).OnDelete(DeleteBehavior.NoAction);
+            e.HasMany(x => x.Members).WithOne().HasForeignKey(x => x.RoomId);
+        });
+        model.Entity<CustomRoomMember>(e =>
+        {
+            e.ToTable("custom_room_member", "hero_chess");
+            e.HasKey(x => x.PlayerId).HasName("pk_custom_room_member");
+            e.HasIndex(x => new { x.RoomId, x.Seat }).IsUnique().HasDatabaseName("uq_custom_room_member_seat");
+            e.HasOne<Player>().WithMany().HasForeignKey(x => x.PlayerId).OnDelete(DeleteBehavior.NoAction);
+        });
+        model.Entity<CustomRoomRematch>(e =>
+        {
+            e.ToTable("custom_room_rematch", "hero_chess");
+            e.HasKey(x => new { x.RoomId, x.RequestId }).HasName("pk_custom_room_rematch");
+            e.HasIndex(x => new { x.RoomId, x.PreviousMatchId }).IsUnique().HasDatabaseName("uq_custom_room_rematch_previous");
+            e.HasOne<CustomRoom>().WithMany().HasForeignKey(x => x.RoomId);
+            e.HasOne<GameMatch>().WithMany().HasForeignKey(x => x.PreviousMatchId).OnDelete(DeleteBehavior.NoAction);
+            e.HasOne<GameMatch>().WithMany().HasForeignKey(x => x.MatchId).OnDelete(DeleteBehavior.NoAction);
+        });
         foreach (var entity in model.Model.GetEntityTypes().Where(x => x.GetSchema() == "hero_chess"))
             foreach (var property in entity.GetProperties()) property.SetColumnName(ToSnake(property.Name));
     }

@@ -15,7 +15,8 @@ test('outcome labels cover win/loss/draw and never invent a value', () => {
 test('mode and status labels fall back to the raw value', () => {
   assert.equal(modeLabel('bot'), 'Bot');
   assert.equal(modeLabel('ranked'), 'PvP');
-  assert.equal(modeLabel('custom'), 'custom');
+  assert.equal(modeLabel('custom'), 'Phòng riêng');
+  assert.equal(modeLabel('unknown'), 'unknown');
   assert.equal(statusLabel('completed'), 'Đã kết thúc');
   assert.equal(statusLabel('selecting'), 'Chọn đội hình');
   assert.equal(statusLabel(null), '—');

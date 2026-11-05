@@ -2,7 +2,7 @@
 export const outcomeLabel = outcome => ({ win: 'Thắng', loss: 'Thua', draw: 'Hòa' }[outcome] ?? '—');
 export const outcomeClass = outcome => ({ win: 'win', loss: 'loss', draw: 'draw' }[outcome] ?? '');
 
-export const modeLabel = mode => ({ bot: 'Bot', ranked: 'PvP' }[mode] ?? mode ?? '—');
+export const modeLabel = mode => ({ bot: 'Bot', ranked: 'PvP', custom: 'Phòng riêng' }[mode] ?? mode ?? '—');
 
 export const botDifficultyLabels = { easy: 'Dễ', medium: 'Trung bình', hard: 'Khó' };
 

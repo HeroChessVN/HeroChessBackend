@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace HeroChess.Api.Services;
 
-public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<MatchmakingOptions> options,
+public sealed partial class MatchmakingService(IServiceScopeFactory scopes, IOptions<MatchmakingOptions> options,
     IOptions<MatchRuntimeOptions> runtime, CatalogVersionService catalogVersions, RatingPolicy ratings, RewardPolicy rewards)
 {
     // Ticket: Ticket ghép trận mutable trong RAM; khác GameMatch đã lưu DB.
@@ -22,9 +22,18 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
     private readonly Dictionary<Guid, Ticket> _tickets = new();
     private readonly Dictionary<Guid, Guid> _playerTickets = new();
     private readonly ConcurrentDictionary<Guid, Guid> _reservations = new();
+    // ponytail: Serialize room and ticket admission on this API instance. Revisit if admission latency or replica count grows.
+    private readonly SemaphoreSlim _admission = new(1, 1);
 
     // CreateAsync: Chặn player bận; ghép ranked trong cửa sổ Elo hoặc tạo bot match, rồi trả ticket.
     public async Task<MatchmakingTicketDto> CreateAsync(Guid playerId, string? mode, CancellationToken cancellationToken, string? difficulty = null)
+    {
+        await _admission.WaitAsync(cancellationToken);
+        try { return await CreateTicketAsync(playerId, mode, difficulty, cancellationToken); }
+        finally { _admission.Release(); }
+    }
+
+    private async Task<MatchmakingTicketDto> CreateTicketAsync(Guid playerId, string? mode, string? difficulty, CancellationToken cancellationToken)
     {
         mode = mode?.Trim().ToLowerInvariant();
         if (mode is not ("ranked" or "bot")) throw new ApiException(400, "INVALID_MODE", "Mode must be ranked or bot.");
@@ -34,7 +43,8 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var busy = await db.MatchParticipants.AsNoTracking().AnyAsync(p => p.PlayerId == playerId &&
             db.Matches.Any(m => m.Id == p.MatchId && (m.Status == "selecting" || m.Status == "active")), cancellationToken);
-        if (busy || _reservations.ContainsKey(playerId)) throw new ApiException(409, "PLAYER_BUSY", "The player already has a queued or active match.");
+        if (busy || _reservations.ContainsKey(playerId) || await db.CustomRoomMembers.AnyAsync(x => x.PlayerId == playerId, cancellationToken))
+            throw new ApiException(409, "PLAYER_BUSY", "The player already has a room, queued or active match.");
         var elo = await db.Ratings.AsNoTracking().Where(x => x.PlayerId == playerId).Select(x => x.Elo).SingleAsync(cancellationToken);
 
         Ticket ticket;
@@ -102,15 +112,13 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
     }
 
     // Release: Bỏ reservation của player sau settlement để có thể queue tiếp.
-    public void Release(Guid playerId) => _reservations.TryRemove(playerId, out _);
+    public void Release(Guid playerId, Guid matchId) => _reservations.TryRemove(new KeyValuePair<Guid, Guid>(playerId, matchId));
 
     // CreateMatchAsync: Tạo selecting match, frozen ruleset/reward/rating và hai participant; bot không có player account.
     // waiting là người đã đứng trong hàng; joining là người tới sau. Bot thì joining null và người chơi luôn đỏ.
     private async Task<Guid> CreateMatchAsync(AppDbContext db, Ticket waiting, Ticket? joining, CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var ruleset = await db.Rulesets.AsNoTracking().SingleAsync(x => x.IsActive, ct);
-        var contentVersion = await catalogVersions.ComputeAsync(db, ct);
         var red = waiting;
         var black = joining;
         if (joining is not null)
@@ -120,13 +128,7 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
             // Điểm cao hơn nghĩa là vừa cầm đỏ nhiều hơn. Người đó nhận đen; hòa thì người đã chờ vẫn là đỏ.
             if (waitingScore > joiningScore) { red = joining; black = waiting; }
         }
-        var match = new GameMatch
-        {
-            Id = Guid.NewGuid(), Mode = joining is null ? "bot" : "ranked", Status = "selecting", RulesetId = ruleset.Id,
-            RulesetSnapshot = GameJson.Document(new RulesetSnapshot(ruleset.Code, ruleset.SetupBudget, ruleset.TurnSeconds, ruleset.ActionLimit,
-                ruleset.Config.RootElement.Clone(), ratings.Version, rewards.Version, runtime.Value.EloKFactor,
-                runtime.Value.WinnerCoinReward, runtime.Value.DrawCoinReward)), ContentVersion = contentVersion, CreatedAt = DateTimeOffset.UtcNow
-        };
+        var match = await NewMatchAsync(db, joining is null ? "bot" : "ranked", ct);
         var redElo = red.Elo;
         match.Participants.Add(new MatchParticipant { MatchId = match.Id, Side = "red", PlayerId = red.PlayerId, ParticipantType = "human", EloBefore = redElo });
         if (black is null)
@@ -139,6 +141,19 @@ public sealed class MatchmakingService(IServiceScopeFactory scopes, IOptions<Mat
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return match.Id;
+    }
+
+    private async Task<GameMatch> NewMatchAsync(AppDbContext db, string mode, CancellationToken ct)
+    {
+        var ruleset = await db.Rulesets.AsNoTracking().SingleAsync(x => x.IsActive, ct);
+        var contentVersion = await catalogVersions.ComputeAsync(db, ct);
+        return new GameMatch
+        {
+            Id = Guid.NewGuid(), Mode = mode, Status = "selecting", RulesetId = ruleset.Id,
+            RulesetSnapshot = GameJson.Document(new RulesetSnapshot(ruleset.Code, ruleset.SetupBudget, ruleset.TurnSeconds, ruleset.ActionLimit,
+                ruleset.Config.RootElement.Clone(), ratings.Version, rewards.Version, runtime.Value.EloKFactor,
+                runtime.Value.WinnerCoinReward, runtime.Value.DrawCoinReward)), ContentVersion = contentVersion, CreatedAt = DateTimeOffset.UtcNow
+        };
     }
 
     // RecentColorScore: Tám ván xếp hạng đã bắt đầu, ván mới nặng hơn. Dương nghĩa là vừa cầm đỏ nhiều hơn.

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, canPlaceStructure, pollRetryDelay, skillTarget } from './api.js';
 import { actionLabel } from './history.js';
-import { botDifficultyLabels, playerAvatar, playerName, sideLabel } from './records.js';
+import { botDifficultyLabels, modeLabel, playerAvatar, playerName, sideLabel } from './records.js';
 import MatchSelection from './MatchSelection.jsx';
 
 const classes = { general: 'TƯỚNG', advisor: 'SĨ', elephant: 'TƯỢNG', rook: 'XE', cannon: 'PHÁO', horse: 'MÃ', soldier: 'TỐT' };
@@ -9,7 +9,7 @@ const pointSkills = new Set(['thanh', 'rao']);
 const effectSkills = new Set(['phan_ky_doat_the', 'pha_tran_doat_phong']);
 const knownSkills = new Set([...pointSkills, ...effectSkills, 'khien', 'van_coc_tran_giang', 'binh_lam_thuy_hien']);
 
-export default function MatchView({ token, matchId, catalog, lineups, matchInfo, playerId, onBack, onCancel, onError }) {
+export default function MatchView({ token, matchId, catalog, lineups, matchInfo, playerId, backLabel = 'Sảnh', onBack, onCancel, onError }) {
   const [selection, setSelection] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
   const [legal, setLegal] = useState([]);
@@ -24,7 +24,7 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   const [pending, setPending] = useState(null);
   const [socketStatus, setSocketStatus] = useState('đang kết nối');
   const [timeLeft, setTimeLeft] = useState(null);
-  const [undoTarget, setUndoTarget] = useState(0);
+  const [blockedUndoVersion, setBlockedUndoVersion] = useState(null);
   const [events, setEvents] = useState([]);
   const [history, setHistory] = useState([]);
   const [historyError, setHistoryError] = useState(false);
@@ -36,11 +36,16 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const clockOffset = useRef(0);
+  const latestSnapshot = useRef(null);
 
   const accept = useCallback(next => {
     if (!next?.state || next.matchId !== matchId) return;
-    setSnapshot(previous => !previous || next.version >= previous.version ? next : previous);
+    const previous = latestSnapshot.current;
+    if (previous?.matchId === next.matchId && (next.version < previous.version ||
+        (next.version === previous.version && Date.parse(next.serverNow) < Date.parse(previous.serverNow)))) return;
+    latestSnapshot.current = next;
     clockOffset.current = Date.now() - Date.parse(next.serverNow);
+    setSnapshot(next);
   }, [matchId]);
 
   const refresh = useCallback(async () => {
@@ -98,7 +103,7 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   }, [token, matchId, accept, refresh, snapshot?.status]);
 
   useEffect(() => {
-    setSelectedPiece(null); setSkillSlot(null); setTargetPoint(null); setHeroTargetMode(null); setTargetPieceId(null);
+    setSelectedPiece(null); setSkillSlot(null); setTargetPoint(null); setHeroTargetMode(null); setTargetPieceId(null); setEffectId('');
     if (!snapshot || snapshot.status !== 'active' || replay) { setLegal([]); return; }
     let live = true;
     api(token, `/matches/${matchId}/legal-actions`).then(value => { if (live) setLegal(value); }).catch(onError);
@@ -106,10 +111,12 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   }, [token, matchId, snapshot?.version, snapshot?.status, replay]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    function syncClock() {
       if (!snapshot?.deadlineAt || snapshot.status !== 'active') { setTimeLeft(null); return; }
       setTimeLeft(Math.max(0, Math.ceil((Date.parse(snapshot.deadlineAt) - (Date.now() - clockOffset.current)) / 1000)));
-    }, 250);
+    }
+    syncClock();
+    const timer = setInterval(syncClock, 250);
     return () => clearInterval(timer);
   }, [snapshot?.deadlineAt, snapshot?.status]);
 
@@ -140,13 +147,20 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
       setPending(null); accept(result.snapshot);
       setEvents(previous => [...(result.resolvedEvents || []), ...previous].slice(0, 12));
     } catch (error) {
-      setActionError(error.code === 'CELL_OCCUPIED' ? 'Ô này đang có quân hoặc vật cản. Hãy chọn ô trống.' : error.message);
+      if (payload.action.type === 'undo' && (error.code === 'NO_UNDO_AVAILABLE' || error.code === 'STALE_STATE')) {
+        setBlockedUndoVersion(payload.expectedVersion);
+        setActionError(error.code === 'NO_UNDO_AVAILABLE'
+          ? 'Không còn nước để hoàn tác.'
+          : 'Trạng thái trận đã thay đổi. Hãy bấm Hoàn tác lại.');
+      } else {
+        setActionError(error.code === 'CELL_OCCUPIED' ? 'Ô này đang có quân hoặc vật cản. Hãy chọn ô trống.' : error.message);
+      }
       if (error.status) setPending(null);
       await refresh().catch(onError);
     } finally { setBusy(false); }
   }
   function command(action) {
-    if (pending || !snapshot || snapshot.status !== 'active') return;
+    if (pending || busy || !snapshot || snapshot.status !== 'active') return;
     if (action.type === 'team_skill' && pointSkills.has(activeInfo?.implementationKey)) {
       const { x, y } = action.target.position;
       if (!canPlaceStructure(ownSide, x, y, pieces.find(piece => piece.position.x === x && piece.position.y === y), obstacles)) {
@@ -244,8 +258,10 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
 
   const botDifficulty = snapshot?.bot?.difficulty ?? selection?.sides?.find(side => side.isBot)?.bot?.difficulty;
   const botLabel = botDifficultyLabels[botDifficulty];
-  return <div className="match-page">{actionError && <div className="error match-error-toast" role="alert">{actionError}<button type="button" className="close" aria-label="Đóng thông báo" onClick={() => setActionError('')}>×</button></div>}<div className="section-head"><div><span className="eyebrow">{(snapshot?.mode ?? selection?.mode) === 'bot' ? `CHƠI VỚI BOT${botLabel ? ` · ${botLabel}` : ''}` : 'TRẬN ĐẤU'}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
-    <div className="match-controls"><button className="secondary" onClick={() => onBack(snapshot?.status === 'completed' || selection?.status === 'cancelled')}>← Sảnh</button><button className="secondary" onClick={() => refresh().catch(onError)}>Đồng bộ</button><button className="secondary" onClick={() => setFlipped(!flipped)}>Xoay bàn</button></div></div>
+  const mode = snapshot?.mode ?? selection?.mode ?? matchInfo?.mode;
+  const heading = mode === 'custom' ? modeLabel(mode).toLocaleUpperCase('vi') : 'TRẬN ĐẤU';
+  return <div className="match-page">{actionError && <div className="error match-error-toast" role="alert">{actionError}<button type="button" className="close" aria-label="Đóng thông báo" onClick={() => setActionError('')}>×</button></div>}<div className="section-head"><div><span className="eyebrow">{mode === 'bot' ? `CHƠI VỚI BOT${botLabel ? ` · ${botLabel}` : ''}` : heading}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
+    <div className="match-controls"><button className="secondary" onClick={() => onBack(snapshot?.status === 'completed' || selection?.status === 'cancelled')}>← {backLabel}</button><button className="secondary" onClick={() => refresh().catch(onError)}>Đồng bộ</button><button className="secondary" onClick={() => setFlipped(!flipped)}>Xoay bàn</button></div></div>
     <div className="match-meta"><span className="pill">{replay ? 'replay' : status}</span>{replay ? <><span>Bước {replayStep?.sequenceNo ?? 0}/{replayEnd}</span><span>{actionLabel(replayStep, replay[replayIndex - 1], catalog)}</span></> : <><span>Lượt: <strong>{snapshot?.sideToMove || '—'}</strong>{ownSide ? ` · bạn: ${ownSide}` : ''}</span><span>#{snapshot?.countedActions ?? 0}/{catalog?.ruleset?.actionLimit ?? 150}</span><span className="timer">{timeLeft == null ? '—' : `${timeLeft}s`}</span><span>Socket: {socketStatus}</span></>}</div>
     {status === 'selecting' && <MatchSelection selection={selection} catalog={catalog} lineups={lineups} ownSide={matchInfo?.side} playerId={playerId}
       matchCreatedAt={matchInfo?.createdAt} selectedLineupId={selectedLineupId}
@@ -294,7 +310,7 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
       <h3>Skill đối thủ</h3>{enemySkills.map(skill => { const info = catalog?.teamSkills?.find(item => item.id === skill.skillId); return <div className="skill-button" key={skill.slotNo}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>CD {skill.cooldownRemaining} · lượt dùng {skill.usesRemaining ?? '∞'}</small></div>; })}
       <h3>Hero skill hai bên</h3><div className="hero-skill-list">{pieces.filter(piece => piece.traitKind === 'active' || piece.traitKind === 'special_move').map(piece => { const hero = catalog?.heroes?.find(item => item.id === piece.heroId); const cd = piece.traitState?.heroCooldownRemaining ?? piece.traitState?.quangTrungCooldownRemaining ?? 0; return <button className="skill-button" key={piece.pieceId} onClick={() => setSelectedPiece(piece.pieceId)}><strong>{piece.side}: {piece.heroName || hero?.name} · {piece.traitName || hero?.trait?.name}</strong><small>{piece.traitImplementationKey === 'rook.hoanh_soc' ? (piece.traitState?.hoanhSocCharged === 1 ? 'Hoành Sóc sẵn sàng' : 'Hoành Sóc chưa tích điện') : piece.traitKind === 'active' || piece.traitImplementationKey === 'general.orthogonal_range_3' ? `CD ${cd}` : 'Nội tại'}</small></button>; })}</div></section>
       <section className="card"><h2>Điều khiển trận</h2><div className="actions"><button className="danger" disabled={status !== 'active' || !!pending || busy} onClick={() => window.confirm('Đầu hàng trận này?') && command({ type: 'resign' })}>Đầu hàng</button>
-        {snapshot?.mode === 'bot' && <><select value={undoTarget} onChange={event => setUndoTarget(Number(event.target.value))}>{Array.from({ length: snapshot.version }, (_, index) => <option key={index} value={index}>Về action #{index}</option>)}</select><button className="secondary" disabled={status !== 'active' || !snapshot.version || !!pending || busy} onClick={() => command({ type: 'undo', targetSequence: undoTarget })}>Undo</button></>}</div>
+        {snapshot?.mode === 'bot' && status === 'active' && <button className="secondary" disabled={!snapshot.version || snapshot.version === blockedUndoVersion || !!pending || busy} onClick={() => command({ type: 'undo' })}>Hoàn tác</button>}</div>
         {pending && <div className="pending"><small>Lệnh #{pending.commandId} chưa xác nhận.</small><button disabled={busy} onClick={() => submit(pending)}>Thử lại cùng mã lệnh</button></div>}
         {snapshot?.state?.result && <p>Kết quả: <strong>{snapshot.state.result}</strong> · {snapshot.state.endReason}</p>}
         {replay && <div className="replay-controls"><button className="secondary" disabled={replayIndex === 0} onClick={() => { setReplayPlaying(false); setReplayIndex(replayIndex - 1); }}>←</button>

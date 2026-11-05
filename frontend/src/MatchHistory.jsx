@@ -39,7 +39,7 @@ export default function MatchHistory({ token, onOpenMatch, onError }) {
 
     <div className="filters">
       <label>Chế độ<select value={mode} onChange={event => setMode(event.target.value)}>
-        <option value="">Tất cả</option><option value="ranked">PvP</option><option value="bot">Bot</option></select></label>
+        <option value="">Tất cả</option><option value="ranked">PvP</option><option value="bot">Bot</option><option value="custom">Phòng riêng</option></select></label>
       <label>Kết quả<select value={outcome} onChange={event => setOutcome(event.target.value)}>
         <option value="">Tất cả</option><option value="win">Thắng</option><option value="draw">Hòa</option><option value="loss">Thua</option></select></label>
     </div>

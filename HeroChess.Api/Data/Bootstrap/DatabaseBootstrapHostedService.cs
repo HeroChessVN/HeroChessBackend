@@ -8,7 +8,7 @@ namespace HeroChess.Api.Data.Bootstrap;
 public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IHostEnvironment environment,
     IOptions<DatabaseBootstrapOptions> options, ILogger<DatabaseBootstrapHostedService> logger) : IHostedService
 {
-    // StartAsync: Khi bật cờ: kiểm tra schema, chạy identity/extensions/catalog và dev overlay; schema không đúng 25 bảng thì dừng.
+    // StartAsync: Kiểm tra các bảng nền bắt buộc trước khi nâng cấp schema và seed catalog.
     // Safety: dev fixtures bị từ chối nếu kết nối trỏ tới production database.
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -41,10 +41,28 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
                 await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "01_schema.sql"), cancellationToken);
             else
             {
-                check.CommandText = "SELECT count(*) FROM information_schema.tables WHERE table_schema='hero_chess' AND table_type='BASE TABLE'";
-                var tableCount = Convert.ToInt32(await check.ExecuteScalarAsync(cancellationToken));
-                if (tableCount != 25)
-                    throw new InvalidOperationException($"Existing hero_chess schema has {tableCount} base tables; expected 25. Refusing to modify a partial or incompatible schema.");
+                check.CommandText = """
+                    WITH tables AS (
+                        SELECT table_name::text AS name FROM information_schema.tables
+                        WHERE table_schema = 'hero_chess' AND table_type = 'BASE TABLE'
+                    ), missing AS (
+                        SELECT unnest(ARRAY[
+                            'auth_identity', 'player_wallet', 'player_rating', 'ruleset', 'chess_class', 'lineup_slot',
+                            'historical_character', 'hero_trait', 'hero', 'faction', 'hero_faction', 'team_skill', 'cosmetic',
+                            'player_hero', 'player_cosmetic', 'lineup', 'lineup_entry', 'lineup_skill', 'game_match',
+                            'match_participant', 'match_state', 'match_action', 'coin_transaction', 'admin_audit_log'
+                        ]) AS name
+                        EXCEPT SELECT name FROM tables
+                    )
+                    SELECT string_agg(name, ', ' ORDER BY name) FROM (
+                        SELECT name FROM missing
+                        UNION ALL
+                        SELECT 'exactly one of player or user_account'
+                        WHERE (SELECT count(*) FROM tables WHERE name IN ('player', 'user_account')) <> 1
+                    ) AS incompatible
+                    """;
+                if (await check.ExecuteScalarAsync(cancellationToken) is string missing)
+                    throw new InvalidOperationException($"Existing hero_chess schema is missing required tables or has an incompatible account layout ({missing}). Refusing to modify it.");
             }
         }
         // 04 chỉ dành schema cũ/chưa có user_account; không tạo lại bảng credential đã hợp nhất.
@@ -61,6 +79,8 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "08_step6_skills.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "09_hero_movement_fixes.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "10_player_profile.sql"), cancellationToken);
+        await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "11_email_confirmation.sql"), cancellationToken);
+        await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "12_custom_rooms.sql"), cancellationToken);
         if (environment.IsDevelopment() && options.Value.SeedDevelopmentFixtures)
             await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "03_seed_dev_only.sql"), cancellationToken);
         logger.LogInformation("Database bootstrap completed.");

@@ -50,7 +50,7 @@ public sealed class SettlementService(AppDbContext db, TimeProvider clock, Match
         match.SettledAt = clock.GetUtcNow();
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
-        foreach (var human in humans) matchmaking.Release(human.PlayerId!.Value);
+        foreach (var human in humans) matchmaking.Release(human.PlayerId!.Value, matchId);
         await hub.BroadcastAsync(matchId, new { type = "match.settled", payload = new { matchId,
             participants = match.Participants.Select(x => new { x.Side, x.CoinReward, x.EloBefore, x.EloAfter }).ToArray() } }, CancellationToken.None);
     }
