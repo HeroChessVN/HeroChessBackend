@@ -13,6 +13,27 @@ namespace HeroChess.IntegrationTests;
 public sealed partial class UserMigrationTests
 {
     [Fact]
+    public async Task Room_migration_targets_hero_chess_even_with_public_search_path()
+    {
+        await WithLegacyDatabase(async (connection, _) =>
+        {
+            await SqlFile(connection, "06_user_inheritance.sql");
+            var sql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Database", "12_custom_rooms.sql"));
+            sql = sql.Replace("SET LOCAL search_path = hero_chess, pg_catalog;", "SET LOCAL search_path = public, pg_catalog;");
+            await using var migration = new NpgsqlCommand(sql, connection);
+            await migration.ExecuteNonQueryAsync();
+            await migration.ExecuteNonQueryAsync();
+            await using var check = new NpgsqlCommand("""
+                SELECT to_regclass('hero_chess.custom_room') IS NOT NULL
+                    AND to_regclass('hero_chess.custom_room_member') IS NOT NULL
+                    AND to_regclass('hero_chess.custom_room_rematch') IS NOT NULL
+                    AND to_regclass('public.custom_room') IS NULL
+                """, connection);
+            Assert.Equal(true, await check.ExecuteScalarAsync());
+        });
+    }
+
+    [Fact]
     public async Task Bootstrap_upgrades_a_legacy_schema_with_extra_tables_and_detects_missing_base_tables()
     {
         await WithLegacyDatabase(async (connection, connectionString) =>

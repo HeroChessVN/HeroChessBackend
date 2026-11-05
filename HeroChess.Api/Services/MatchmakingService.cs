@@ -28,17 +28,18 @@ public sealed partial class MatchmakingService(IServiceScopeFactory scopes, IOpt
     // CreateAsync: Chặn player bận; ghép ranked trong cửa sổ Elo hoặc tạo bot match, rồi trả ticket.
     public async Task<MatchmakingTicketDto> CreateAsync(Guid playerId, string? mode, CancellationToken cancellationToken, string? difficulty = null)
     {
-        await _admission.WaitAsync(cancellationToken);
-        try { return await CreateTicketAsync(playerId, mode, difficulty, cancellationToken); }
-        finally { _admission.Release(); }
-    }
-
-    private async Task<MatchmakingTicketDto> CreateTicketAsync(Guid playerId, string? mode, string? difficulty, CancellationToken cancellationToken)
-    {
         mode = mode?.Trim().ToLowerInvariant();
         if (mode is not ("ranked" or "bot")) throw new ApiException(400, "INVALID_MODE", "Mode must be ranked or bot.");
         var botConfig = BotConfiguration.ForRequest(mode, difficulty);
+        await ReleaseFinishedReservationAsync(playerId, cancellationToken);
 
+        await _admission.WaitAsync(cancellationToken);
+        try { return await CreateTicketAsync(playerId, mode, botConfig, cancellationToken); }
+        finally { _admission.Release(); }
+    }
+
+    private async Task<MatchmakingTicketDto> CreateTicketAsync(Guid playerId, string mode, BotConfiguration botConfig, CancellationToken cancellationToken)
+    {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var busy = await db.MatchParticipants.AsNoTracking().AnyAsync(p => p.PlayerId == playerId &&
@@ -113,6 +114,27 @@ public sealed partial class MatchmakingService(IServiceScopeFactory scopes, IOpt
 
     // Release: Bỏ reservation của player sau settlement để có thể queue tiếp.
     public void Release(Guid playerId, Guid matchId) => _reservations.TryRemove(new KeyValuePair<Guid, Guid>(playerId, matchId));
+
+    private async Task ReleaseFinishedReservationAsync(Guid playerId, CancellationToken ct)
+    {
+        if (!_reservations.TryGetValue(playerId, out var matchId) || matchId == Guid.Empty) return;
+
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var match = await db.Matches.Where(x => x.Id == matchId && (x.Status == "completed" || x.Status == "cancelled"))
+            .Select(x => new { x.SettledAt }).SingleOrDefaultAsync(ct);
+        if (match is null) return;
+
+        // The client can receive match.ended before settlement has committed the new Elo.
+        if (match.SettledAt is null)
+        {
+            var gate = scope.ServiceProvider.GetRequiredService<MatchLockRegistry>().For(matchId);
+            await gate.WaitAsync(ct);
+            try { await scope.ServiceProvider.GetRequiredService<SettlementService>().SettleAsync(matchId, ct); }
+            finally { gate.Release(); }
+        }
+        Release(playerId, matchId);
+    }
 
     // CreateMatchAsync: Tạo selecting match, frozen ruleset/reward/rating và hai participant; bot không có player account.
     // waiting là người đã đứng trong hàng; joining là người tới sau. Bot thì joining null và người chơi luôn đỏ.

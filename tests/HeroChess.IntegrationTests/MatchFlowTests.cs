@@ -5,9 +5,11 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using HeroChess.Api.Data;
 using HeroChess.Contracts;
 using HeroChess.Api.Services;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -273,6 +275,37 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var rematch = await Queue();
         Assert.Equal("black", await SideOf(rematch, firstId));
         Assert.Equal("red", await SideOf(rematch, secondId));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ranked_can_queue_again_when_a_completed_match_still_has_a_reservation(bool alreadySettled)
+    {
+        var first = await CreatePlayerWithLineup();
+        var second = await CreatePlayerWithLineup();
+        const string tickets = "/api/v1/matchmaking/tickets";
+        await Post<MatchmakingTicketDto>(first.Client, tickets, new CreateMatchmakingTicketRequest("ranked"));
+        var joined = await Post<MatchmakingTicketDto>(second.Client, tickets, new CreateMatchmakingTicketRequest("ranked"));
+        var matchId = joined.MatchId!.Value;
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        DateTimeOffset? settledAt = alreadySettled ? now : null;
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE hero_chess.game_match SET status='completed', result='black_win', end_reason='resign', started_at={now}, ended_at={now}, settled_at={settledAt} WHERE id={matchId}");
+
+        var queued = await Post<MatchmakingTicketDto>(first.Client, tickets, new CreateMatchmakingTicketRequest("ranked"));
+        try
+        {
+            Assert.Equal("waiting", queued.Status);
+            Assert.NotNull(await db.Matches.Where(x => x.Id == matchId).Select(x => x.SettledAt).SingleAsync());
+            Assert.Equal(HttpStatusCode.Conflict, (await first.Client.PostAsJsonAsync(tickets, new CreateMatchmakingTicketRequest("ranked"), Json)).StatusCode);
+        }
+        finally
+        {
+            await first.Client.DeleteAsync($"{tickets}/{queued.TicketId}");
+        }
     }
 
     // CreatePlayerWithLineup: Đăng ký/đăng nhập player và tạo đội hình fixture theo class; có tùy chọn special hero.
