@@ -1,12 +1,12 @@
 # Hero Chess API cho Frontend / Unity
 
-Tài liệu này mô tả **API đang có trong source hiện tại** để làm màn hình đăng nhập, sảnh, đội hình và trận đấu. Base URL của bản Render hiện dùng:
+Tài liệu này mô tả API của backend HeroChess cho Unity và web test. Base URL Azure:
 
 ```text
-https://herochessbackend.onrender.com
+https://herochessbe.eastasia.cloudapp.azure.com
 ```
 
-Mọi REST route bên dưới bắt đầu bằng `/api/v1`. Ví dụ `GET /me` nghĩa là `GET https://herochessbackend.onrender.com/api/v1/me`. WebSocket dùng `wss://herochessbackend.onrender.com/ws/v1`. FE chỉ gọi backend; tài khoản/mật khẩu PostgreSQL hoặc Supabase **không đặt trong FE**. Nếu đổi domain Render, chỉ đổi base URL.
+Mọi REST route bên dưới bắt đầu bằng `/api/v1`. Ví dụ `GET /me` gọi `GET /api/v1/me` trên origin đã cấu hình. WebSocket dùng cùng host với HTTPS và đường dẫn `/ws/v1`. Unity gửi bearer token cho REST và lấy vé riêng để nối WebSocket.
 
 ## 1. Quy ước chung
 
@@ -86,6 +86,7 @@ Body tạo/sửa:
 | `GET` | `/matches/{matchId}/state` | Snapshot chuẩn để vẽ bàn cờ. |
 | `GET` | `/matches/{matchId}/legal-actions` | Nước đi thường hợp lệ; dùng để tô ô đến. |
 | `GET` | `/matches/{matchId}/hero-actions?pieceId={pieceId}` | Ô đích hợp lệ của kỹ năng di chuyển Quang Trung. Chỉ trả ô cho quân của phe người gọi khi đến lượt. |
+| `GET` | `/matches/{matchId}/forecast?version={sequenceNo}` | Dự đoán riêng cho người đã dùng Lam Sơn Quân Lược. |
 | `POST` | `/matches/{matchId}/commands` | Gửi nước đi, skill, undo hoặc đầu hàng. |
 
 `/state` trả các field ngoài cùng: `matchId`, `mode`, `status`, `version`, `sideToMove`, `turnIndex`, `countedActions`, `deadlineAt`, `serverNow`, `stateSchemaVersion`, `state`, `settledAt`, `sides`. Trong `state` có `pieces`, `obstacles`, `skillStates`, `effectInstances`, `result`, `endReason`. Mỗi quân có `pieceId`, `heroId`, `heroName`, `side`, `class`, `position`, `status`, `effects`, `traitState` và metadata hero/trait. `skillStates.red` và `.black` chứa `slotNo`, `implementationKey`, `usesRemaining`, `cooldownRemaining`, `name`, `description` để hiển thị Command skill/CD cho cả hai phe. `sides` là hồ sơ người chơi của cả hai phe, cùng shape với `sides` của `/selection`. Cọc Hero skill cũ được backend lọc khỏi snapshot/replay.
@@ -113,6 +114,15 @@ Các `action` khác đặt vào cùng phong bì trên:
 
 Với `team_skill`, chọn `slot` theo `state.skillStates.<phe>.slotNo`, rồi dựng `target` theo `implementationKey`. Thành và Rào dùng `position`, còn Khiên dùng `pieceId` của quân mình. `undo` dành cho trận bot và có thể hoàn tác `hero_active`.
 
+### Tích hợp Hero Skill trên Unity
+
+Catalog dùng để hiển thị tên, SP, phe và trait khi xếp đội hình. Khi đang đánh, kiểm tra `state.publicRiverStakes == true` và đọc kỹ năng từ quân tương ứng trong `state.pieces`. Chỉ cho thao tác khi quân còn sống, thuộc phe mình và tới lượt mình. Dùng `pieceId` của quân trong trận khi gửi lệnh.
+
+| Hero | Điều kiện và cách chọn ô |
+|---|---|
+| Trần Hưng Đạo hệ Tượng | Kiểm tra `traitState.heroCooldownRemaining` và `state.thdTuongCocStakes[pieceId]`. Chọn ô sông trống ở hàng `y=4` hoặc `y=5`, rồi gửi `hero_active` với `target.position`. |
+| Quang Trung hệ Tướng | Kiểm tra `traitState.cooldownReady == 1` và `quangTrungCooldownRemaining` bằng 0 hoặc thiếu. Gọi `/hero-actions` để tô các đích server cho phép rồi gửi `hero_active` với `target.to`. |
+
 ### Faction Skill
 
 | Phe | `implementationKey` | `target` | CD |
@@ -122,6 +132,8 @@ Với `team_skill`, chọn `slot` theo `state.skillStates.<phe>.slotNo`, rồi d
 | Tây Sơn | `hich_xuat_quan` | `{}` | 12 |
 
 Cả ba lệnh tiêu một lượt. `state.riverSnares` chỉ có bẫy của phe người gọi, mỗi bẫy có `owner`, `position` và `expiresAt` theo `turnIndex`. Bẫy sống 6 lượt và mất sau lần khóa đầu tiên. Hiệu ứng trên quân xuất hiện trong `pieces[].effects` với mã `bach_dang_rooted` hoặc `hich_xuat_quan` và `remainingTurns`.
+
+Unity lấy `slot` từ `state.skillStates[ownSide]` và gửi `action.type = "team_skill"`. Với Bạch Đằng Trận Pháp, xác nhận khi đã chọn đủ ba ô sông trống khác nhau. Quân trúng bẫy đứng ở ô đích và bị khóa 4 lượt. Với Hịch Xuất Quân, tô đích của Tốt theo `/legal-actions`. Nếu server cho đi hai ô thì gửi như một nước đi thường. `riverSnares` và vật cản Cọc `thd_tuong_coc` là hai dữ liệu riêng khi vẽ bàn.
 
 Sau khi nhận kết quả dùng Lam Sơn Quân Lược, người kích hoạt gọi `GET /api/v1/matches/{matchId}/forecast?version=<sequenceNo>`. Phản hồi có `version`, `prediction.variation` (tối đa ba hành động) và `prediction.threats` (tối đa hai phương án ở lượt địch đầu tiên). Mỗi mục có `side`, `action`, cùng `from`, `pieceClass`, `pieceName` hoặc `skillName` khi có. Máy chủ giữ kết quả riêng theo người chơi, trận và phiên bản bàn cờ trong tối đa hai phút. Chỉ hiển thị khi phiên bản phản hồi khớp bàn cờ. `409 STALE_STATE` nghĩa là bàn cờ đã đổi trước khi máy chủ tính kết quả. `429 FORECAST_BUSY` nghĩa là hàng chờ dự đoán đã đầy.
 
@@ -136,7 +148,7 @@ Command hợp lệ trả `MatchCommandResultDto`: `matchId`, `commandId`, `seque
 REST polling đủ để làm bản demo; nếu cần cập nhật ngay giữa hai máy, dùng WebSocket:
 
 1. `POST /ws-ticket` với bearer token. Response `{ "ticket": "...", "expiresAt": "..." }`.
-2. Nối `wss://herochessbackend.onrender.com/ws/v1?ticket=<ticket>` trong vòng 30 giây. Vé dùng **một lần**; ngắt kết nối thì xin vé mới.
+2. Nối `wss://herochessbe.eastasia.cloudapp.azure.com/ws/v1?ticket=<ticket>` trong vòng 30 giây. Vé dùng **một lần**. Ngắt kết nối thì xin vé mới.
 3. Gửi `{"type":"match.subscribe","requestId":"<UUID>","payload":{"matchId":"<UUID>"}}`. Server trả `match.state` với snapshot.
 4. Khi nhận `match.changed`, gọi lại `GET /matches/{matchId}/state` và legal actions nếu cần. Có `match.ended`/`match.settled` thì cập nhật kết quả/số dư. Nếu `payload.skillUsed` có dữ liệu, hiện banner từ `side`, `skillName` và các trường `heroName`, `pieceClass` nếu có. Dùng `payload.matchId` và `payload.version` làm khóa chống trùng với `sequenceNo` trong phản hồi command. Replay lưu cùng sự kiện để dựng nhật ký, kể cả khi bỏ lỡ WebSocket.
 
@@ -169,6 +181,6 @@ Lỗi nghiệp vụ thường có dạng:
 
 ## 8. Cấu hình Unity hiện tại
 
-Trong [HeroChessApi.cs](../../../../Unity/Capstone-Hero-Chess/Assets/HeroChess/Scripts/Runtime/Backend/HeroChessApi.cs), `BaseUrl` là **origin**, không kèm `/api/v1` vì client tự nối prefix đó. Giá trị cần đặt cho bản Render là `https://herochessbackend.onrender.com` (không thêm `/` cuối). Nếu scene có ô Endpoint thì điền URL này; bản Unity đang lưu vào `PlayerPrefs` key `HeroChess.ApiUrl`. Để FE hoạt động trên máy khác, máy đó chỉ cần internet và đúng base URL; không cần IP LAN, port 5012, Supabase URL hay DB password. Trên Render gói free, lần gọi đầu sau thời gian ngủ có thể chậm hơn timeout client Unity hiện tại (15 giây); khi đó thử lại sau khi `/health/ready` đã lên 200.
+Trong `HeroChessApi.cs`, đặt `BaseUrl` thành origin Azure ở đầu tài liệu. Client tự nối prefix `/api/v1`. Nếu scene có ô Endpoint thì điền origin vào ô đó. Unity có thể dùng giá trị đã lưu trong `PlayerPrefs` với key `HeroChess.ApiUrl`, nên kiểm tra ô Endpoint khi máy từng kết nối một backend khác.
 
 Nguồn chuẩn để đối chiếu khi backend thay đổi: [DTO](../HeroChess.Contracts/ApiContracts.cs), [controller](../HeroChess.Api/Controllers/MatchesController.cs), [pipeline command](../HeroChess.Api/Services/MatchCommandService.cs), [WebSocket](../HeroChess.Api/Services/WebSocketEndpoint.cs). Tài liệu này mô tả source, không xác nhận Render đã deploy đúng commit mới nhất; nếu behavior khác, kiểm tra commit đang chạy trên Render.
