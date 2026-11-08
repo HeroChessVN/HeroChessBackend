@@ -2,6 +2,9 @@
 .history-list{max-height:400px;overflow:auto;display:grid;gap:.4rem}.history-row{width:100%;display:flex;gap:.6rem;align-items:start;text-align:left;padding:.55rem .65rem;background:#22323c;border:1px solid #3b505a;font-weight:400}.history-row strong{color:#e6bf84;min-width:2.5rem}.history-row.active{border-color:#e6bf84;background:#3b4140}.history-row:disabled{opacity:1;cursor:default}.event-debug{margin-top:.75rem;border-top:1px solid #3b505a;padding-top:.75rem;color:#a0b1bc}.event-debug summary{cursor:pointer}.event-debug p{font-size:.82rem}
 .hero-card{margin-top:1rem}
 .cell.hero-target{box-shadow:inset 0 0 0 3px #3fa6a8}.hero-skill-list{max-height:280px;overflow:auto}
+.match-skill-notice{min-height:1.8rem;text-align:center;color:#ffe0a3;font-weight:700;pointer-events:none}
+.river-stake{position:absolute;right:.15rem;bottom:.15rem;z-index:2;border-radius:.25rem;padding:0 .2rem;background:#29251d;color:#ffe0a3;font-size:.65rem;pointer-events:none}
+.river-stake.red{background:#7a2629}.river-stake.black{background:#242f48}
 /* Hồ sơ người chơi: ảnh đại diện, khung và thẻ phe */
 .side-card{display:grid;gap:.35rem;min-width:220px;flex:1;padding:.7rem;border:1px solid #3c4e58;border-radius:9px;background:#202f39}
 .side-card-head{display:flex;align-items:center;gap:.7rem}

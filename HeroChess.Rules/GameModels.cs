@@ -73,7 +73,7 @@ public sealed record PendingEffectState(string Code, Side Owner, int? ExpiresAtT
 public sealed record SkillState(int SlotNo, Guid SkillId, int? UsesRemaining, int CooldownRemaining, string ImplementationKey,
     string? Name = null, string? Description = null, JsonElement? Parameters = null);
 // LegalMove: Một nước hợp lệ do server sinh, gồm quân bị ăn nếu có.
-public sealed record LegalMove(Guid PieceId, BoardPoint From, BoardPoint To, Guid? CapturedPieceId = null);
+public sealed record LegalMove(Guid PieceId, BoardPoint From, BoardPoint To, Guid? CapturedPieceId = null, bool InterceptedByStake = false);
 // MoveAction: Ý định đi một quân tới ô đích.
 public sealed record MoveAction(Guid PieceId, BoardPoint To);
 
@@ -83,6 +83,7 @@ public sealed class GameState
     public int StateSchemaVersion { get; init; } = 4;
     public string RulesetCode { get; init; } = "prototype-v0.1";
     public string ContentVersion { get; init; } = "development";
+    public bool PublicRiverStakes { get; init; }
     public Side SideToMove { get; set; } = Side.Red;
     public int Version { get; set; }
     public int TurnIndex { get; set; }
@@ -96,6 +97,7 @@ public sealed class GameState
     public string? EndReason { get; set; }
     public List<PieceState> Pieces { get; set; } = new();
     public List<ObstacleState> Obstacles { get; set; } = new();
+    public List<Skills.RiverSnare> RiverSnares { get; set; } = new();
     public List<PendingEffectState> PendingEffects { get; set; } = new();
     public Dictionary<Side, List<SkillState>> SkillStates { get; set; } = new()
     {
@@ -139,6 +141,7 @@ public sealed class GameState
             StateSchemaVersion = StateSchemaVersion,
             RulesetCode = RulesetCode,
             ContentVersion = ContentVersion,
+            PublicRiverStakes = PublicRiverStakes,
             SideToMove = SideToMove,
             Version = Version,
             TurnIndex = TurnIndex,
@@ -148,6 +151,7 @@ public sealed class GameState
             NextCreationOrder = NextCreationOrder
         };
         copy.Pieces.AddRange(Pieces.Select(x => x.Clone()));
+        copy.RiverSnares.AddRange(RiverSnares);
         copy.Obstacles.AddRange(Obstacles.Select(x => x with { }));
         copy.PendingEffects.AddRange(PendingEffects.Select(x => x with { }));
         foreach (var entry in ConsecutiveTimeouts) copy.ConsecutiveTimeouts[entry.Key] = entry.Value;
@@ -178,19 +182,21 @@ public sealed record RuleError(string Code, string Message);
 public sealed class ApplyMoveResult
 {
     // ApplyMoveResult: Constructor nội bộ đóng gói thành công/thất bại, state và lỗi.
-    private ApplyMoveResult(bool accepted, GameState state, RuleError? error)
+    private ApplyMoveResult(bool accepted, GameState state, RuleError? error, ObstacleState? stakeHit = null)
     {
         Accepted = accepted;
         State = state;
         Error = error;
+        StakeHit = stakeHit;
     }
 
     public bool Accepted { get; }
     public GameState State { get; }
     public RuleError? Error { get; }
+    public ObstacleState? StakeHit { get; }
 
     // Success: Tạo kết quả áp dụng thành công với state mới.
-    public static ApplyMoveResult Success(GameState state) => new(true, state, null);
+    public static ApplyMoveResult Success(GameState state, ObstacleState? stakeHit = null) => new(true, state, null, stakeHit);
     // Failure: Trả lỗi luật cùng state gốc, không giả lập thành công.
     public static ApplyMoveResult Failure(GameState state, string code, string message) => new(false, state, new(code, message));
 }

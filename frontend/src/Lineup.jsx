@@ -53,6 +53,8 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
   const sp = chosen.reduce((sum, hero) => sum + (hero?.setupPoints || 0), 0);
   const repeated = chosen.filter(hero => hero?.characterId && chosen.filter(other => other?.characterId === hero.characterId).length > 1);
   const missing = chosen.filter(hero => !hero).length;
+  const factionCount = factionId => new Set(chosen.filter(hero => hero?.classCode !== 'SOLDIER' &&
+    hero?.factionIds?.includes(factionId)).map(hero => hero.id)).size;
 
   function fillOwned() {
     const usedHeroes = new Set(); const usedCharacters = new Set(); const next = {};
@@ -61,7 +63,7 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
       if (hero) { next[slot.slotNo] = hero.id; usedHeroes.add(hero.id); if (hero.characterId) usedCharacters.add(hero.characterId); }
     }
     setHeroes(next);
-    setSkills(catalog.teamSkills.slice(0, 3).map(skill => skill.id).concat(['', '', '']).slice(0, 3));
+    setSkills(catalog.teamSkills.filter(skill => !skill.factionId).slice(0, 3).map(skill => skill.id).concat(['', '', '']).slice(0, 3));
   }
 
   async function save() {
@@ -100,8 +102,15 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
         })}</div></section>
         <section className="card"><h2>Command skill · 3 ô</h2><div className="skill-editor">{[0, 1, 2].map(index => {
           const selected = catalog.teamSkills.find(skill => skill.id === skills[index]);
+          const otherFaction = skills.some((id, slot) => slot !== index && catalog.teamSkills.some(skill => skill.id === id && skill.factionId));
           return <label key={index}>Ô {index + 1}<select value={skills[index]} onChange={event => setSkills(skills.map((value, slot) => slot === index ? event.target.value : value))}><option value="">Chọn skill</option>
-            {catalog.teamSkills.map(skill => <option key={skill.id} value={skill.id}>{skill.name}</option>)}</select>
+            {catalog.teamSkills.map(skill => {
+              const minimum = skill.eligibility?.minNonSoldierFactionHeroes ?? 0;
+              const members = skill.factionId ? factionCount(skill.factionId) : 0;
+              return <option key={skill.id} value={skill.id} disabled={!!skill.factionId && (otherFaction || members < minimum)}>
+                {skill.name}{minimum > 0 ? ` · ${members}/${minimum} cùng phe` : ''}
+              </option>;
+            })}</select>
             <small>{selected ? `${selected.implementationKey} · cooldown ${selected.cooldownTurns ?? 0} · lượt dùng ${selected.maxUses ?? '∞'}` : 'Chọn từ catalog'}</small></label>;
         })}</div><p className="muted">Server quyết định điều kiện phe và tính hợp lệ. Skill chưa có handler sẽ báo lỗi rõ trong trận.</p>
           <div className="actions"><button disabled={busy || sp > catalog.ruleset.setupBudget} onClick={save}>{current ? 'Lưu thay đổi' : 'Tạo đội hình'}</button>{current && <button disabled={busy} className="danger" onClick={remove}>Xóa</button>}</div></section></div></div>

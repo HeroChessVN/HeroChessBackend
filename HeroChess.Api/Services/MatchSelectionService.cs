@@ -3,6 +3,7 @@ using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
 using HeroChess.Rules;
+using HeroChess.Rules.Skills;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -32,7 +33,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 lineup.Skills.Select(x => new LineupSkillInput(x.SlotNo, x.TeamSkillId)).ToArray(), lineup.Revision);
             var validation = await validator.ValidateAsync(playerId, input, ct);
             if (validation.Errors.Count > 0) throw new ApiException(422, "INVALID_LINEUP", "The lineup is no longer valid.", validation.Errors);
-            var frozen = await Freeze(lineup, validation.TotalSp, ct);
+            var frozen = await Freeze(lineup, validation.TotalSp, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot).HeroTraitsEnabled, ct);
             participant.SourceLineupId = lineup.Id;
             participant.SourceLineupRevision = lineup.Revision;
             participant.LineupSnapshot = GameJson.Document(frozen);
@@ -63,7 +64,8 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             if (match.Status != "selecting") throw new ApiException(409, "MATCH_NOT_SELECTING", "The match cannot be confirmed.");
             if (participant.ConfirmedAt is not null) { await transaction.CommitAsync(ct); return await ToDto(match, playerId, ct); }
             if (participant.SourceLineupId is null) throw new ApiException(422, "SELECTION_REQUIRED", "Select a lineup before confirming.");
-            if (match.ContentVersion != await catalogVersions.ComputeAsync(db, ct))
+            var heroTraitsEnabled = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot).HeroTraitsEnabled;
+            if (match.ContentVersion != await catalogVersions.ComputeAsync(db, ct, heroTraitsEnabled))
                 throw new ApiException(409, "CONTENT_VERSION_CHANGED", "Catalog content changed. Cancel this selection and create a new match.");
             var lineup = await db.Lineups.AsNoTracking().Include(x => x.Entries).Include(x => x.Skills)
                 .SingleOrDefaultAsync(x => x.Id == participant.SourceLineupId && x.PlayerId == playerId, ct)
@@ -74,7 +76,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 lineup.Skills.Select(x => new LineupSkillInput(x.SlotNo, x.TeamSkillId)).ToArray(), lineup.Revision);
             var validation = await validator.ValidateAsync(playerId, input, ct);
             if (validation.Errors.Count > 0) throw new ApiException(422, "INVALID_LINEUP", "The selected lineup is no longer valid.", validation.Errors);
-            participant.LineupSnapshot = GameJson.Document(await Freeze(lineup, validation.TotalSp, ct));
+            participant.LineupSnapshot = GameJson.Document(await Freeze(lineup, validation.TotalSp, heroTraitsEnabled, ct));
             if (match.Mode == "bot")
             {
                 var bot = match.Participants.Single(x => x.ParticipantType == "bot");
@@ -111,17 +113,29 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
         ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
 
     // Freeze: Sao chép hero/class/SP, vị trí và team skill để trận không phụ thuộc lineup nguồn về sau.
-    private async Task<FrozenLineup> Freeze(SavedLineup lineup, int totalSp, CancellationToken ct)
+    private async Task<FrozenLineup> Freeze(SavedLineup lineup, int totalSp, bool includeTraits, CancellationToken ct)
     {
         var heroIds = lineup.Entries.Select(x => x.HeroId).ToArray();
-        var heroes = await db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        var query = db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id));
+        var heroes = await (includeTraits ? query.Include(x => x.Trait) : query).ToDictionaryAsync(x => x.Id, ct);
+        if (heroes.Values.Any(x => x.Trait is { ImplementationKey: SkillKeys.ThDTuongCoc } trait &&
+            !BachDangGiang.TryReadParameters(trait.Parameters.RootElement, out _, out _)))
+            throw new ApiException(422, "INVALID_HERO_SKILL_CONFIG", "Bạch Đằng Giang requires positive integer cooldown and duration.");
         var slots = await db.LineupSlots.AsNoTracking().ToDictionaryAsync(x => x.SlotNo, ct);
         var skillIds = lineup.Skills.Select(x => x.TeamSkillId).ToArray();
         var skills = await db.TeamSkills.AsNoTracking().Where(x => skillIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
         return new FrozenLineup(lineup.Id, lineup.Revision, totalSp,
-            lineup.Entries.OrderBy(x => x.SlotNo).Select(x => new FrozenPiece(x.SlotNo, x.HeroId, x.ClassCode, heroes[x.HeroId].SetupPoints,
-                slots[x.SlotNo].StartX, slots[x.SlotNo].StartY,
-                x.CosmeticId, heroes[x.HeroId].Name)).ToArray(),
+            lineup.Entries.OrderBy(x => x.SlotNo).Select(x =>
+            {
+                var hero = heroes[x.HeroId];
+                var trait = hero.Trait;
+                var movement = trait?.ImplementationKey == SkillKeys.QuangTrungSpecialMove ? "general.orthogonal_range_1_no_palace" :
+                    trait?.Kind == "special_move" ? trait.ImplementationKey : null;
+                return new FrozenPiece(x.SlotNo, x.HeroId, x.ClassCode, hero.SetupPoints, slots[x.SlotNo].StartX,
+                    slots[x.SlotNo].StartY, x.CosmeticId, hero.Name, movement, trait?.Kind, trait?.ImplementationKey,
+                    trait?.Name, trait?.ImplementationKey == SkillKeys.ThDTuongCoc ? BachDangGiang.PublicDescription : trait?.Description,
+                    trait?.Parameters.RootElement.Clone());
+            }).ToArray(),
             lineup.Skills.OrderBy(x => x.SlotNo).Select(x => new FrozenSkill(x.SlotNo, x.TeamSkillId, skills[x.TeamSkillId].ImplementationKey,
                 skills[x.TeamSkillId].MaxUses, skills[x.TeamSkillId].CooldownTurns ?? 0,
                 skills[x.TeamSkillId].Name, skills[x.TeamSkillId].Description, skills[x.TeamSkillId].Parameters.RootElement.Clone())).ToArray(),
@@ -133,7 +147,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
     {
         var now = clock.GetUtcNow();
         var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
-        var state = new GameState { RulesetCode = rules.Code, ContentVersion = match.ContentVersion };
+        var state = new GameState { RulesetCode = rules.Code, ContentVersion = match.ContentVersion, PublicRiverStakes = rules.HeroTraitsEnabled };
         foreach (var participant in match.Participants.OrderBy(x => x.Side))
         {
             var side = participant.Side == "red" ? Side.Red : Side.Black;
@@ -143,7 +157,15 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 var start = side == Side.Red ? new BoardPoint(frozen.StartX, frozen.StartY) : new BoardPoint(8 - frozen.StartX, 9 - frozen.StartY);
                 if (!Enum.TryParse<PieceClass>(frozen.ClassCode, true, out var pieceClass)) throw new ApiException(422, "UNSUPPORTED_CLASS", $"Unsupported class {frozen.ClassCode}.");
                 var piece = new PieceState { PieceId = Guid.NewGuid(), HeroId = frozen.HeroId, Side = side, Class = pieceClass,
-                    SetupPoints = frozen.SetupPoints, Position = start, StartPosition = start, HeroName = frozen.HeroName };
+                    SetupPoints = frozen.SetupPoints, Position = start, StartPosition = start, HeroName = frozen.HeroName,
+                    MovementImplementationKey = rules.HeroTraitsEnabled ? frozen.MovementImplementationKey : null,
+                    TraitKind = rules.HeroTraitsEnabled ? frozen.TraitKind : null,
+                    TraitImplementationKey = rules.HeroTraitsEnabled ? frozen.TraitImplementationKey : null,
+                    TraitName = rules.HeroTraitsEnabled ? frozen.TraitName : null,
+                    TraitDescription = rules.HeroTraitsEnabled ? frozen.TraitDescription : null,
+                    TraitParameters = rules.HeroTraitsEnabled ? frozen.TraitParameters : null };
+                if (piece.TraitImplementationKey == SkillKeys.QuangTrungSpecialMove)
+                    piece.TraitState[SkillKeys.QuangTrungCooldownKey] = 1;
                 state.Pieces.Add(piece);
             }
             state.SkillStates[side].AddRange(lineup.Skills.Select(x => new SkillState(x.SlotNo, x.SkillId, x.MaxUses, 0,

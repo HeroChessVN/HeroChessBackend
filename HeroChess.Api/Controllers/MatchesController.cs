@@ -15,6 +15,9 @@ public sealed class MatchesController(ICurrentUser current, MatchReadService rea
     // Legal: GET legal moves từ Rules server.
     [HttpGet("{id:guid}/legal-actions")] public async Task<ActionResult<IReadOnlyList<LegalMoveDto>>> Legal(Guid id, CancellationToken ct) => Ok(await read.LegalAsync(current.UserId, id, ct));
     [HttpGet("{id:guid}/hero-actions")] public async Task<ActionResult<IReadOnlyList<LegalMoveDto>>> HeroActions(Guid id, [FromQuery] Guid pieceId, CancellationToken ct) => Ok(await read.HeroActionsAsync(current.UserId, id, pieceId, ct));
+    [HttpGet("{id:guid}/forecast")] public async Task<object> Forecast(Guid id, [FromQuery] int version,
+        [FromServices] HeroChess.Rules.Skills.CommandSkillDispatcher dispatcher, CancellationToken ct) =>
+        await read.ForecastAsync(current.UserId, id, version, dispatcher, ct);
     // Command: POST action qua pipeline có dedup/version/transaction.
     [HttpPost("{id:guid}/commands")] public async Task<ActionResult<MatchCommandResultDto>> Command(Guid id, MatchCommandRequest request, CancellationToken ct) => Ok(await commands.ExecuteAsync(current.UserId, id, request, null, ct));
     // List: GET lịch sử trận của actor; lọc theo mode và kết quả nếu client truyền.

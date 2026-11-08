@@ -31,7 +31,17 @@ Mọi REST route bên dưới bắt đầu bằng `/api/v1`. Ví dụ `GET /me` 
 | `GET` | `/me/heroes` | Mảng UUID hero đang sở hữu. Trong `/catalog`, mỗi hero cũng có `isOwned`. |
 | `POST` | `/shop/heroes/{heroId}/purchase` | Gửi header `Idempotency-Key: <UUID>`; nhận `heroId`, `acquired`, `coinBalance`, `charged`. |
 
-Đăng ký **không tự đăng nhập**; gọi login ngay sau đó. `/catalog` chỉ trả hero đang bật, kèm `id`, `name`, `classCode`, `setupPoints`, `factionIds`, `isOwned`, `coinPrice`; trường tương thích `trait` luôn là `null`, `traits` là mảng rỗng. `teamSkills[].description` vẫn trả mô tả Command skill. Lấy `ruleset.id`, `slots` và ID hero/skill từ catalog; đừng hard-code UUID. Account mới có thể chưa đủ hero để xếp đội nếu cấu hình hero khởi đầu trên server chưa hoàn tất.
+Gọi login sau khi đăng ký. `/catalog` trả hero đang bật kèm `id`, `name`, `classCode`, `setupPoints`, `factionIds`, `isOwned`, `coinPrice` và `trait` nếu hero có trait. Mảng `traits` tổng hợp trait của những hero đang bật. Lấy `ruleset.id`, `slots` và ID hero/skill từ catalog. Account mới cần đủ hero để xếp đội theo cấu hình hero khởi đầu trên server.
+
+### Hero và faction trên Unity
+
+Đọc dữ liệu từ `GET /api/v1/catalog`.
+
+- Dùng `heroes[].id` để gửi lựa chọn đội hình và `heroes[].name` để hiển thị tên có dấu. Một nhân vật có thể có nhiều biến thể với ID và hệ quân riêng, nên đối chiếu thêm `classCode` khi hiển thị.
+- Ở màn xếp đội hình, đọc `heroes[].setupPoints` cho từng quân và `ruleset.setupBudget` cho giới hạn tổng SP. Sau khi lưu, dùng `totalSp`, `budget` và `validationErrors` từ phản hồi lineup. Trong trận và replay, dùng tên và SP từ snapshot của trận.
+- Ghép từng ID trong `heroes[].factionIds` với `factions[].id` để lấy `factions[].name`. Hiện có ba phe Trần, Hậu Lê và Tây Sơn. Mảng `factionIds` rỗng thì bỏ nhãn phe.
+- Nếu `heroes[].trait` là `null` thì ẩn phần trait của hero. Nếu có, hiển thị `trait.name` và `trait.description` khi có mô tả. Trong trận và replay, dùng metadata trait từ snapshot.
+- Có thể chọn tối đa một faction skill trong ba ô Command Skill. Để dùng một trong ba skill dưới đây, đội hình cần ít nhất 8 hero cùng phe trong 11 ô ngoài Tốt. BE kiểm tra lúc lưu và xác nhận đội hình.
 
 ## 3. Đội hình
 
@@ -75,7 +85,7 @@ Body tạo/sửa:
 |---|---|---|
 | `GET` | `/matches/{matchId}/state` | Snapshot chuẩn để vẽ bàn cờ. |
 | `GET` | `/matches/{matchId}/legal-actions` | Nước đi thường hợp lệ; dùng để tô ô đến. |
-| `GET` | `/matches/{matchId}/hero-actions?pieceId={pieceId}` | Route tương thích; luôn trả mảng rỗng cho participant. |
+| `GET` | `/matches/{matchId}/hero-actions?pieceId={pieceId}` | Ô đích hợp lệ của kỹ năng di chuyển Quang Trung. Chỉ trả ô cho quân của phe người gọi khi đến lượt. |
 | `POST` | `/matches/{matchId}/commands` | Gửi nước đi, skill, undo hoặc đầu hàng. |
 
 `/state` trả các field ngoài cùng: `matchId`, `mode`, `status`, `version`, `sideToMove`, `turnIndex`, `countedActions`, `deadlineAt`, `serverNow`, `stateSchemaVersion`, `state`, `settledAt`, `sides`. Trong `state` có `pieces`, `obstacles`, `skillStates`, `effectInstances`, `result`, `endReason`. Mỗi quân có `pieceId`, `heroId`, `heroName`, `side`, `class`, `position`, `status`, `effects`, `traitState` và metadata hero/trait. `skillStates.red` và `.black` chứa `slotNo`, `implementationKey`, `usesRemaining`, `cooldownRemaining`, `name`, `description` để hiển thị Command skill/CD cho cả hai phe. `sides` là hồ sơ người chơi của cả hai phe, cùng shape với `sides` của `/selection`. Cọc Hero skill cũ được backend lọc khỏi snapshot/replay.
@@ -95,11 +105,29 @@ Các `action` khác đặt vào cùng phong bì trên:
 ```json
 { "type": "team_skill", "slot": 1, "target": { "position": { "x": 3, "y": 3 } } }
 { "type": "team_skill", "slot": 2, "target": { "pieceId": "<quân đồng minh>" } }
+{ "type": "hero_active", "pieceId": "<Trần Hưng Đạo hệ Tượng>", "skillCode": "tran_hung_dao_tuong.coc", "target": { "position": { "x": 4, "y": 5 } } }
+{ "type": "hero_active", "pieceId": "<Quang Trung>", "skillCode": "quang_trung.special_move", "target": { "to": { "x": 4, "y": 2 } } }
 { "type": "undo", "targetSequence": 0 }
 { "type": "resign" }
 ```
 
-Với `team_skill`, chọn `slot` theo `state.skillStates.<phe>.slotNo`, rồi dựng `target` theo `implementationKey`: `thanh`/`rao` dùng `position`; `khien` dùng `pieceId` của quân mình. Những command skill khác có target riêng, xem `implementationKey`/`parameters` từ catalog và [mã FE mẫu](../frontend/src/api.js) trước khi dựng UI. Thành/Rào chỉ đặt trên nửa sân mình và ô trống; nếu đặt lên ô có quân, backend trả `422 CELL_OCCUPIED`. FE nên khóa các ô này trước khi bấm và vẫn hiện thông báo lỗi từ backend nếu bị từ chối. `hero_active` bị server từ chối với `422 HERO_SKILL_NOT_AVAILABLE`. `undo` chỉ dành cho trận bot.
+Với `team_skill`, chọn `slot` theo `state.skillStates.<phe>.slotNo`, rồi dựng `target` theo `implementationKey`. Thành và Rào dùng `position`, còn Khiên dùng `pieceId` của quân mình. `undo` dành cho trận bot và có thể hoàn tác `hero_active`.
+
+### Faction Skill
+
+| Phe | `implementationKey` | `target` | CD |
+|---|---|---|---:|
+| Trần | `bach_dang_tran_phap` | `{"positions":[{"x":2,"y":4},{"x":4,"y":4},{"x":6,"y":5}]}` | 8 |
+| Hậu Lê | `lam_son_quan_luoc` | `{}` | 16 |
+| Tây Sơn | `hich_xuat_quan` | `{}` | 12 |
+
+Cả ba lệnh tiêu một lượt. `state.riverSnares` chỉ có bẫy của phe người gọi, mỗi bẫy có `owner`, `position` và `expiresAt` theo `turnIndex`. Bẫy sống 6 lượt và mất sau lần khóa đầu tiên. Hiệu ứng trên quân xuất hiện trong `pieces[].effects` với mã `bach_dang_rooted` hoặc `hich_xuat_quan` và `remainingTurns`.
+
+Sau khi nhận kết quả dùng Lam Sơn Quân Lược, người kích hoạt gọi `GET /api/v1/matches/{matchId}/forecast?version=<sequenceNo>`. Phản hồi có `version`, `prediction.variation` (tối đa ba hành động) và `prediction.threats` (tối đa hai phương án ở lượt địch đầu tiên). Mỗi mục có `side`, `action`, cùng `from`, `pieceClass`, `pieceName` hoặc `skillName` khi có. Máy chủ giữ kết quả riêng theo người chơi, trận và phiên bản bàn cờ trong tối đa hai phút. Chỉ hiển thị khi phiên bản phản hồi khớp bàn cờ. `409 STALE_STATE` nghĩa là bàn cờ đã đổi trước khi máy chủ tính kết quả. `429 FORECAST_BUSY` nghĩa là hàng chờ dự đoán đã đầy.
+
+Hero Trait và ba faction skill mới mặc định tắt cho trận mới. Sau khi kiểm tra bản deploy, bật `MatchRuntime__HeroTraitsEnabled=true` hoặc `MatchRuntime__NewFactionSkillsEnabled=true` trong env của API. Faction skill còn cần các dòng catalog từ SQL `16_faction_skills.sql`. Khi cần quay về image cũ, tắt hai cờ trên bản hiện tại rồi chờ các trận đã chốt luật mới kết thúc trước khi thay image.
+
+Trong trận có `state.publicRiverStakes`, đọc trait trên `state.pieces`, hồi chiêu từ `traitState` và Cọc Bạch Đằng Giang từ `state.obstacles` với `kind: "thd_tuong_coc"`. Phe đặt là `state.obstacleMetadata[obstacleId].placer`. Khi `thdTuongCocStakes[pieceId]` còn tồn tại, nút đặt Cọc của quân đó cần khóa kể cả hồi chiêu bằng 0. Cả hai bên thấy Cọc. Nước dính Cọc có thể hợp lệ và tạo sự kiện `river_stake.hit` với `pieceId`, `position`, `side` của Cọc và `victimSide` của quân bị loại. Kết thúc do Cọc dùng `endReason: "river_stake"`.
 
 Command hợp lệ trả `MatchCommandResultDto`: `matchId`, `commandId`, `sequenceNo`, `duplicate`, `resolvedEvents`, `snapshot`. Render bàn cờ từ `snapshot` mới; bot có thể đi ngay sau đó nên phải nhận cập nhật tiếp. Retry **cùng một command** bằng đúng `commandId` và action cũ để tránh ghi hai lần. Khi `409 STALE_STATE`, lấy `/state` mới rồi cho người chơi chọn lại nước với `commandId` mới. Deadline dùng `deadlineAt` so với `serverNow`; server tự xử lý hết giờ, FE chỉ hiển thị đếm ngược.
 
@@ -110,7 +138,7 @@ REST polling đủ để làm bản demo; nếu cần cập nhật ngay giữa h
 1. `POST /ws-ticket` với bearer token. Response `{ "ticket": "...", "expiresAt": "..." }`.
 2. Nối `wss://herochessbackend.onrender.com/ws/v1?ticket=<ticket>` trong vòng 30 giây. Vé dùng **một lần**; ngắt kết nối thì xin vé mới.
 3. Gửi `{"type":"match.subscribe","requestId":"<UUID>","payload":{"matchId":"<UUID>"}}`. Server trả `match.state` với snapshot.
-4. Khi nhận `match.changed`, gọi lại `GET /matches/{matchId}/state` và legal actions nếu cần. Có `match.ended`/`match.settled` thì cập nhật kết quả/số dư.
+4. Khi nhận `match.changed`, gọi lại `GET /matches/{matchId}/state` và legal actions nếu cần. Có `match.ended`/`match.settled` thì cập nhật kết quả/số dư. Nếu `payload.skillUsed` có dữ liệu, hiện banner từ `side`, `skillName` và các trường `heroName`, `pieceClass` nếu có. Dùng `payload.matchId` và `payload.version` làm khóa chống trùng với `sequenceNo` trong phản hồi command. Replay lưu cùng sự kiện để dựng nhật ký, kể cả khi bỏ lỡ WebSocket.
 
 Có thể gửi `match.command` qua socket với payload `{ "matchId": "<UUID>", "commandId": "<UUID>", "expectedVersion": 0, "action": { ... } }`; server trả `match.command_accepted` hoặc `match.command_rejected`. Dùng REST `POST /commands` thường đơn giản hơn. Sau reconnect hoặc mất event, luôn GET `/state` để đồng bộ lại. WebSocket browser có kiểm tra Origin cùng host; FE chạy khác domain cần reverse proxy/same-origin hoặc cấu hình backend phù hợp. Client Unity native không cần tự gửi Origin header.
 

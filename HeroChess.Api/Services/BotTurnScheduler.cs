@@ -47,12 +47,14 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
                     state = StateSchemaUpgrade.UpgradeToCurrent(state);
                     var config = BotConfiguration.Read(participant.BotConfig);
                     var started = Stopwatch.GetTimestamp();
-                    if (config != BotConfiguration.Legacy)
+                    var legacyNeedsTraitSearch = state.PublicRiverStakes && state.Pieces.Any(p => p.TraitImplementationKey is not null);
+                    if (config != BotConfiguration.Legacy || legacyNeedsTraitSearch)
                     {
                         var allParticipants = await db.MatchParticipants.AsNoTracking().Where(x => x.MatchId == work.MatchId).ToListAsync(stoppingToken);
                         var lineups = allParticipants.ToDictionary(p => p.Side == "red" ? Side.Red : Side.Black, p => GameJson.Read<FrozenLineup>(p.LineupSnapshot));
                         var decision = new BotEngine(scope.ServiceProvider.GetRequiredService<CommandSkillDispatcher>()).Choose(work.MatchId,
-                            state, config, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot), lineups, stoppingToken);
+                            state, config == BotConfiguration.Legacy ? BotConfiguration.ForRequest("bot", "medium") : config,
+                            GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot), lineups, stoppingToken);
                         BotTelemetry.Search.Record(Stopwatch.GetElapsedTime(started).TotalSeconds);
                         outcome = decision.Action is null ? "no_action" : await Commit(scope.ServiceProvider, work, decision.Action.Value, stoppingToken);
                         logger.LogDebug("Bot decision match={MatchId} version={Version} difficulty={Difficulty} nodes={Nodes} depth={Depth} budgetExhausted={BudgetExhausted}",

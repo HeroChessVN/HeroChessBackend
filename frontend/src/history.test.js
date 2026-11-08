@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { actionLabel, squareName } from './history.js';
+import { actionLabel, skillNotice, squareName } from './history.js';
+
+test('public skill names are shared by the banner and history and a stake hit has its own label', () => {
+  const skill = { type: 'hero_skill.activated', side: 'red', skillName: 'Bạch Đằng Giang', heroName: 'Trần Hưng Đạo', pieceClass: 'elephant' };
+  assert.equal(skillNotice(skill), 'Đỏ · Trần Hưng Đạo (Tượng) dùng Bạch Đằng Giang');
+  assert.equal(actionLabel({ kind: 'hero_active', resolvedEvents: [skill] }), skillNotice(skill));
+  assert.equal(actionLabel({ kind: 'move', resolvedEvents: [{ type: 'river_stake.hit', side: 'red', victimSide: 'black', victimClass: 'horse', position: { x: 4, y: 4 } }] }), 'Cọc của Đỏ bắt Mã Đen tại e5');
+});
 
 test('replay starts at sequence zero and move labels use previous board', () => {
   const initial = { sequenceNo: 0, kind: 'start', stateAfter: { pieces: [

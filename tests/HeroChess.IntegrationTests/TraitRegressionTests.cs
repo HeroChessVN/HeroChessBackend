@@ -1,8 +1,10 @@
 // Vai trò file: Kiểm tra trait không phải movement không vô tình thay luật đi quân; sửa dữ liệu test và khôi phục trong finally.
 using System.Net.Http.Json;
+using System.Net;
 using System.Text.Json;
 using HeroChess.Api.Data;
 using HeroChess.Contracts;
+using HeroChess.Rules.Skills;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -11,10 +13,130 @@ namespace HeroChess.IntegrationTests;
 public sealed partial class MatchFlowTests
 {
     [Theory]
+    [InlineData(FactionSkillHandler.Trap)]
+    [InlineData(FactionSkillHandler.Forecast)]
+    public async Task Faction_skill_requires_eight_members_and_keeps_private_data_on_the_casting_side(string key)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var faction = new Faction { Id = Guid.NewGuid(), Code = $"test-{Guid.NewGuid():N}", Name = "Test faction" };
+        var skill = new TeamSkill { Id = Guid.NewGuid(), Code = $"zz-{Guid.NewGuid():N}", Name = "Test faction skill",
+            FactionId = faction.Id, ImplementationKey = key, IsEnabled = true, CooldownTurns = 8 };
+        db.Factions.Add(faction);
+        db.TeamSkills.Add(skill);
+        await db.SaveChangesAsync();
+        try
+        {
+            var (id, red, black) = await Ranked(false);
+            var slots = red.Lineup.Skills.Select(s => new LineupSkillInput(s.SlotNo, s.SlotNo == 1 ? skill.Id : s.SkillId)).ToArray();
+            var request = new SaveLineupRequest(red.Lineup.Name, red.Lineup.RulesetId, red.Lineup.Entries, slots, red.Lineup.Revision);
+            var lineupUrl = $"/api/v1/lineups/{red.Lineup.Id}";
+            using var rejected = await red.Client.PutAsJsonAsync(lineupUrl, request, Json);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+            Assert.Contains("FACTION_REQUIREMENT_NOT_MET", await rejected.Content.ReadAsStringAsync());
+
+            var heroIds = red.Lineup.Entries.Where(e => e.SlotNo < 12).Select(e => e.HeroId).Distinct().Take(8);
+            db.HeroFactions.AddRange(heroIds.Select(heroId => new HeroFaction { HeroId = heroId, FactionId = faction.Id }));
+            await db.SaveChangesAsync();
+            var lineup = await Post<LineupDto>(red.Client, lineupUrl, request, HttpMethod.Put);
+            await Select((red.Client, lineup), id);
+            (await red.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
+            (await black.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
+
+            var action = JsonSerializer.SerializeToElement(new { type = "team_skill", slot = 1,
+                target = new { positions = new[] { new { x = 2, y = 4 }, new { x = 4, y = 4 }, new { x = 6, y = 5 } } } });
+            var url = $"/api/v1/matches/{id}";
+            var played = await Post<MatchCommandResultDto>(red.Client, $"{url}/commands", new MatchCommandRequest(Guid.NewGuid(), 0, action));
+            Assert.Equal("black", played.Snapshot.SideToMove);
+            if (key == FactionSkillHandler.Trap)
+            {
+                Assert.Equal(3, played.Snapshot.State.GetProperty("riverSnares").GetArrayLength());
+                var enemy = (await black.Client.GetFromJsonAsync<MatchStateDto>($"{url}/state", Json))!;
+                Assert.Equal(0, enemy.State.GetProperty("riverSnares").GetArrayLength());
+                var replay = (await black.Client.GetFromJsonAsync<ReplayPageDto>($"{url}/replay?afterSequence=0", Json))!;
+                Assert.Equal(0, Assert.Single(replay.Entries).StateAfter.GetProperty("riverSnares").GetArrayLength());
+            }
+            else
+            {
+                var forecast = $"{url}/forecast?version={played.SequenceNo}";
+                var result = await red.Client.GetFromJsonAsync<JsonElement>(forecast, Json);
+                Assert.Equal(played.SequenceNo, result.GetProperty("version").GetInt32());
+                var repeated = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => red.Client.GetFromJsonAsync<JsonElement>(forecast, Json)));
+                Assert.All(repeated, reply => Assert.True(JsonElement.DeepEquals(result, reply)));
+                using var hidden = await black.Client.GetAsync(forecast);
+                Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode);
+            }
+            await Post<MatchCommandResultDto>(black.Client, $"{url}/commands",
+                new MatchCommandRequest(Guid.NewGuid(), played.SequenceNo, JsonSerializer.SerializeToElement(new { type = "resign" })));
+        }
+        finally
+        {
+            skill.IsEnabled = false;
+            await db.SaveChangesAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Ranked_public_stake_is_frozen_and_announced_to_both_sides_once()
+    {
+        var (id, red, black) = await Ranked(false);
+        Guid heroId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            heroId = await db.Heroes.Where(h => h.Code == "tran-hung-dao-elephant").Select(h => h.Id).SingleAsync();
+            var redId = (await db.MatchParticipants.SingleAsync(p => p.MatchId == id && p.Side == "red")).PlayerId!.Value;
+            if (!await db.PlayerHeroes.AnyAsync(p => p.PlayerId == redId && p.HeroId == heroId))
+            {
+                db.PlayerHeroes.Add(new PlayerHero { PlayerId = redId, HeroId = heroId, AcquiredVia = "test", AcquiredAt = DateTimeOffset.UtcNow });
+                await db.SaveChangesAsync();
+            }
+        }
+        var entries = red.Lineup.Entries.Select(e => e.SlotNo == 3 ? e with { HeroId = heroId, CosmeticId = null } : e).ToArray();
+        var updated = await Post<LineupDto>(red.Client, $"/api/v1/lineups/{red.Lineup.Id}", new SaveLineupRequest(red.Lineup.Name,
+            red.Lineup.RulesetId, entries, red.Lineup.Skills, red.Lineup.Revision), HttpMethod.Put);
+        await Select((red.Client, updated), id);
+        (await red.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
+        (await black.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
+        var initial = (await red.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{id}/state", Json))!;
+        var piece = initial.State.GetProperty("pieces").EnumerateArray().Single(p => p.GetProperty("heroId").GetGuid() == heroId);
+        var pieceId = piece.GetProperty("pieceId").GetGuid();
+        Assert.Equal("tran_hung_dao_tuong.coc", piece.GetProperty("traitImplementationKey").GetString());
+
+        using var redSocket = await Connect(red.Client);
+        using var blackSocket = await Connect(black.Client);
+        await Subscribe(redSocket, id); await Subscribe(blackSocket, id);
+        Assert.Equal("match.state", (await Receive(redSocket)).GetProperty("type").GetString());
+        Assert.Equal("match.state", (await Receive(blackSocket)).GetProperty("type").GetString());
+        var request = new MatchCommandRequest(Guid.NewGuid(), initial.Version, JsonSerializer.SerializeToElement(new
+            { type = "hero_active", pieceId, skillCode = "tran_hung_dao_tuong.coc", target = new { position = new { x = 4, y = 5 } } }));
+        var path = $"/api/v1/matches/{id}/commands";
+        var accepted = await Post<MatchCommandResultDto>(red.Client, path, request);
+        Assert.Equal(1, accepted.Snapshot.CountedActions);
+        Assert.Equal("black", accepted.Snapshot.SideToMove);
+        foreach (var socket in new[] { redSocket, blackSocket })
+        {
+            var update = await Receive(socket);
+            Assert.Equal("match.changed", update.GetProperty("type").GetString());
+            var payload = update.GetProperty("payload");
+            Assert.Equal(accepted.SequenceNo, payload.GetProperty("version").GetInt32());
+            Assert.Equal("Bạch Đằng Giang", payload.GetProperty("skillUsed").GetProperty("skillName").GetString());
+        }
+        Assert.True((await Post<MatchCommandResultDto>(red.Client, path, request)).Duplicate);
+        var replay = (await black.Client.GetFromJsonAsync<ReplayPageDto>($"/api/v1/matches/{id}/replay?afterSequence=0", Json))!;
+        var entry = Assert.Single(replay.Entries);
+        Assert.Equal("hero_active", entry.Kind);
+        var stake = Assert.Single(entry.StateAfter.GetProperty("obstacles").EnumerateArray());
+        Assert.Equal(2, stake.GetProperty("remainingLifetime").GetInt32());
+        Assert.Equal("red", entry.StateAfter.GetProperty("obstacleMetadata").GetProperty(stake.GetProperty("obstacleId").GetString()!).GetProperty("placer").GetString());
+        await Post<MatchCommandResultDto>(black.Client, path, new MatchCommandRequest(Guid.NewGuid(), accepted.SequenceNo,
+            JsonSerializer.SerializeToElement(new { type = "resign" })));
+    }
+
+    [Theory]
     [InlineData("passive")]
     [InlineData("active")]
-    // Non_movement_trait_keeps_base_moves_without_exposing_trait: Trait trong DB không đi vào trận mới.
-    public async Task Non_movement_trait_keeps_base_moves_without_exposing_trait(string kind)
+    public async Task Non_movement_trait_is_frozen_and_keeps_base_moves(string kind)
     {
         var human = await CreatePlayerWithLineup();
         Guid heroId, traitId = Guid.NewGuid(); Guid? previousTrait;
@@ -33,8 +155,9 @@ public sealed partial class MatchFlowTests
             (await human.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
             var state = (await human.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{id}/state", Json))!;
             var piece = state.State.GetProperty("pieces").EnumerateArray().Single(x => x.GetProperty("heroId").GetGuid() == heroId && x.GetProperty("side").GetString() == "red");
-            Assert.False(piece.TryGetProperty("traitKind", out _));
-            Assert.False(piece.TryGetProperty("movementImplementationKey", out _));
+            Assert.Equal(kind, piece.GetProperty("traitKind").GetString());
+            Assert.Equal("review.unimplemented", piece.GetProperty("traitImplementationKey").GetString());
+            Assert.Equal(JsonValueKind.Null, piece.GetProperty("movementImplementationKey").ValueKind);
             var moves = (await human.Client.GetFromJsonAsync<LegalMoveDto[]>($"/api/v1/matches/{id}/legal-actions", Json))!;
             Assert.Contains(moves, x => x.PieceId == piece.GetProperty("pieceId").GetGuid());
             await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{id}/commands", new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(new { type = "resign" })));

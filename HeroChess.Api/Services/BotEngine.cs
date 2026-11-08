@@ -15,18 +15,59 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
     private readonly TimeProvider _clock = time ?? TimeProvider.System;
     private readonly XiangqiRulesEngine _rules = new();
 
-    public static bool Supports(GameState state) => state.ThdTuongCocStakes.Count == 0 &&
+    public object Forecast(GameState state, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups, CancellationToken ct)
+    {
+        var started = _clock.GetTimestamp();
+        var variation = new List<object>(3);
+        object[] threats = [];
+        for (var ply = 0; ply < 3 && state.Result is null && !OutOfTime(); ply++)
+        {
+            var actor = state.SideToMove;
+            var ranked = new List<(JsonElement Action, GameState Next, int Score, bool Threat)>();
+            foreach (var action in Candidates(state, OrderedMoves(state), 6))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (OutOfTime() || ranked.Count == 6) break;
+                if (Simulate(state, action, rules, lineups) is not { } next) continue;
+                var threat = next.Result == (actor == Side.Red ? "red_win" : "black_win") ||
+                    _rules.IsInCheck(next, next.SideToMove) ||
+                    next.Pieces.Count(p => p.Side != actor && p.Status == PieceStatus.Alive) <
+                    state.Pieces.Count(p => p.Side != actor && p.Status == PieceStatus.Alive);
+                ranked.Add((action, next, Evaluate(next, actor), threat));
+            }
+            var ordered = ranked.OrderByDescending(option => option.Score).ToArray();
+            if (ordered.Length == 0) break;
+            if (ply == 0) threats = ordered.Where(option => option.Threat).Take(2).Select(option => Describe(option.Action, state)).ToArray();
+            variation.Add(Describe(ordered[0].Action, state));
+            state = ordered[0].Next;
+        }
+        return new { variation, threats };
+
+        bool OutOfTime() => _clock.GetElapsedTime(started).TotalMilliseconds >= 50;
+
+        static object Describe(JsonElement action, GameState board)
+        {
+            var piece = action.TryGetProperty("pieceId", out var id) ? board.Pieces.FirstOrDefault(p => p.PieceId == id.GetGuid()) : null;
+            var skill = action.TryGetProperty("slot", out var slot)
+                ? board.SkillStates[board.SideToMove].FirstOrDefault(s => s.SlotNo == slot.GetInt32()) : null;
+            return new { side = board.SideToMove, action, from = piece?.Position, pieceClass = piece?.Class,
+                pieceName = piece?.HeroName, skillName = skill?.Name ?? (action.GetProperty("type").GetString() == "hero_active" ? piece?.TraitName : null) };
+        }
+    }
+
+    public static bool Supports(GameState state) => state.PublicRiverStakes || (state.ThdTuongCocStakes.Count == 0 &&
         !state.Obstacles.Any(o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc) &&
-        !state.Pieces.Any(p => p.MovementImplementationKey is not null || p.TraitImplementationKey is not null);
+        !state.Pieces.Any(p => p.MovementImplementationKey is not null || p.TraitImplementationKey is not null));
 
     public BotDecision Choose(Guid matchId, GameState original, BotConfiguration config, RulesetSnapshot rules,
         IReadOnlyDictionary<Side, FrozenLineup> lineups, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        // New matches have no Hero traits. Reject old hidden/trait states instead of letting search cheat.
+        // Hidden legacy states cannot be searched using information the player cannot see.
         if (!Supports(original))
-            throw new InvalidDataException("Tactical bot requires a trait-free match state.");
+            throw new InvalidDataException("Tactical bot cannot search legacy hidden or trait states.");
         var state = MatchTurnRules.Prepare(original.Clone());
+        state.RiverSnares.RemoveAll(trap => trap.Owner != state.SideToMove);
         var limits = config.Limits;
         var scoreExchanges = config.StrategyVersion == BotConfiguration.ExchangeStrategy;
         var guardRecaptures = scoreExchanges || config.StrategyVersion == BotConfiguration.RecaptureStrategy;
@@ -39,13 +80,14 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         var actor = state.SideToMove;
         if (limits.Depth == 0)
         {
-            var actions = moves.Select(Move).ToList();
-            foreach (var action in SkillCandidates(state).Take(16))
+            var actions = moves.Where(move => !move.InterceptedByStake).Select(Move).ToList();
+            foreach (var action in ActionSkillCandidates(state).Take(16))
             {
                 ct.ThrowIfCancellationRequested();
                 if (Exhausted()) break;
                 nodes++;
-                if (Simulate(state, action, rules, lineups) is not null) actions.Add(action);
+                if (Simulate(state, action, rules, lineups) is { } next &&
+                    next.Result != (actor == Side.Red ? "black_win" : "red_win")) actions.Add(action);
             }
             if (actions.Count == 0) actions.Add(fallback.Value);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{matchId:N}/{state.Version}/{config.StrategyVersion}"));
@@ -53,7 +95,7 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         }
 
         // Reserve quiet options for distinct pieces, starting with pieces the opponent can take.
-        var quietMoves = moves.Where(m => m.CapturedPieceId is null);
+        var quietMoves = moves.Where(m => m.CapturedPieceId is null && !m.InterceptedByStake);
         if (scoreExchanges && moves.Count > 0 && !Exhausted())
         {
             var opponent = actor == Side.Red ? Side.Black : Side.Red;
@@ -156,10 +198,17 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         replies = [];
         var state = MatchTurnRules.Prepare(input.Clone());
         GameState next;
-        if (action.GetProperty("type").GetString() == "move")
+        var type = action.GetProperty("type").GetString();
+        if (type == "move")
         {
             var to = action.GetProperty("to");
             var result = _rules.ApplyMove(state, new(action.GetProperty("pieceId").GetGuid(), new(to.GetProperty("x").GetInt32(), to.GetProperty("y").GetInt32())));
+            if (!result.Accepted) return null;
+            next = result.State;
+        }
+        else if (type == "hero_active")
+        {
+            var result = MatchTurnRules.ApplyHeroSkill(state, action, _rules);
             if (!result.Accepted) return null;
             next = result.State;
         }
@@ -188,16 +237,33 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
 
     private IReadOnlyList<LegalMove> OrderedMoves(GameState state) => OrderMoves(state, _rules.GenerateLegalActions(state));
 
-    private static IReadOnlyList<LegalMove> OrderMoves(GameState state, IReadOnlyList<LegalMove> moves) => moves
-        .OrderByDescending(m => m.CapturedPieceId is null ? -1 : state.Pieces.Single(p => p.PieceId == m.CapturedPieceId).SetupPoints)
-        .ThenBy(m => m.From.X).ThenBy(m => m.From.Y).ThenBy(m => m.To.X).ThenBy(m => m.To.Y).ToArray();
+    private static IReadOnlyList<LegalMove> OrderMoves(GameState state, IReadOnlyList<LegalMove> moves)
+    {
+        return moves.OrderBy(m => m.InterceptedByStake)
+            .ThenByDescending(m => m.CapturedPieceId is null ? -1 : state.Pieces.Single(p => p.PieceId == m.CapturedPieceId).SetupPoints)
+            .ThenBy(m => m.From.X).ThenBy(m => m.From.Y).ThenBy(m => m.To.X).ThenBy(m => m.To.Y).ToArray();
+    }
 
-    private static IEnumerable<JsonElement> Candidates(GameState state, IReadOnlyList<LegalMove> moves, int width)
+    private IEnumerable<JsonElement> Candidates(GameState state, IReadOnlyList<LegalMove> moves, int width)
     {
         // shortcut: bounded beam, not exhaustive minimax; increase width only after measured server capacity.
         foreach (var move in moves.Take(4)) yield return Move(move);
-        foreach (var action in SkillCandidates(state).Take(8)) yield return action;
+        foreach (var action in ActionSkillCandidates(state).Take(8)) yield return action;
         foreach (var move in moves.Skip(4).Take(Math.Max(0, width - 4))) yield return Move(move);
+    }
+
+    private IEnumerable<JsonElement> ActionSkillCandidates(GameState state)
+    {
+        using var heroes = MatchTurnRules.HeroCandidates(state, _rules).GetEnumerator();
+        using var team = SkillCandidates(state).GetEnumerator();
+        while (true)
+        {
+            var hasHero = heroes.MoveNext();
+            if (hasHero) yield return heroes.Current;
+            var hasTeam = team.MoveNext();
+            if (hasTeam) yield return team.Current;
+            if (!hasHero && !hasTeam) yield break;
+        }
     }
 
     public static IEnumerable<JsonElement> SkillCandidates(GameState state)
@@ -225,10 +291,13 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
                 SkillKeys.Khien => state.Pieces.Where(p => p.Side == state.SideToMove && p.Status == PieceStatus.Alive)
                     .OrderByDescending(p => p.SetupPoints).ThenBy(p => p.Position?.X).ThenBy(p => p.Position?.Y).Select(p => (object)new { pieceId = p.PieceId }),
                 SkillKeys.Thanh or SkillKeys.Rao => Enumerable.Range(0, 9).SelectMany(x => Enumerable.Range(0, 10).Select(y => new BoardPoint(x, y)))
-                    .Where(pos => !state.Pieces.Any(p => p.Status == PieceStatus.Alive && p.Position == pos) && !state.Obstacles.Any(o => o.Position == pos))
+                    .Where(pos => !state.Pieces.Any(p => p.Status == PieceStatus.Alive && p.Position == pos) &&
+                        !state.Obstacles.Any(o => o.Position == pos && (o.Kind != SkillKeys.ObstacleKindThDTuongCoc || !state.PublicRiverStakes)))
                     .OrderBy(pos => Math.Abs(pos.Y - (state.SideToMove == Side.Red ? 2 : 7))).ThenBy(pos => Math.Abs(pos.X - 4))
                     .Select(pos => (object)new { position = new { x = pos.X, y = pos.Y } }),
                 SkillKeys.VanCocTranGiang or SkillKeys.BinhLamThuyHien => new object[] { new { paths = new[] { 4, 5, 6 } } },
+                FactionSkillHandler.Trap => FactionSkillHandler.Targets(state),
+                FactionSkillHandler.Rally => new object[] { new { } },
                 SkillKeys.PhanKyDoatThe or SkillKeys.PhaTranDoatPhong => state.EffectInstances.OrderBy(e => e.CreationOrder).Select(e => (object)new { effectId = e.EffectId }),
                 _ => []
             };

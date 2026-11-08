@@ -53,10 +53,8 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 await transaction.CommitAsync(ct);
                 var viewer = participant.Side == "red" ? Side.Red : Side.Black;
                 return new(matchId, request.CommandId, previous.SequenceNo, true,
-                    MatchStateProjection.Events(previous.ResolvedEvents.RootElement, viewer), MatchReadService.ToDto(currentMatch, previousState, clock.GetUtcNow(), viewer));
+                    MatchStateProjection.Events(previous.ResolvedEvents.RootElement, viewer, historical.PublicRiverStakes), MatchReadService.ToDto(currentMatch, previousState, clock.GetUtcNow(), viewer));
             }
-            if (type == "hero_active")
-                throw new ApiException(422, "HERO_SKILL_NOT_AVAILABLE", "Hero skills are disabled.");
             var match = await db.Matches.FromSqlInterpolated($"SELECT * FROM hero_chess.game_match WHERE id={matchId} FOR UPDATE").Include(x => x.Participants).SingleAsync(ct);
             var row = await db.MatchStates.FromSqlInterpolated($"SELECT * FROM hero_chess.match_state WHERE match_id={matchId} FOR UPDATE").SingleOrDefaultAsync(ct)
                 ?? throw new ApiException(409, "MATCH_NOT_STARTED", "The match has not started.");
@@ -118,9 +116,17 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     if (state.SideToMove != actorSide) throw new ApiException(422, "WRONG_TURN", "It is not this participant's turn.");
                     if (!request.Action.TryGetProperty("pieceId", out var piece) || !request.Action.TryGetProperty("to", out var to) ||
                         !to.TryGetProperty("x", out var x) || !to.TryGetProperty("y", out var y)) throw new ApiException(400, "INVALID_ACTION", "Move requires pieceId and to.x/to.y.");
-                    var applied = new XiangqiRulesEngine().ApplyMove(state, new MoveAction(piece.GetGuid(), new BoardPoint(x.GetInt32(), y.GetInt32())));
+                    var move = new MoveAction(piece.GetGuid(), new BoardPoint(x.GetInt32(), y.GetInt32()));
+                    var applied = new XiangqiRulesEngine().ApplyMove(state, move);
                     if (!applied.Accepted) throw new ApiException(422, applied.Error!.Code, applied.Error.Message);
-                    next = applied.State; events = new object[] { new { type = "piece.moved", pieceId = piece.GetGuid(), to = new { x = x.GetInt32(), y = y.GetInt32() } } };
+                    next = applied.State; events = new[] { MatchTurnRules.MoveEvent(state, move, applied) };
+                    break;
+                case "hero_active":
+                    if (!state.PublicRiverStakes) throw new ApiException(422, "HERO_SKILL_NOT_AVAILABLE", "Hero skills are unavailable in this match.");
+                    if (state.SideToMove != actorSide) throw new ApiException(422, "WRONG_TURN", "It is not this participant's turn.");
+                    var heroResult = MatchTurnRules.ApplyHeroSkill(state, request.Action, new XiangqiRulesEngine());
+                    if (!heroResult.Accepted) throw new ApiException(422, heroResult.Error!.Code, heroResult.Error.Message);
+                    next = heroResult.State; events = heroResult.Events.ToArray();
                     break;
                 case "resign":
                     next = state.Clone(); next.Version++; next.Result = actorSide == Side.Red ? "black_win" : "red_win"; next.EndReason = "resign";
@@ -159,14 +165,15 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                     next = skillResult.State;
                     events = new object[]
                     {
-                        new { type = "team_skill.activated", code = frozen.ImplementationKey, slot = slotNo, side = participant.Side }
+                        new { type = "team_skill.activated", code = frozen.ImplementationKey, slot = slotNo, side = participant.Side,
+                            skillName = actorSkill.Name ?? lineupSkill.Name ?? frozen.ImplementationKey }
                     }.Concat(skillResult.Events).ToArray();
                     break;
                 case "start" or "timeout" or "cancel": throw new ApiException(400, "SERVER_ACTION_ONLY", "This action can only be created by the server.");
                 default: throw new ApiException(400, "INVALID_ACTION", "Unknown match action.");
             }
             object[] nextTurnEvents = [];
-            if (type is "move" or "team_skill")
+            if (type is "move" or "team_skill" or "hero_active")
                 (next, nextTurnEvents, _) = MatchTurnRules.AfterAction(next, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot), dispatcher);
             // Phase 3.1: Merge lifecycle events with action events for broadcast.
             // Lifecycle events are prepended so they appear first in the event stream.
@@ -194,9 +201,13 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             // The committed command must finish independently of the caller disconnecting.
             ct = CancellationToken.None;
             if (match.Status == "active" && match.Mode == "bot" && row.SideToMove == "black") bots.Schedule(matchId, next.Version);
+            var publicEvents = MatchStateProjection.Events(resolved.RootElement, actorSide, next.PublicRiverStakes);
             var dto = new MatchCommandResultDto(matchId, request.CommandId, log.SequenceNo, false,
-                MatchStateProjection.Events(resolved.RootElement, actorSide), MatchReadService.ToDto(match, row, clock.GetUtcNow(), actorSide));
-            await hub.BroadcastAsync(matchId, new { type = "match.changed", payload = new { matchId, version = next.Version } }, ct);
+                publicEvents, MatchReadService.ToDto(match, row, clock.GetUtcNow(), actorSide));
+            var skillUsed = publicEvents.EnumerateArray().FirstOrDefault(e => e.TryGetProperty("type", out var name) &&
+                name.GetString() is "hero_skill.activated" or "team_skill.activated");
+            await hub.BroadcastAsync(matchId, new { type = "match.changed", payload = new { matchId, version = next.Version,
+                skillUsed = skillUsed.ValueKind == JsonValueKind.Undefined ? (JsonElement?)null : skillUsed } }, ct);
             if (match.Status == "completed")
             {
                 await hub.BroadcastAsync(matchId, new { type = "match.ended", payload = new { matchId, match.Result, match.EndReason } }, ct);
@@ -219,7 +230,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 .Select(x => new { x.Kind, x.ActorSide, UndoEvents = x.Kind == "undo" ? x.ResolvedEvents : null })
                 .SingleOrDefaultAsync(ct)
                 ?? throw new ApiException(422, "INVALID_UNDO_TARGET", "The match history is missing a snapshot.");
-            if (action.ActorSide == humanSide && action.Kind is "move" or "team_skill")
+            if (action.ActorSide == humanSide && action.Kind is "move" or "team_skill" or "hero_active")
                 return version - 1;
             if (action.Kind != "undo")
             {
@@ -406,6 +417,15 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
     public static JsonElement? FindLegalSkillAction(GameState state, XiangqiRulesEngine engine, CommandSkillDispatcher dispatcher)
     {
         var side = state.SideToMove;
+        var loss = side == Side.Red ? "black_win" : "red_win";
+        JsonElement? losingHeroAction = null;
+        foreach (var action in MatchTurnRules.HeroCandidates(state, engine))
+        {
+            var applied = MatchTurnRules.ApplyHeroSkill(state, action, engine);
+            if (!applied.Accepted) continue;
+            if (applied.State.Result != loss) return action;
+            losingHeroAction ??= action;
+        }
         foreach (var skill in state.SkillStates[side].Where(s => s.CooldownRemaining == 0 && s.UsesRemaining != 0))
         {
             IEnumerable<object> targets = skill.ImplementationKey switch
@@ -415,6 +435,8 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 SkillKeys.Khien => state.Pieces.Where(p => p.Side == side && p.Status == PieceStatus.Alive)
                     .Select(p => (object)new { pieceId = p.PieceId }),
                 SkillKeys.VanCocTranGiang or SkillKeys.BinhLamThuyHien => new object[] { new { paths = new[] { 4, 5, 6 } } },
+                FactionSkillHandler.Trap => FactionSkillHandler.Targets(state),
+                FactionSkillHandler.Forecast or FactionSkillHandler.Rally => new object[] { new { } },
                 SkillKeys.PhanKyDoatThe or SkillKeys.PhaTranDoatPhong => state.EffectInstances
                     .Select(e => (object)new { effectId = e.EffectId }),
                 _ => Array.Empty<object>()
@@ -426,7 +448,7 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
                 if (result.Accepted && !engine.IsInCheck(result.State, side)) return action;
             }
         }
-        return null;
+        return losingHeroAction;
     }
     // CompleteMatch: Đồng bộ trạng thái completed, result, endReason và endedAt từ GameState vào entity trận.
     private static void CompleteMatch(GameMatch match, GameState state, DateTimeOffset now)

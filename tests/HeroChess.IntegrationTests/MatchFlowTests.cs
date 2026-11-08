@@ -17,7 +17,7 @@ namespace HeroChess.IntegrationTests;
 
 public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly HeroChessFactory _factory;
     // MatchFlowTests: Nhận factory để tạo request scope và các client test.
     public MatchFlowTests(HeroChessFactory factory) => _factory = factory;
@@ -27,8 +27,8 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
     {
         var human = await CreatePlayerWithLineup();
         var catalog = (await human.Client.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
-        Assert.Empty(catalog.Traits);
-        Assert.All(catalog.Heroes, hero => Assert.Null(hero.Trait));
+        Assert.Contains(catalog.Traits, trait => trait.ImplementationKey == "tran_hung_dao_tuong.coc");
+        Assert.Contains(catalog.Heroes, hero => hero.Trait?.ImplementationKey == "quang_trung.special_move");
         var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == "thanh");
         Assert.False(string.IsNullOrWhiteSpace(skill.Description));
         var otherSkills = human.Lineup.Skills.Skip(1).ToArray();
@@ -40,7 +40,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         await Post<MatchSelectionDto>(human.Client, $"/api/v1/matches/{matchId}/selection", new SelectLineupRequest(updated.Id, updated.Revision), HttpMethod.Put);
         await human.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null);
         var initial = (await human.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{matchId}/state", Json))!;
-        Assert.All(initial.State.GetProperty("pieces").EnumerateArray(), piece => Assert.False(piece.TryGetProperty("traitKind", out _)));
+        Assert.True(initial.State.GetProperty("publicRiverStakes").GetBoolean());
         var pieceId = initial.State.GetProperty("pieces")[0].GetProperty("pieceId").GetGuid();
         Assert.Empty((await human.Client.GetFromJsonAsync<LegalMoveDto[]>($"/api/v1/matches/{matchId}/hero-actions?pieceId={pieceId}", Json))!);
         using (var blocked = await human.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/commands",
@@ -179,7 +179,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var legal = await human.Client.GetFromJsonAsync<LegalMoveDto[]>($"/api/v1/matches/{matchId}/legal-actions", Json);
         var legalMoves = legal ?? throw new InvalidOperationException("Legal moves response was empty.");
         Assert.NotEmpty(legalMoves);
-        Assert.All(initial!.State.GetProperty("pieces").EnumerateArray(), x => Assert.False(x.TryGetProperty("traitKind", out _)));
+        Assert.Contains(initial!.State.GetProperty("pieces").EnumerateArray(), x => x.GetProperty("traitKind").GetString() == "special_move");
         var selectedMove = legalMoves[0];
         var move = Command(initial.Version, selectedMove);
         var moved = await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", move);
@@ -194,7 +194,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var undone = await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", undo);
         Assert.True(undone.SequenceNo > afterBot.Version);
         Assert.Equal("red", undone.Snapshot.SideToMove);
-        Assert.All(undone.Snapshot.State.GetProperty("pieces").EnumerateArray(), x => Assert.False(x.TryGetProperty("traitState", out _)));
+        Assert.Equal(initial.State.GetProperty("pieces").GetRawText(), undone.Snapshot.State.GetProperty("pieces").GetRawText());
         var resign = new MatchCommandRequest(Guid.NewGuid(), undone.Snapshot.Version, JsonSerializer.SerializeToElement(new { type = "resign" }, Json));
         await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", resign);
         var replay = await human.Client.GetFromJsonAsync<ReplayPageDto>($"/api/v1/matches/{matchId}/replay?afterSequence=-1&limit=100", Json);
@@ -309,7 +309,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
     }
 
     // CreatePlayerWithLineup: Đăng ký/đăng nhập player và tạo đội hình fixture theo class; có tùy chọn special hero.
-    private async Task<(HttpClient Client, LineupDto Lineup)> CreatePlayerWithLineup(string? requestedEmail = null, bool preferSpecialHeroes = false)
+    internal async Task<(HttpClient Client, LineupDto Lineup)> CreatePlayerWithLineup(string? requestedEmail = null, bool preferSpecialHeroes = false)
     {
         var client = _factory.CreateClient(); var email = requestedEmail ?? $"match-{Guid.NewGuid():N}@hero.local"; var password = $"A1!{Guid.NewGuid():N}";
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password })).StatusCode);
@@ -327,13 +327,13 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
     }
 
     // Select: Gửi lựa chọn lineup/revision vào trận.
-    private static Task Select((HttpClient Client, LineupDto Lineup) player, Guid matchId) =>
+    internal static Task Select((HttpClient Client, LineupDto Lineup) player, Guid matchId) =>
         Post<MatchSelectionDto>(player.Client, $"/api/v1/matches/{matchId}/selection", new SelectLineupRequest(player.Lineup.Id, player.Lineup.Revision), HttpMethod.Put);
     // Command: Tạo commandId mới và action move từ một legal move.
-    private static MatchCommandRequest Command(int version, LegalMoveDto move) => new(Guid.NewGuid(), version,
+    internal static MatchCommandRequest Command(int version, LegalMoveDto move) => new(Guid.NewGuid(), version,
         JsonSerializer.SerializeToElement(new { type = "move", pieceId = move.PieceId, to = new { x = move.ToX, y = move.ToY } }, Json));
     // Post: Gửi request JSON, assert thành công rồi deserialize response kiểu T.
-    private static async Task<T> Post<T>(HttpClient client, string path, object body, HttpMethod? method = null)
+    internal static async Task<T> Post<T>(HttpClient client, string path, object body, HttpMethod? method = null)
     {
         using var request = new HttpRequestMessage(method ?? HttpMethod.Post, path) { Content = JsonContent.Create(body, options: Json) };
         var response = await client.SendAsync(request); var text = await response.Content.ReadAsStringAsync();

@@ -1,13 +1,24 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, canPlaceStructure, pollRetryDelay, skillTarget } from './api.js';
-import { actionLabel } from './history.js';
+import { actionLabel, skillNotice } from './history.js';
 import { botDifficultyLabels, modeLabel, playerAvatar, playerName, sideLabel } from './records.js';
 import MatchSelection from './MatchSelection.jsx';
 
 const classes = { general: 'TƯỚNG', advisor: 'SĨ', elephant: 'TƯỢNG', rook: 'XE', cannon: 'PHÁO', horse: 'MÃ', soldier: 'TỐT' };
 const pointSkills = new Set(['thanh', 'rao']);
 const effectSkills = new Set(['phan_ky_doat_the', 'pha_tran_doat_phong']);
-const knownSkills = new Set([...pointSkills, ...effectSkills, 'khien', 'van_coc_tran_giang', 'binh_lam_thuy_hien']);
+const trapSkill = 'bach_dang_tran_phap';
+const forecastSkill = 'lam_son_quan_luoc';
+const untargetedSkills = new Set([forecastSkill, 'hich_xuat_quan']);
+const knownSkills = new Set([...pointSkills, ...effectSkills, ...untargetedSkills, trapSkill, 'khien', 'van_coc_tran_giang', 'binh_lam_thuy_hien']);
+
+function forecastLabel({ side, action, from, pieceClass, pieceName, skillName }) {
+  const coordinate = point => `${String.fromCharCode(97 + point.x)}${point.y + 1}`;
+  const label = sideLabel(side);
+  const to = action.to || action.target?.to;
+  if (to && from) return `${label} · ${pieceName || classes[pieceClass] || 'Quân'} ${coordinate(from)} → ${coordinate(to)}`;
+  return `${label} · dùng ${skillName || (action.type === 'team_skill' ? `Command Skill ô ${action.slot}` : 'Hero Skill')}`;
+}
 
 export default function MatchView({ token, matchId, catalog, lineups, matchInfo, playerId, backLabel = 'Sảnh', onBack, onCancel, onError }) {
   const [selection, setSelection] = useState(null);
@@ -20,6 +31,8 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   const [selectedLineupId, setSelectedLineupId] = useState(lineups[0]?.id || '');
   const [skillSlot, setSkillSlot] = useState(null);
   const [targetPoint, setTargetPoint] = useState(null);
+  const [trapTargets, setTrapTargets] = useState([]);
+  const [forecast, setForecast] = useState(null);
   const [effectId, setEffectId] = useState('');
   const [pending, setPending] = useState(null);
   const [socketStatus, setSocketStatus] = useState('đang kết nối');
@@ -35,8 +48,27 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   const [flipped, setFlipped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [skillBanners, setSkillBanners] = useState([]);
+  const skillBanner = skillBanners.find(banner => banner.matchId === matchId);
   const clockOffset = useRef(0);
   const latestSnapshot = useRef(null);
+  const seenSkills = useRef(new Set());
+  const historyCache = useRef(null);
+
+  const showSkill = useCallback((sequence, event) => {
+    if (!Number.isInteger(sequence)) return;
+    const label = skillNotice(event);
+    const key = `${matchId}/${sequence}`;
+    if (!label || seenSkills.current.has(key)) return;
+    seenSkills.current.add(key);
+    setSkillBanners(previous => [...previous.filter(banner => banner.matchId === matchId), { matchId, label }]);
+  }, [matchId]);
+
+  useEffect(() => {
+    if (!skillBanner) return;
+    const timer = setTimeout(() => setSkillBanners(previous => previous.filter(banner => banner !== skillBanner)), 2500);
+    return () => clearTimeout(timer);
+  }, [skillBanner]);
 
   const accept = useCallback(next => {
     if (!next?.state || next.matchId !== matchId) return;
@@ -82,7 +114,10 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
         socket.onmessage = event => {
           const message = JSON.parse(event.data);
           if (message.type === 'match.state') accept(message.payload);
-          if (message.type === 'match.changed') refresh().catch(onError);
+          if (message.type === 'match.changed') {
+            if (message.payload?.matchId === matchId) showSkill(message.payload.version, message.payload.skillUsed);
+            refresh().catch(onError);
+          }
           if (message.payload?.snapshot) accept(message.payload.snapshot);
           if (message.type === 'match.command_accepted') setPending(previous => previous?.commandId === message.payload?.commandId ? null : previous);
           if (message.type === 'match.command_rejected') {
@@ -100,10 +135,10 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
     }
     connect();
     return () => { stopped = true; clearTimeout(retry); socket?.close(); };
-  }, [token, matchId, accept, refresh, snapshot?.status]);
+  }, [token, matchId, accept, refresh, snapshot?.status, showSkill]);
 
   useEffect(() => {
-    setSelectedPiece(null); setSkillSlot(null); setTargetPoint(null); setHeroTargetMode(null); setTargetPieceId(null); setEffectId('');
+    setSelectedPiece(null); setSkillSlot(null); setTargetPoint(null); setTrapTargets([]); setHeroTargetMode(null); setTargetPieceId(null); setEffectId('');
     if (!snapshot || snapshot.status !== 'active' || replay) { setLegal([]); return; }
     let live = true;
     api(token, `/matches/${matchId}/legal-actions`).then(value => { if (live) setLegal(value); }).catch(onError);
@@ -145,6 +180,12 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
     try {
       const result = await api(token, `/matches/${matchId}/commands`, { method: 'POST', body: payload });
       setPending(null); accept(result.snapshot);
+      if (!result.duplicate) showSkill(result.sequenceNo, result.resolvedEvents?.find(event => skillNotice(event)));
+      if (result.resolvedEvents?.some(event => event.type === 'team_skill.activated' && event.code === forecastSkill)) {
+        api(token, `/matches/${matchId}/forecast?version=${result.sequenceNo}`)
+          .then(data => setForecast({ matchId, ...data }))
+          .catch(error => { if (error.code !== 'STALE_STATE') setActionError(error.message); });
+      }
       setEvents(previous => [...(result.resolvedEvents || []), ...previous].slice(0, 12));
     } catch (error) {
       if (payload.action.type === 'undo' && (error.code === 'NO_UNDO_AVAILABLE' || error.code === 'STALE_STATE')) {
@@ -179,14 +220,15 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
     let current = true;
     setHistoryError(false);
     async function loadHistory() {
-      // shortcut: Tải lại tối đa 151 bước khi version đổi; dùng cursor tăng dần nếu giới hạn action tăng.
-      const all = []; let after = -1;
+      const cached = historyCache.current?.matchId === matchId ? historyCache.current.entries : [];
+      const all = [...cached]; let after = cached.at(-1)?.sequenceNo ?? -1;
       do {
         const page = await api(token, `/matches/${matchId}/replay?afterSequence=${after}&limit=100`);
         all.push(...page.entries); after = page.nextAfterSequence ?? -1;
       } while (after >= 0);
       if (snapshot.status === 'completed' && !all.length) throw new Error('Replay không có bàn cờ ban đầu.');
       if (current) {
+        historyCache.current = { matchId, entries: all };
         setHistory(all);
         if (snapshot.status === 'completed' && all.length) { setReplay(all); setReplayIndex(0); }
       }
@@ -225,12 +267,16 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   const inspectedPiece = pieces.find(piece => piece.pieceId === selectedPiece);
   const inspectedHero = catalog?.heroes?.find(hero => hero.id === inspectedPiece?.heroId);
   const heroCooldown = inspectedPiece?.traitState?.heroCooldownRemaining || 0;
+  const hasPlacedStake = !!view?.thdTuongCocStakes?.[inspectedPiece?.pieceId];
   const quangTrungCooldown = inspectedPiece?.traitState?.quangTrungCooldownRemaining || 0;
   const isQuangTrung = ['quang_trung.special_move', 'general.orthogonal_range_3'].includes(inspectedPiece?.traitImplementationKey);
   const activeState = sideSkills.find(skill => skill.slotNo === skillSlot);
   const activeCatalog = catalog?.teamSkills?.find(skill => skill.id === activeState?.skillId);
   const activeInfo = activeState && { ...activeCatalog, ...activeState, name: activeState.name || activeCatalog?.name };
-  const target = activeInfo && skillTarget(activeInfo.implementationKey, targetPoint, effectId, targetPieceId);
+  const selectingTrap = activeInfo?.implementationKey === trapSkill;
+  const target = selectingTrap ? (trapTargets.length === 3 ? { positions: trapTargets } : null) :
+    untargetedSkills.has(activeInfo?.implementationKey) ? {} :
+      activeInfo && skillTarget(activeInfo.implementationKey, targetPoint, effectId, targetPieceId);
   const ys = flipped ? Array.from({ length: 10 }, (_, y) => y) : Array.from({ length: 10 }, (_, y) => 9 - y);
   const xs = flipped ? Array.from({ length: 9 }, (_, x) => 8 - x) : Array.from({ length: 9 }, (_, x) => x);
   const moves = legal.filter(move => move.pieceId === selectedPiece);
@@ -238,6 +284,13 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
 
   function clickCell(x, y, piece) {
     if (replay || snapshot?.status !== 'active') return;
+    if (selectingTrap) {
+      if ((y === 4 || y === 5) && !piece && !obstacles.some(item => item.position?.x === x && item.position?.y === y))
+        setTrapTargets(previous => previous.some(p => p.x === x && p.y === y)
+          ? previous.filter(p => p.x !== x || p.y !== y)
+          : previous.length < 3 ? [...previous, { x, y }] : previous);
+      return;
+    }
     if (heroTargetMode === 'stake') { if ((y === 4 || y === 5) && !piece && !obstacles.some(item => item.position?.x === x && item.position?.y === y)) setTargetPoint({ x, y }); return; }
     if (heroTargetMode === 'quangtrung') { if (heroMoves.some(move => move.toX === x && move.toY === y)) setTargetPoint({ x, y }); return; }
     if (activeInfo?.implementationKey === 'khien') { setTargetPieceId(piece?.side === ownSide ? piece.pieceId : null); return; }
@@ -263,21 +316,27 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   return <div className="match-page">{actionError && <div className="error match-error-toast" role="alert">{actionError}<button type="button" className="close" aria-label="Đóng thông báo" onClick={() => setActionError('')}>×</button></div>}<div className="section-head"><div><span className="eyebrow">{mode === 'bot' ? `CHƠI VỚI BOT${botLabel ? ` · ${botLabel}` : ''}` : heading}</span><h1>{replay || snapshot?.status === 'completed' ? 'Xem lại trận' : 'Bàn cờ'}</h1><p className="match-id">{matchId}</p></div>
     <div className="match-controls"><button className="secondary" onClick={() => onBack(snapshot?.status === 'completed' || selection?.status === 'cancelled')}>← {backLabel}</button><button className="secondary" onClick={() => refresh().catch(onError)}>Đồng bộ</button><button className="secondary" onClick={() => setFlipped(!flipped)}>Xoay bàn</button></div></div>
     <div className="match-meta"><span className="pill">{replay ? 'replay' : status}</span>{replay ? <><span>Bước {replayStep?.sequenceNo ?? 0}/{replayEnd}</span><span>{actionLabel(replayStep, replay[replayIndex - 1], catalog)}</span></> : <><span>Lượt: <strong>{snapshot?.sideToMove || '—'}</strong>{ownSide ? ` · bạn: ${ownSide}` : ''}</span><span>#{snapshot?.countedActions ?? 0}/{catalog?.ruleset?.actionLimit ?? 150}</span><span className="timer">{timeLeft == null ? '—' : `${timeLeft}s`}</span><span>Socket: {socketStatus}</span></>}</div>
+    <div className="match-skill-notice" role="status">{!replay && skillBanner?.matchId === matchId ? skillBanner.label : ''}</div>
     {status === 'selecting' && <MatchSelection selection={selection} catalog={catalog} lineups={lineups} ownSide={matchInfo?.side} playerId={playerId}
       matchCreatedAt={matchInfo?.createdAt} selectedLineupId={selectedLineupId}
       onPickLineup={setSelectedLineupId} onSelect={selectLineup} onConfirm={confirm} onCancel={cancel} busy={busy} />}
     {snapshot?.status === 'completed' && !replay ? <div className="card"><p className="hint">{historyError ? 'Không tải được replay.' : 'Đang tải replay từ bước 0…'}</p>{historyError && <button onClick={() => setHistoryRetry(value => value + 1)}>Thử lại</button>}</div> : <div className="battle-layout"><section className="board-wrap"><div className="board" role="grid" aria-label="Bàn cờ Hero Chess">{ys.flatMap(y => xs.map(x => {
       const piece = pieces.find(item => item.position.x === x && item.position.y === y);
       const obstacle = obstacles.find(item => item.position?.x === x && item.position?.y === y);
+      const stake = obstacles.find(item => item.kind === 'thd_tuong_coc' && item.position?.x === x && item.position?.y === y);
+      const stakeOwner = stake && view?.obstacleMetadata?.[stake.obstacleId]?.placer;
       const legalMove = displayMoves.some(move => move.toX === x && move.toY === y);
       const inEffect = effects.some(effect => effect.targetPositions?.some(position => position.x === x && position.y === y));
-      return <button type="button" role="gridcell" key={`${x}-${y}`} className={`cell ${legalMove ? 'legal' : ''} ${inEffect ? 'effect-cell' : ''} ${heroTargetMode === 'stake' && (y === 4 || y === 5) && !piece && !obstacle ? 'hero-target' : ''} ${targetPoint?.x === x && targetPoint?.y === y ? 'target-cell' : ''}`} title={`(${x},${y})${piece ? ` · ${piece.side} ${piece.class}` : ''}${obstacle ? ` · ${obstacle.kind}` : ''}`} onClick={() => clickCell(x, y, piece)}>
-        <span className="coord">{x},{y}</span>{obstacle && <span className="obstacle" title={obstacle.kind}>▣</span>}{piece && <span className={`piece ${piece.side} ${selectedPiece === piece.pieceId ? 'selected' : ''}`}><span>{classes[piece.class] || piece.class}{piece.effects?.some(effect => effect.code === 'shield') ? ' 🛡' : ''}</span><small>{piece.heroName || catalog?.heroes?.find(hero => hero.id === piece.heroId)?.name || ''}</small></span>}
+      const ownTrap = view?.riverSnares?.some(trap => trap.position.x === x && trap.position.y === y);
+      const picked = (targetPoint?.x === x && targetPoint?.y === y) || trapTargets.some(p => p.x === x && p.y === y);
+      return <button type="button" role="gridcell" key={`${x}-${y}`} className={`cell ${legalMove ? 'legal' : ''} ${inEffect || ownTrap ? 'effect-cell' : ''} ${(selectingTrap || heroTargetMode === 'stake') && (y === 4 || y === 5) && !piece && !obstacle ? 'hero-target' : ''} ${picked ? 'target-cell' : ''}`} title={`(${x},${y})${piece ? ` · ${piece.side} ${piece.class}` : ''}${obstacle ? ` · ${obstacle.kind}` : ''}${ownTrap ? ' · Bẫy Bạch Đằng' : ''}`} onClick={() => clickCell(x, y, piece)}>
+        <span className="coord">{x},{y}</span>{obstacle && obstacle !== stake && <span className="obstacle" title={obstacle.kind}>▣</span>}{stake && <span className={`river-stake ${stakeOwner || ''}`} title={`Bạch Đằng Giang · ${sideLabel(stakeOwner)}`}>Cọc</span>}{piece && <span className={`piece ${piece.side} ${selectedPiece === piece.pieceId ? 'selected' : ''}`}><span>{classes[piece.class] || piece.class}{piece.effects?.some(effect => effect.code === 'shield') ? ' 🛡' : ''}</span><small>{piece.heroName || catalog?.heroes?.find(hero => hero.id === piece.heroId)?.name || ''}</small></span>}
         {legalMove && <span className="move-dot" />}</button>;
     }))}</div><p className="board-note">Chọn quân của bạn rồi chọn ô sáng. Viền vàng: ô có hiệu ứng; ▣: vật cản. Nước hợp lệ do API tính.</p>
-      {inspectedPiece && <div className="card hero-card"><h2>{inspectedPiece.heroName || inspectedHero?.name || classes[inspectedPiece.class]}</h2><p>{inspectedPiece.side} · {classes[inspectedPiece.class]} · {inspectedPiece.traitDescription || inspectedHero?.trait?.description || 'Nước đi cơ bản'}</p>
+      {inspectedPiece && <div className="card hero-card"><h2>{inspectedPiece.heroName || inspectedHero?.name || classes[inspectedPiece.class]}</h2><p>{inspectedPiece.side} · {classes[inspectedPiece.class]} · {inspectedPiece.traitDescription || 'Nước đi cơ bản'}</p>
+        {inspectedPiece.effects?.filter(effect => ['bach_dang_rooted', 'hich_xuat_quan'].includes(effect.code)).map(effect => <p key={effect.code}>{effect.code === 'bach_dang_rooted' ? 'Khóa chân' : 'Hịch Xuất Quân'} · còn {effect.remainingTurns} lượt</p>)}
         {inspectedPiece.effects?.some(effect => effect.code === 'shield') && <p>🛡 Khiên: còn {inspectedPiece.effects.find(effect => effect.code === 'shield')?.remainingTurns} lượt</p>}
-        {inspectedPiece.traitImplementationKey === 'tran_hung_dao_tuong.coc' && <><p>{inspectedPiece.traitName || inspectedHero?.trait?.name} · CD {heroCooldown}</p><button disabled={!ourTurn || inspectedPiece.side !== ownSide || heroCooldown > 0 || !!pending || busy} onClick={() => { setHeroTargetMode('stake'); setSkillSlot(null); setTargetPoint(null); }}>Dùng {inspectedPiece.traitName || inspectedHero?.trait?.name}</button></>}
+        {inspectedPiece.traitImplementationKey === 'tran_hung_dao_tuong.coc' && <><p>{inspectedPiece.traitName || inspectedHero?.trait?.name} · CD {heroCooldown}{hasPlacedStake ? ' · Cọc còn trên bàn' : ''}</p><button disabled={!ourTurn || inspectedPiece.side !== ownSide || heroCooldown > 0 || hasPlacedStake || !!pending || busy} onClick={() => { setHeroTargetMode('stake'); setSkillSlot(null); setTargetPoint(null); }}>Dùng {inspectedPiece.traitName || inspectedHero?.trait?.name}</button></>}
         {isQuangTrung && <><p>Di chuyển đặc biệt 1–3 ô · CD {quangTrungCooldown}</p><button disabled={!ourTurn || inspectedPiece.side !== ownSide || quangTrungCooldown > 0 || inspectedPiece.traitState?.cooldownReady !== 1 || !!pending || busy} onClick={() => { setHeroTargetMode('quangtrung'); setSkillSlot(null); setTargetPoint(null); }}>Dùng di chuyển đặc biệt</button></>}
         {inspectedPiece.traitImplementationKey === 'rook.hoanh_soc' && <p>Hoành Sóc Giang Sơn: {inspectedPiece.traitState?.hoanhSocCharged === 1 ? 'sẵn sàng xuyên 1 quân đồng minh ở nước đi kế tiếp' : 'chưa tích điện'}</p>}
         {heroTargetMode && <div className="target-panel"><p>{heroTargetMode === 'stake' ? 'Chọn ô trống ở hàng sông y=4 hoặc y=5.' : 'Chọn ô sáng cho nước đi kỹ năng.'}</p><button disabled={!targetPoint || !!pending || busy} onClick={() => command({ type: 'hero_active', pieceId: inspectedPiece.pieceId, skillCode: heroTargetMode === 'stake' ? inspectedPiece.traitImplementationKey : 'quang_trung.special_move', target: heroTargetMode === 'stake' ? { position: targetPoint } : { to: targetPoint } })}>Xác nhận {targetPoint && `(${targetPoint.x},${targetPoint.y})`}</button><button className="secondary" onClick={() => { setHeroTargetMode(null); setTargetPoint(null); }}>Hủy</button></div>}
@@ -303,10 +362,17 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
         const allowed = ourTurn && status === 'active' && !pending && shownCooldown === 0 && skill.usesRemaining !== 0 && knownSkills.has(skill.implementationKey);
         return <button key={skill.slotNo} className={`skill-button ${skillSlot === skill.slotNo ? 'active' : ''}`} disabled={!allowed} onClick={() => { setSkillSlot(skill.slotNo); setTargetPoint(null); setTargetPieceId(null); setEffectId(''); setHeroTargetMode(null); setSelectedPiece(null); setActionError(''); }}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>{shownCooldown ? `Hồi chiêu: ${shownCooldown}` : `Lượt dùng: ${skill.usesRemaining ?? '∞'}`} · {skill.implementationKey}</small></button>;
       })}
-      {activeInfo && <div className="target-panel"><strong>{activeInfo.name}</strong><p>{pointSkills.has(activeInfo.implementationKey) ? 'Chọn ô trống bên sông mình trên bàn cờ.' : activeInfo.implementationKey === 'khien' ? 'Chọn một quân đồng minh trên bàn cờ.' : effectSkills.has(activeInfo.implementationKey) ? 'Chọn hiệu ứng cần tác động.' : 'Tác động ba đường sông 4, 5, 6.'}</p>
+      {activeInfo && <div className="target-panel"><strong>{activeInfo.name}</strong><p>{selectingTrap ? `Chọn 3 ô trống trên sông (${trapTargets.length}/3).` : untargetedSkills.has(activeInfo.implementationKey) ? 'Dùng kỹ năng sẽ kết thúc lượt.' : pointSkills.has(activeInfo.implementationKey) ? 'Chọn ô trống bên sông mình trên bàn cờ.' : activeInfo.implementationKey === 'khien' ? 'Chọn một quân đồng minh trên bàn cờ.' : effectSkills.has(activeInfo.implementationKey) ? 'Chọn hiệu ứng cần tác động.' : 'Tác động ba đường sông 4, 5, 6.'}</p>
         {effectSkills.has(activeInfo.implementationKey) && <select value={effectId} onChange={event => setEffectId(event.target.value)}><option value="">Chọn hiệu ứng</option>{effects.map(effect => <option key={effect.effectId} value={effect.effectId}>{effect.code || effect.effectId} · {effect.creator} · {effect.remainingDuration} lượt</option>)}</select>}
         {targetPoint && <small>Ô: ({targetPoint.x}, {targetPoint.y})</small>}
         <button disabled={!target || pending || busy} onClick={() => command({ type: 'team_skill', slot: skillSlot, target })}>Dùng skill</button></div>}
+      {forecast?.matchId === matchId && forecast.version === snapshot?.version && !replay && <div className="target-panel">
+        <strong>Lam Sơn Quân Lược · Dự đoán riêng</strong>
+        <p>Địch → Ta → Địch</p>
+        <ol>{forecast.prediction.variation.map((action, index) => <li key={index}>{forecastLabel(action)}</li>)}</ol>
+        <p>Phương án nguy hiểm của địch</p>
+        <ol>{forecast.prediction.threats.map((action, index) => <li key={index}>{forecastLabel(action)}</li>)}</ol>
+      </div>}
       <h3>Skill đối thủ</h3>{enemySkills.map(skill => { const info = catalog?.teamSkills?.find(item => item.id === skill.skillId); return <div className="skill-button" key={skill.slotNo}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>CD {skill.cooldownRemaining} · lượt dùng {skill.usesRemaining ?? '∞'}</small></div>; })}
       <h3>Hero skill hai bên</h3><div className="hero-skill-list">{pieces.filter(piece => piece.traitKind === 'active' || piece.traitKind === 'special_move').map(piece => { const hero = catalog?.heroes?.find(item => item.id === piece.heroId); const cd = piece.traitState?.heroCooldownRemaining ?? piece.traitState?.quangTrungCooldownRemaining ?? 0; return <button className="skill-button" key={piece.pieceId} onClick={() => setSelectedPiece(piece.pieceId)}><strong>{piece.side}: {piece.heroName || hero?.name} · {piece.traitName || hero?.trait?.name}</strong><small>{piece.traitImplementationKey === 'rook.hoanh_soc' ? (piece.traitState?.hoanhSocCharged === 1 ? 'Hoành Sóc sẵn sàng' : 'Hoành Sóc chưa tích điện') : piece.traitKind === 'active' || piece.traitImplementationKey === 'general.orthogonal_range_3' ? `CD ${cd}` : 'Nội tại'}</small></button>; })}</div></section>
       <section className="card"><h2>Điều khiển trận</h2><div className="actions"><button className="danger" disabled={status !== 'active' || !!pending || busy} onClick={() => window.confirm('Đầu hàng trận này?') && command({ type: 'resign' })}>Đầu hàng</button>

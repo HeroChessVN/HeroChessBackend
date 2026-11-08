@@ -9,6 +9,56 @@ namespace HeroChess.IntegrationTests;
 
 public sealed class BotDifficultyTests
 {
+    [Fact]
+    public void Faction_snare_projection_only_returns_the_viewers_traps()
+    {
+        var state = Position();
+        state.RiverSnares.Add(new(Side.Red, new(3, 4), 6));
+        state.RiverSnares.Add(new(Side.Black, new(7, 5), 6));
+        var raw = GameJson.Element(state);
+        foreach (var side in new[] { Side.Red, Side.Black })
+        {
+            var projected = MatchStateProjection.State(raw, side);
+            var visible = Assert.Single(projected.GetProperty("riverSnares").EnumerateArray());
+            Assert.Equal(side == Side.Red ? "red" : "black", visible.GetProperty("owner").GetString());
+        }
+    }
+
+    [Fact]
+    public void Forecast_lists_three_alternating_actions_and_at_most_two_first_turn_threats()
+    {
+        var state = Position();
+        state.SideToMove = Side.Black;
+        var forecast = GameJson.Element(Engine().Forecast(state, Rules(), Lineups(), default));
+        Assert.Equal(new[] { "black", "red", "black" }, forecast.GetProperty("variation").EnumerateArray()
+            .Select(item => item.GetProperty("side").GetString()));
+        Assert.InRange(forecast.GetProperty("threats").GetArrayLength(), 0, 2);
+        Assert.All(forecast.GetProperty("threats").EnumerateArray(), threat => Assert.Equal("black", threat.GetProperty("side").GetString()));
+    }
+
+    [Theory]
+    [InlineData("easy")]
+    [InlineData("medium")]
+    [InlineData("hard")]
+    public void Public_stake_is_seen_by_each_bot_and_used_in_simulation(string difficulty)
+    {
+        var rook = Piece(PieceClass.Rook, Side.Red, 4, 1, 10);
+        var state = new GameState { PublicRiverStakes = true, Pieces = [rook,
+            Piece(PieceClass.General, Side.Red, 4, 0, 100), Piece(PieceClass.General, Side.Black, 4, 9, 100)] };
+        var stake = Guid.NewGuid();
+        state.Obstacles.Add(new(stake, new(4, 4), SkillKeys.ObstacleKindThDTuongCoc, 3));
+        state.ObstacleMetadata[stake] = new() { Placer = Side.Black };
+        state.ThdTuongCocStakes[Guid.NewGuid()] = stake;
+        var engine = Engine();
+        var trap = GameJson.Element(new { type = "move", pieceId = rook.PieceId, to = new { x = 4, y = 5 } });
+        Assert.Equal("black_win", engine.Simulate(state, trap, Rules(), Lineups())!.Result);
+        var chosen = engine.Choose(Guid.Empty, state, BotConfiguration.ForRequest("bot", difficulty), Rules(), Lineups(), default);
+        Assert.NotNull(chosen.Action);
+        var next = engine.Simulate(state, chosen.Action!.Value, Rules(), Lineups());
+        Assert.NotNull(next);
+        Assert.NotEqual("black_win", next.Result);
+    }
+
     [Theory]
     [InlineData(" easy ", "easy")]
     [InlineData("MEDIUM", "medium")]

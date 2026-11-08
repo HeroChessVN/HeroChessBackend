@@ -168,13 +168,13 @@ public sealed partial class MatchmakingService(IServiceScopeFactory scopes, IOpt
     private async Task<GameMatch> NewMatchAsync(AppDbContext db, string mode, CancellationToken ct)
     {
         var ruleset = await db.Rulesets.AsNoTracking().SingleAsync(x => x.IsActive, ct);
-        var contentVersion = await catalogVersions.ComputeAsync(db, ct);
+        var contentVersion = await catalogVersions.ComputeAsync(db, ct, runtime.Value.HeroTraitsEnabled);
         return new GameMatch
         {
             Id = Guid.NewGuid(), Mode = mode, Status = "selecting", RulesetId = ruleset.Id,
             RulesetSnapshot = GameJson.Document(new RulesetSnapshot(ruleset.Code, ruleset.SetupBudget, ruleset.TurnSeconds, ruleset.ActionLimit,
                 ruleset.Config.RootElement.Clone(), ratings.Version, rewards.Version, runtime.Value.EloKFactor,
-                runtime.Value.WinnerCoinReward, runtime.Value.DrawCoinReward)), ContentVersion = contentVersion, CreatedAt = DateTimeOffset.UtcNow
+                runtime.Value.WinnerCoinReward, runtime.Value.DrawCoinReward, runtime.Value.HeroTraitsEnabled)), ContentVersion = contentVersion, CreatedAt = DateTimeOffset.UtcNow
         };
     }
 

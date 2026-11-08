@@ -82,6 +82,9 @@ builder.Services.AddSingleton<HeroChess.Rules.Skills.CommandSkillRegistry>(sp =>
         new HeroChess.Rules.Skills.PhanKyDoatTheHandler(),
         new HeroChess.Rules.Skills.PhaTranDoatPhongHandler(),
         new HeroChess.Rules.Skills.BinhLamThuyHienHandler(),
+        new HeroChess.Rules.Skills.FactionSkillHandler(HeroChess.Rules.Skills.FactionSkillHandler.Trap),
+        new HeroChess.Rules.Skills.FactionSkillHandler(HeroChess.Rules.Skills.FactionSkillHandler.Forecast),
+        new HeroChess.Rules.Skills.FactionSkillHandler(HeroChess.Rules.Skills.FactionSkillHandler.Rally),
         // Step 6: Thành and Rào Command Skills
         new HeroChess.Rules.Skills.ThanhHandler(),
         new HeroChess.Rules.Skills.RaoHandler(),

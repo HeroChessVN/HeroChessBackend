@@ -179,11 +179,14 @@ public static class TurnLifecycle
             for (var i = piece.Effects.Count - 1; i >= 0; i--)
             {
                 var effect = piece.Effects[i];
-                if (effect.Code != SkillKeys.ShieldEffect || effect.RemainingTurns is not > 0) continue;
+                if (effect.Code is not (SkillKeys.ShieldEffect or FactionSkillHandler.Rooted or FactionSkillHandler.Rally) ||
+                    effect.RemainingTurns is not > 0) continue;
                 if (effect.RemainingTurns == 1) piece.Effects.RemoveAt(i);
                 else piece.Effects[i] = effect with { RemainingTurns = effect.RemainingTurns - 1 };
             }
         }
+
+        next.RiverSnares.RemoveAll(trap => trap.ExpiresAt <= next.TurnIndex);
 
         // Step 2: Decrement active or disabled effects on every shared board turn.
         // RemainingDuration is never reset by control transfer or disabling.

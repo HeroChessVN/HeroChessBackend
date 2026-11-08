@@ -6,6 +6,7 @@ using System.Text.Json;
 using HeroChess.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace HeroChess.IntegrationTests;
@@ -94,5 +95,10 @@ public sealed class HeroChessFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["MatchRuntime:HeroTraitsEnabled"] = "true",
+            ["MatchRuntime:NewFactionSkillsEnabled"] = "true"
+        }));
     }
 }

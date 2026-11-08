@@ -112,9 +112,14 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
         var viewer = participant.Side == "red" ? Side.Red : Side.Black;
         // Tên tướng để bù cho stateAfter lưu từ trước khi có heroName.
         var heroNames = await HeroNamesAsync(rows.Select(x => x.StateAfter.RootElement), ct);
-        var entries = rows.Take(limit).Select(x => new ReplayEntryDto(x.SequenceNo, x.Kind == "hero_active" ? "legacy_action" : x.Kind, x.ActorSide,
-            MatchStateProjection.Events(x.ResolvedEvents.RootElement, viewer),
-            MatchStateProjection.State(x.StateAfter.RootElement, viewer, heroNames), x.CommittedAt)).ToArray();
+        var entries = rows.Take(limit).Select(x =>
+        {
+            var state = x.StateAfter.RootElement;
+            var publicStakes = MatchStateProjection.HasPublicStakes(state);
+            return new ReplayEntryDto(x.SequenceNo, x.Kind == "hero_active" && !publicStakes ? "legacy_action" : x.Kind, x.ActorSide,
+                MatchStateProjection.Events(x.ResolvedEvents.RootElement, viewer, publicStakes),
+                MatchStateProjection.State(state, viewer, heroNames), x.CommittedAt);
+        }).ToArray();
         return new(matchId, entries, rows.Count > limit ? entries[^1].SequenceNo : null);
     }
 

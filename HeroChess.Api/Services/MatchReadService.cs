@@ -3,14 +3,55 @@ using HeroChess.Api.Data;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Contracts;
 using HeroChess.Rules;
+using HeroChess.Rules.Skills;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using System.Text.Json;
 using System.Diagnostics;
+using System.Threading.RateLimiting;
 
 namespace HeroChess.Api.Services;
 
 public sealed class MatchReadService(AppDbContext db, TimeProvider clock, PlayerProfileService profiles, ILogger<MatchReadService> logger)
 {
+    private static readonly MemoryCache ForecastCache = new(new MemoryCacheOptions { SizeLimit = 128 });
+    private static readonly ConcurrencyLimiter ForecastLimiter = new(new ConcurrencyLimiterOptions
+    {
+        PermitLimit = 1, QueueLimit = 4, QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+    });
+
+    public async Task<object> ForecastAsync(Guid playerId, Guid matchId, int version, CommandSkillDispatcher dispatcher, CancellationToken ct)
+    {
+        var key = (playerId, matchId, version);
+        if (ForecastCache.TryGetValue<JsonElement>(key, out var cached)) return cached;
+        using var lease = await ForecastLimiter.AcquireAsync(1, ct);
+        if (!lease.IsAcquired) throw new ApiException(429, "FORECAST_BUSY", "The forecast worker is busy.");
+        if (ForecastCache.TryGetValue<JsonElement>(key, out cached)) return cached;
+
+        var actor = await db.MatchParticipants.AsNoTracking().SingleOrDefaultAsync(p => p.MatchId == matchId && p.PlayerId == playerId, ct)
+            ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
+        var action = await db.MatchActions.AsNoTracking().SingleOrDefaultAsync(a => a.MatchId == matchId && a.SequenceNo == version &&
+            a.Kind == "team_skill" && a.ActorSide == actor.Side, ct);
+        if (action is null || !action.ResolvedEvents.RootElement.EnumerateArray().Any(e =>
+            e.TryGetProperty("type", out var type) && type.GetString() == "team_skill.activated" &&
+            e.TryGetProperty("code", out var code) && code.GetString() == FactionSkillHandler.Forecast))
+            throw new ApiException(404, "FORECAST_NOT_FOUND", "No forecast was activated by this player at that version.");
+        if (!await db.MatchStates.AnyAsync(s => s.MatchId == matchId && s.Version == version, ct))
+            throw new ApiException(409, "STALE_STATE", "The board has already changed.");
+        var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId, ct);
+        var participants = await db.MatchParticipants.AsNoTracking().Where(p => p.MatchId == matchId).ToListAsync(ct);
+        var lineups = participants.ToDictionary(p => p.Side == "red" ? Side.Red : Side.Black, p => GameJson.Read<FrozenLineup>(p.LineupSnapshot));
+        var state = GameJson.Read<GameState>(action.StateAfter);
+        var side = actor.Side == "red" ? Side.Red : Side.Black;
+        state.RiverSnares.RemoveAll(trap => trap.Owner != side);
+        var prediction = new BotEngine(dispatcher).Forecast(state, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot), lineups, ct);
+        var result = GameJson.Element(new { version, prediction });
+        ForecastCache.Set(key, result, new MemoryCacheEntryOptions
+        {
+            Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2)
+        });
+        return result;
+    }
     // StateAsync: Authorize rồi đọc match/state hiện tại, báo chưa start nếu chưa có bàn cờ.
     public async Task<MatchStateDto> StateAsync(Guid playerId, Guid matchId, CancellationToken ct)
     {
@@ -49,8 +90,14 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
 
     public async Task<IReadOnlyList<LegalMoveDto>> HeroActionsAsync(Guid playerId, Guid matchId, Guid pieceId, CancellationToken ct)
     {
-        await Authorize(playerId, matchId, ct);
-        return Array.Empty<LegalMoveDto>();
+        var side = await db.MatchParticipants.AsNoTracking().Where(x => x.MatchId == matchId && x.PlayerId == playerId)
+            .Select(x => x.Side).SingleOrDefaultAsync(ct) ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
+        var row = await db.MatchStates.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId, ct);
+        if (row is null || row.SideToMove != side) return [];
+        var state = StateSchemaUpgrade.UpgradeToCurrent(GameJson.Read<GameState>(row.State));
+        if (!state.PublicRiverStakes) return [];
+        return new XiangqiRulesEngine().GenerateQuangTrungSpecialMoves(state, pieceId)
+            .Select(x => new LegalMoveDto(x.PieceId, x.From.X, x.From.Y, x.To.X, x.To.Y, x.CapturedPieceId)).ToArray();
     }
 
     // Authorize: Chỉ cho player có participant trong trận đi tiếp.

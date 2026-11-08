@@ -106,7 +106,7 @@ public sealed partial class MatchFlowTests
     }
 
     [Fact]
-    public async Task Legacy_hero_command_retry_is_idempotent_but_new_hero_commands_are_blocked()
+    public async Task Legacy_hero_command_retry_is_idempotent_and_unknown_hero_command_is_blocked()
     {
         var (id, red, black) = await Ranked();
         var outsider = await CreatePlayerWithLineup();
@@ -115,19 +115,24 @@ public sealed partial class MatchFlowTests
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var historical = await db.MatchActions.SingleAsync(x => x.MatchId == id && x.SequenceNo == 0);
-            historical.CommandId = commandId;
-            historical.Kind = "hero_active";
-            historical.ActorSide = "red";
-            historical.RequestPayload = GameJson.Document(heroAction);
-            historical.ResolvedEvents = GameJson.Document(new[] { new { type = "hero_skill.activated" } });
+            var row = await db.MatchStates.SingleAsync(x => x.MatchId == id);
+            var legacyState = System.Text.Json.Nodes.JsonNode.Parse(row.State.RootElement.GetRawText())!.AsObject();
+            legacyState.Remove("publicRiverStakes");
+            legacyState["version"] = 1;
+            row.Version = 1;
+            row.State = GameJson.Document(legacyState);
+            var now = DateTimeOffset.UtcNow;
+            db.MatchActions.Add(new MatchAction { Id = Guid.NewGuid(), MatchId = id, SequenceNo = 1, CommandId = commandId,
+                Kind = "hero_active", ActorSide = "red", RequestPayload = GameJson.Document(heroAction),
+                ResolvedEvents = GameJson.Document(new[] { new { type = "hero_skill.activated" } }),
+                StateAfter = GameJson.Document(legacyState), StateSchemaVersion = row.StateSchemaVersion, ReceivedAt = now, CommittedAt = now });
             await db.SaveChangesAsync();
         }
         var retry = new MatchCommandRequest(commandId, 0, heroAction);
         var ack = await Post<MatchCommandResultDto>(red.Client, $"/api/v1/matches/{id}/commands", retry);
         Assert.True(ack.Duplicate);
         Assert.Empty(ack.ResolvedEvents.EnumerateArray());
-        Assert.Equal(0, ack.Snapshot.Version);
+        Assert.Equal(1, ack.Snapshot.Version);
         Assert.Equal(HttpStatusCode.Conflict, (await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/commands",
             retry with { Action = JsonSerializer.SerializeToElement(new { type = "resign" }, Json) }, Json)).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await black.Client.PostAsJsonAsync($"/api/v1/matches/{id}/commands", retry, Json)).StatusCode);
@@ -137,13 +142,13 @@ public sealed partial class MatchFlowTests
         var wsAck = await Receive(socket);
         Assert.Equal("match.command_accepted", wsAck.GetProperty("type").GetString());
         Assert.True(wsAck.GetProperty("payload").GetProperty("duplicate").GetBoolean());
-        var fresh = retry with { CommandId = Guid.NewGuid() };
+        var fresh = retry with { CommandId = Guid.NewGuid(), ExpectedVersion = 1 };
         using var blocked = await red.Client.PostAsJsonAsync($"/api/v1/matches/{id}/commands", fresh, Json);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
         Assert.Equal("HERO_SKILL_NOT_AVAILABLE", (await blocked.Content.ReadFromJsonAsync<ApiError>(Json))!.Code);
         await SendWs(socket, id, fresh);
         Assert.Equal("HERO_SKILL_NOT_AVAILABLE", (await Receive(socket)).GetProperty("payload").GetProperty("code").GetString());
-        Assert.Equal(0, (await red.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{id}/state", Json))!.Version);
+        Assert.Equal(1, (await red.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{id}/state", Json))!.Version);
     }
 
     private sealed class CancelAfterCommit(CancellationTokenSource request) : DbTransactionInterceptor

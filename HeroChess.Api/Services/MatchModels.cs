@@ -8,13 +8,14 @@ public sealed record FrozenLineup(Guid LineupId, int Revision, int TotalSp, IRea
     string? Name = null);
 // FrozenPiece: Hero/class/SP/vị trí đã đóng băng cho một slot; snapshot cũ có thêm trait vẫn đọc được.
 public sealed record FrozenPiece(int SlotNo, Guid HeroId, string ClassCode, int SetupPoints, int StartX, int StartY, Guid? CosmeticId,
-    string? HeroName = null);
+    string? HeroName = null, string? MovementImplementationKey = null, string? TraitKind = null,
+    string? TraitImplementationKey = null, string? TraitName = null, string? TraitDescription = null, JsonElement? TraitParameters = null);
 // FrozenSkill: Skill key, charge và cooldown đã đóng băng; chưa thực thi gameplay.
 public sealed record FrozenSkill(int SlotNo, Guid SkillId, string ImplementationKey, int? MaxUses, int CooldownTurns,
     string? Name = null, string? Description = null, JsonElement? Parameters = null);
 // RulesetSnapshot: Bộ luật và policy thưởng/Elo của trận, giữ đúng giá trị dù config sau này đổi.
 public sealed record RulesetSnapshot(string Code, int SetupBudget, int TurnSeconds, int ActionLimit, JsonElement Config,
-    string RatingPolicyVersion, string RewardPolicyVersion, int EloKFactor, int WinnerCoinReward, int DrawCoinReward);
+    string RatingPolicyVersion, string RewardPolicyVersion, int EloKFactor, int WinnerCoinReward, int DrawCoinReward, bool HeroTraitsEnabled = false);
 
 // MatchmakingOptions: Cửa sổ Elo cho ghép ranked.
 public sealed class MatchmakingOptions
@@ -25,6 +26,8 @@ public sealed class MatchmakingOptions
 // MatchRuntimeOptions: Options vé WS, giới hạn message, worker poll, reward/K, budget bot và timeout selection.
 public sealed class MatchRuntimeOptions
 {
+    public bool HeroTraitsEnabled { get; set; }
+    public bool NewFactionSkillsEnabled { get; set; }
     public int WebSocketTicketSeconds { get; set; } = 30;
     public int MaxWebSocketMessageBytes { get; set; } = 64 * 1024;
     public int TimeoutPollMilliseconds { get; set; } = 500;

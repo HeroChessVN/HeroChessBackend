@@ -11,7 +11,8 @@ public static class MatchStateProjection
     public static JsonElement State(JsonElement stored, Side viewer, IReadOnlyDictionary<Guid, string>? heroNames = null)
     {
         var state = stored.Deserialize<GameState>(GameJson.Options) ?? throw new InvalidOperationException("Invalid stored state.");
-        var hidden = state.Obstacles.Where(o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc)
+        state.RiverSnares.RemoveAll(trap => trap.Owner != viewer);
+        var hidden = state.PublicRiverStakes ? new HashSet<Guid>() : state.Obstacles.Where(o => o.Kind == SkillKeys.ObstacleKindThDTuongCoc)
             .Select(o => o.ObstacleId).Concat(state.ThdTuongCocStakes.Values).ToHashSet();
         state.Obstacles.RemoveAll(o => hidden.Contains(o.ObstacleId));
         foreach (var id in hidden)
@@ -19,13 +20,14 @@ public static class MatchStateProjection
             state.ObstacleMetadata.Remove(id);
             state.StakeMetadata.Remove(id);
         }
-        state.ThdTuongCocStakes.Clear();
+        if (!state.PublicRiverStakes) state.ThdTuongCocStakes.Clear();
         var projected = JsonSerializer.SerializeToNode(state, GameJson.Options)!.AsObject();
         foreach (var piece in projected["pieces"]!.AsArray())
         {
             var data = piece!.AsObject();
-            foreach (var key in new[] { "movementImplementationKey", "traitKind", "traitImplementationKey", "traitName", "traitDescription", "traitParameters", "traitState" })
-                data.Remove(key);
+            if (!state.PublicRiverStakes)
+                foreach (var key in new[] { "movementImplementationKey", "traitKind", "traitImplementationKey", "traitName", "traitDescription", "traitParameters", "traitState" })
+                    data.Remove(key);
             // Quân cũ lưu state trước khi có heroName: bù tên tướng từ catalog để bàn cờ hiện đủ cho cả hai phe.
             if (heroNames is not null && (data["heroName"] is null || data["heroName"]!.GetValueKind() == JsonValueKind.Null))
             {
@@ -36,9 +38,11 @@ public static class MatchStateProjection
         return GameJson.Element(projected);
     }
 
-    public static JsonElement Events(JsonElement stored, Side viewer)
+    public static bool HasPublicStakes(JsonElement state) => state.TryGetProperty("publicRiverStakes", out var value) && value.ValueKind == JsonValueKind.True;
+
+    public static JsonElement Events(JsonElement stored, Side viewer, bool publicRiverStakes = false)
     {
-        if (stored.ValueKind != JsonValueKind.Array) return stored.Clone();
+        if (publicRiverStakes || stored.ValueKind != JsonValueKind.Array) return stored.Clone();
         var safe = stored.EnumerateArray().Where(e =>
             !(e.TryGetProperty("type", out var type) && type.GetString() == "hero_skill.activated") &&
             !(e.TryGetProperty("kind", out var kind) && kind.GetString() == SkillKeys.ObstacleKindThDTuongCoc))

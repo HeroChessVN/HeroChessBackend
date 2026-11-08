@@ -1,14 +1,16 @@
 // Vai trò file: Kiểm tra đội hình trước khi lưu/chọn: slot, class, ownership, SP, skin và skill; chưa xử lý ngưỡng phe chi tiết.
 using HeroChess.Api.Data;
 using HeroChess.Contracts;
+using HeroChess.Rules.Skills;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HeroChess.Api.Services;
 
 public sealed record LineupValidationResult(int TotalSp, int Budget, IReadOnlyList<LineupValidationError> Errors,
     IReadOnlyDictionary<int, string> SlotClasses);
 
-public sealed class LineupValidator(AppDbContext db)
+public sealed class LineupValidator(AppDbContext db, IOptions<MatchRuntimeOptions> runtime)
 {
     // ValidateAsync: Đọc catalog/ownership và gom tất cả lỗi validation, tổng SP và ánh xạ slot; không ghi DB.
     public async Task<LineupValidationResult> ValidateAsync(Guid playerId, SaveLineupRequest request, CancellationToken cancellationToken)
@@ -75,6 +77,15 @@ public sealed class LineupValidator(AppDbContext db)
         var skills = await db.TeamSkills.AsNoTracking().Where(x => skillIds.Contains(x.Id)).ToListAsync(cancellationToken);
         if (skills.Count != skillIds.Length || skills.Any(x => !x.IsEnabled)) errors.Add(new("SKILL_UNAVAILABLE", "One or more team skills are unavailable."));
         if (skills.Count(x => x.FactionId is not null) > 1) errors.Add(new("MULTIPLE_FACTION_SKILLS", "At most one faction team skill may be active."));
+        var newFactionSkill = skills.FirstOrDefault(s => FactionSkillHandler.IsNewFactionSkill(s.ImplementationKey));
+        if (newFactionSkill is not null && !runtime.Value.NewFactionSkillsEnabled)
+            errors.Add(new("SKILL_UNAVAILABLE", "The faction skill has not been enabled on this server."));
+        else if (newFactionSkill is not null)
+        {
+            var nonSoldiers = heroes.Values.Where(h => h.ClassCode != "SOLDIER").Select(h => h.Id).ToArray();
+            var members = await db.HeroFactions.CountAsync(link => link.FactionId == newFactionSkill.FactionId && nonSoldiers.Contains(link.HeroId), cancellationToken);
+            if (members < 8) errors.Add(new("FACTION_REQUIREMENT_NOT_MET", "The faction skill requires eight distinct heroes of its faction, excluding soldiers."));
+        }
 
         return new(totalSp, budget, errors, slots);
     }

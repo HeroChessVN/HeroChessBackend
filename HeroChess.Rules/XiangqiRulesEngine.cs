@@ -214,7 +214,11 @@ public sealed class XiangqiRulesEngine
                        (piece.Class == PieceClass.Cannon || piece.MovementImplementationKey == SkillKeys.LyThuongKietXe))))) continue;
                 var candidate = MoveUnchecked(state, piece.PieceId, destination, runHandler: false);
                 if (!IsInCheck(candidate, actor))
-                    legal.Add(new(piece.PieceId, piece.Position!.Value, destination, target?.PieceId));
+                {
+                    var intercepted = FindPublicStake(state, piece, destination) is not null;
+                    legal.Add(new(piece.PieceId, piece.Position!.Value, destination,
+                        intercepted ? null : target?.PieceId, intercepted));
+                }
             }
         }
         return legal;
@@ -224,7 +228,7 @@ public sealed class XiangqiRulesEngine
     {
         var piece = state.Pieces.FirstOrDefault(p => p.PieceId == pieceId && p.Side == state.SideToMove && IsAlive(p) &&
             IsQuangTrung(p));
-        if (state.Result is not null || piece is null ||
+        if (state.Result is not null || piece is null || IsRooted(piece) ||
             piece.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownKey) != 1 ||
             piece.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownRemainingKey) is > 0 ||
             !_handlers.TryGet(SkillKeys.QuangTrungSpecialMove, out var handler)) return Array.Empty<LegalMove>();
@@ -238,7 +242,11 @@ public sealed class XiangqiRulesEngine
                 IsBlockedByActiveEffect(state, piece, piece.Position!.Value, to, attacksOnly: false)) continue;
             var candidate = MoveUnchecked(state, pieceId, to, runHandler: false);
             if (!IsInCheck(candidate, piece.Side))
-                result.Add(new LegalMove(pieceId, piece.Position.Value, to, target?.PieceId));
+            {
+                var intercepted = FindPublicStake(state, piece, to) is not null;
+                result.Add(new LegalMove(pieceId, piece.Position.Value, to,
+                    intercepted ? null : target?.PieceId, intercepted));
+            }
         }
         return result;
     }
@@ -247,11 +255,12 @@ public sealed class XiangqiRulesEngine
     {
         if (!GenerateQuangTrungSpecialMoves(state, action.PieceId).Any(m => m.To == action.To))
             return ApplyMoveResult.Failure(state, "ILLEGAL_HERO_MOVE", "The selected hero skill destination is not legal.");
-        var next = MoveUnchecked(state, action.PieceId, action.To, runHandler: true);
+        var result = ResolveMove(state, action);
+        var next = result.State;
         var piece = next.Pieces.Single(p => p.PieceId == action.PieceId);
         piece.TraitState[SkillKeys.QuangTrungCooldownKey] = 0;
         piece.TraitState[SkillKeys.QuangTrungCooldownRemainingKey] = SkillKeys.QuangTrungCooldownTurns;
-        return CompleteMove(state, next);
+        return result;
     }
 
     // ApplyMove: Chỉ nhận nước trong legal list; kết thúc do hết hành động xét sau lifecycle ở MatchCommandService.
@@ -264,11 +273,38 @@ public sealed class XiangqiRulesEngine
         if (move is null)
             return ApplyMoveResult.Failure(state, "ILLEGAL_MOVE", "The requested move is not legal in the current state.");
 
-        var next = MoveUnchecked(state, action.PieceId, action.To, runHandler: true);
-        return CompleteMove(state, next);
+        return ResolveMove(state, action);
     }
 
-    private ApplyMoveResult CompleteMove(GameState state, GameState next)
+    private ApplyMoveResult ResolveMove(GameState state, MoveAction action)
+    {
+        var moving = state.Pieces.Single(p => p.PieceId == action.PieceId);
+        var stake = FindPublicStake(state, moving, action.To);
+        if (stake is null) return CompleteMove(state, MoveUnchecked(state, action.PieceId, action.To, runHandler: true));
+
+        var next = state.Clone();
+        var piece = next.Pieces.Single(p => p.PieceId == action.PieceId);
+        piece.Position = null;
+        piece.Status = PieceStatus.Captured;
+        return CompleteMove(state, next, stake);
+    }
+
+    private static ObstacleState? FindPublicStake(GameState state, PieceState piece, BoardPoint to)
+    {
+        if (!state.PublicRiverStakes || state.ThdTuongCocStakes.Count == 0 ||
+            piece.Position is not { } from || piece.Effects.Any(e => e.Code == SkillKeys.ShieldEffect && e.RemainingTurns > 0))
+            return null;
+
+        ObstacleState? At(BoardPoint point) => state.Obstacles.FirstOrDefault(o => o.Position == point &&
+            o.Kind == SkillKeys.ObstacleKindThDTuongCoc && o.RemainingLifetime is > 0 &&
+            state.ObstacleMetadata.TryGetValue(o.ObstacleId, out var owner) && owner.Placer != piece.Side);
+
+        foreach (var point in CrossedCells(piece.Class, from, to))
+            if (At(point) is { } hit) return hit;
+        return null;
+    }
+
+    private ApplyMoveResult CompleteMove(GameState state, GameState next, ObstacleState? stakeHit = null)
     {
         next.Version++;
         next.TurnIndex++;
@@ -276,14 +312,14 @@ public sealed class XiangqiRulesEngine
         next.ConsecutiveTimeouts[state.SideToMove] = 0;
         next.SideToMove = Opposite(state.SideToMove);
 
-        if (!next.Pieces.Any(p => p.Side == state.SideToMove && p.Class == PieceClass.General && IsAlive(p)))
+        if (!next.Pieces.Any(p => p.Side == state.SideToMove && p.Class == PieceClass.General && IsAlive(p)) ||
+            (stakeHit is not null && IsInCheck(next, state.SideToMove)))
         {
             next.Result = state.SideToMove == Side.Red ? "black_win" : "red_win";
             next.EndReason = "river_stake";
-            return ApplyMoveResult.Success(next);
         }
 
-        return ApplyMoveResult.Success(next);
+        return ApplyMoveResult.Success(next, stakeHit);
     }
 
     // ApplyTeamSkill: Stub trả SKILL_NOT_IMPLEMENTED; hiện chưa có dispatcher skill.
@@ -303,13 +339,14 @@ public sealed class XiangqiRulesEngine
 
         return state.Pieces
             .Where(x => x.Side != side && IsAlive(x))
-            .Any(x => GeneratePseudoDestinations(state, x, attacksOnly: true).Contains(generalPosition) ||
-                (IsQuangTrung(x) &&
+            .Any(x => (GeneratePseudoDestinations(state, x, attacksOnly: true).Contains(generalPosition) ||
+                (IsQuangTrung(x) && !IsRooted(x) &&
                  x.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownKey) == 1 &&
                  x.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownRemainingKey) is not > 0 &&
                  _handlers.TryGet(SkillKeys.QuangTrungSpecialMove, out var special) &&
                  special.GenerateDestinations(state, x).Contains(generalPosition) &&
-                 !IsBlockedByActiveEffect(state, x, x.Position!.Value, generalPosition, attacksOnly: true)));
+                 !IsBlockedByActiveEffect(state, x, x.Position!.Value, generalPosition, attacksOnly: true))) &&
+                FindPublicStake(state, x, generalPosition) is null);
     }
 
     // GeneratePseudoDestinations: Sinh đích theo class/handler trước khi lọc an toàn Tướng; tham số attacksOnly hiện chưa được tách xử lý trong thân hàm.
@@ -317,7 +354,7 @@ public sealed class XiangqiRulesEngine
     // Step 5 (Hero Skills): Quang Trung cooldown-gated movement; Phạm Ngũ Lão hoành sóc pass-through.
     private IEnumerable<BoardPoint> GeneratePseudoDestinations(GameState state, PieceState piece, bool attacksOnly)
     {
-        if (piece.Position is not { } from) yield break;
+        if (piece.Position is not { } from || IsRooted(piece)) yield break;
         if (piece.MovementImplementationKey is not null)
         {
             // Step 5 Hero Skill routing: resolve the effective handler key for hero-specific skills.
@@ -387,6 +424,18 @@ public sealed class XiangqiRulesEngine
                 if (forward.IsOnBoard && !IsBlockedByActiveEffect(state, piece, from, forward, attacksOnly))
                     yield return forward;
                 var crossed = piece.Side == Side.Red ? from.Y >= 5 : from.Y <= 4;
+                if (piece.Effects.Any(e => e.Code == FactionSkillHandler.Rally && e.RemainingTurns > 0))
+                {
+                    var directions = crossed ? new[] { (0, direction), (-1, 0), (1, 0) } : new[] { (0, direction) };
+                    foreach (var (dx, dy) in directions)
+                    {
+                        var middle = new BoardPoint(from.X + dx, from.Y + dy);
+                        var end = new BoardPoint(from.X + 2 * dx, from.Y + 2 * dy);
+                        if (end.IsOnBoard && PieceAt(state, middle) is null && !state.Obstacles.Any(o => o.Position == middle) &&
+                            !IsBlockedByActiveEffect(state, piece, from, middle, attacksOnly) &&
+                            !IsBlockedByActiveEffect(state, piece, from, end, attacksOnly)) yield return end;
+                    }
+                }
                 if (crossed)
                 {
                     if (from.X > 0)
@@ -516,7 +565,7 @@ public sealed class XiangqiRulesEngine
         }
         piece.Position = to;
 
-        if (runHandler && !piece.Effects.Any(e => e.Code == SkillKeys.ShieldEffect && e.RemainingTurns > 0) &&
+        if (runHandler && !state.PublicRiverStakes && !piece.Effects.Any(e => e.Code == SkillKeys.ShieldEffect && e.RemainingTurns > 0) &&
             next.Obstacles.Any(o => o.Position == to && o.Kind == SkillKeys.ObstacleKindThDTuongCoc &&
                 next.ObstacleMetadata.TryGetValue(o.ObstacleId, out var owner) && owner.Placer != piece.Side))
         {
@@ -528,6 +577,14 @@ public sealed class XiangqiRulesEngine
 
         if (runHandler)
         {
+            foreach (var point in next.RiverSnares.Count == 0 ? Enumerable.Empty<BoardPoint>() : CrossedCells(piece.Class, from, to))
+            {
+                var trap = next.RiverSnares.FirstOrDefault(t => t.Owner != piece.Side && t.Position == point && t.ExpiresAt > next.TurnIndex);
+                if (trap is null) continue;
+                next.RiverSnares.Remove(trap);
+                piece.Effects.Add(new EffectState(FactionSkillHandler.Rooted, null, 5));
+                break;
+            }
             // Run the standard handler's AfterMove (e.g., WildElephant lastMoveDistance).
             // Use the already-resolved effectiveKey from above.
             if (_handlers.TryGet(effectiveKey, out var handler))
@@ -543,6 +600,21 @@ public sealed class XiangqiRulesEngine
         }
 
         return next;
+    }
+
+    private static bool IsRooted(PieceState piece) =>
+        piece.Effects.Any(e => e.Code == FactionSkillHandler.Rooted && e.RemainingTurns > 0);
+
+    private static IEnumerable<BoardPoint> CrossedCells(PieceClass @class, BoardPoint from, BoardPoint to)
+    {
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        if (@class == PieceClass.Horse && Math.Abs(dx) + Math.Abs(dy) == 3 && dx != 0 && dy != 0)
+            yield return Math.Abs(dx) == 2 ? new BoardPoint(from.X + Math.Sign(dx), from.Y) : new BoardPoint(from.X, from.Y + Math.Sign(dy));
+        else if (dx == 0 || dy == 0 || Math.Abs(dx) == Math.Abs(dy))
+            for (var i = 1; i < Math.Max(Math.Abs(dx), Math.Abs(dy)); i++)
+                yield return new BoardPoint(from.X + i * Math.Sign(dx), from.Y + i * Math.Sign(dy));
+        yield return to;
     }
 
     /// <summary>
