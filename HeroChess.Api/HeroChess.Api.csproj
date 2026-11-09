@@ -35,6 +35,7 @@
     <Content Include="Data\Bootstrap\11_email_confirmation.sql" Link="Database\11_email_confirmation.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\12_custom_rooms.sql" Link="Database\12_custom_rooms.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\17_board_cosmetics.sql" Link="Database\17_board_cosmetics.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\18_faction_skill_requirements.sql" Link="Database\18_faction_skill_requirements.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

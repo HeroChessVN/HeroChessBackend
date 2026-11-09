@@ -1,4 +1,4 @@
-// Vai trò file: Kiểm tra đội hình trước khi lưu/chọn: slot, class, ownership, SP, skin và skill; chưa xử lý ngưỡng phe chi tiết.
+// Kiểm tra slot, class, ownership, SP, cosmetic và điều kiện kỹ năng khi lưu/chọn đội hình.
 using HeroChess.Api.Data;
 using HeroChess.Contracts;
 using HeroChess.Rules.Skills;
@@ -84,7 +84,8 @@ public sealed class LineupValidator(AppDbContext db, IOptions<MatchRuntimeOption
         {
             var nonSoldiers = heroes.Values.Where(h => h.ClassCode != "SOLDIER").Select(h => h.Id).ToArray();
             var members = await db.HeroFactions.CountAsync(link => link.FactionId == newFactionSkill.FactionId && nonSoldiers.Contains(link.HeroId), cancellationToken);
-            if (members < 8) errors.Add(new("FACTION_REQUIREMENT_NOT_MET", "The faction skill requires eight distinct heroes of its faction, excluding soldiers."));
+            if (!FactionSkillEligibility.CanUse(newFactionSkill.ImplementationKey, members))
+                errors.Add(new("FACTION_REQUIREMENT_NOT_MET", "The lineup does not meet this faction skill's hero requirement, excluding soldiers."));
         }
 
         return new(totalSp, budget, errors, slots);

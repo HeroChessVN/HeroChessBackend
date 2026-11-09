@@ -10,7 +10,7 @@ END $$;
 
 INSERT INTO hero_chess.team_skill
     (code, name, faction_id, implementation_key, cooldown_turns, is_enabled, eligibility, description)
-SELECT skill.code, skill.name, faction.id, skill.code, skill.cooldown, true, '{"minNonSoldierFactionHeroes":8}'::jsonb, skill.description
+SELECT skill.code, skill.name, faction.id, skill.code, skill.cooldown, true, '{"minNonSoldierFactionHeroes":5}'::jsonb, skill.description
 FROM (VALUES
     ('tran', 'bach_dang_tran_phap', 'Bạch Đằng Trận Pháp', 8,
         'Đặt ba bẫy ẩn trên sông trong 6 lượt. Quân địch đi qua bị khóa chân 4 lượt. Mỗi bẫy dùng một lần.'),

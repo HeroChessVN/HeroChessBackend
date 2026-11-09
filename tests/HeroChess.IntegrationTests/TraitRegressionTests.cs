@@ -15,16 +15,24 @@ public sealed partial class MatchFlowTests
     [Theory]
     [InlineData(FactionSkillHandler.Trap)]
     [InlineData(FactionSkillHandler.Forecast)]
-    public async Task Faction_skill_requires_eight_members_and_keeps_private_data_on_the_casting_side(string key)
+    [InlineData(FactionSkillHandler.Rally)]
+    public async Task Faction_skill_requires_five_members_excluding_soldiers_and_keeps_private_data_on_the_casting_side(string key)
     {
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var faction = new Faction { Id = Guid.NewGuid(), Code = $"test-{Guid.NewGuid():N}", Name = "Test faction" };
         var skill = new TeamSkill { Id = Guid.NewGuid(), Code = $"zz-{Guid.NewGuid():N}", Name = "Test faction skill",
-            FactionId = faction.Id, ImplementationKey = key, IsEnabled = true, CooldownTurns = 8 };
+            FactionId = faction.Id, ImplementationKey = key, IsEnabled = true, CooldownTurns = 8,
+            Eligibility = JsonDocument.Parse("""{"minNonSoldierFactionHeroes":8,"keepThisSetting":true}""") };
         db.Factions.Add(faction);
         db.TeamSkills.Add(skill);
         await db.SaveChangesAsync();
+        var migration = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Database", "18_faction_skill_requirements.sql"));
+        await db.Database.ExecuteSqlRawAsync(migration);
+        await db.Database.ExecuteSqlRawAsync(migration);
+        var migrated = (await db.TeamSkills.AsNoTracking().SingleAsync(s => s.Id == skill.Id)).Eligibility.RootElement;
+        Assert.Equal(5, migrated.GetProperty("minNonSoldierFactionHeroes").GetInt32());
+        Assert.True(migrated.GetProperty("keepThisSetting").GetBoolean());
         try
         {
             var (id, red, black) = await Ranked(false);
@@ -35,8 +43,14 @@ public sealed partial class MatchFlowTests
             Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
             Assert.Contains("FACTION_REQUIREMENT_NOT_MET", await rejected.Content.ReadAsStringAsync());
 
-            var heroIds = red.Lineup.Entries.Where(e => e.SlotNo < 12).Select(e => e.HeroId).Distinct().Take(8);
-            db.HeroFactions.AddRange(heroIds.Select(heroId => new HeroFaction { HeroId = heroId, FactionId = faction.Id }));
+            var heroIds = red.Lineup.Entries.Where(e => e.SlotNo < 12).Select(e => e.HeroId).Distinct().Take(5).ToArray();
+            var soldiers = red.Lineup.Entries.Where(e => e.SlotNo >= 12).Select(e => e.HeroId).Distinct();
+            db.HeroFactions.AddRange(heroIds.Take(4).Concat(soldiers).Select(heroId => new HeroFaction { HeroId = heroId, FactionId = faction.Id }));
+            await db.SaveChangesAsync();
+            using var fourHeroes = await red.Client.PutAsJsonAsync(lineupUrl, request, Json);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, fourHeroes.StatusCode);
+            Assert.Contains("FACTION_REQUIREMENT_NOT_MET", await fourHeroes.Content.ReadAsStringAsync());
+            db.HeroFactions.Add(new HeroFaction { HeroId = heroIds[4], FactionId = faction.Id });
             await db.SaveChangesAsync();
             var lineup = await Post<LineupDto>(red.Client, lineupUrl, request, HttpMethod.Put);
             await Select((red.Client, lineup), id);
@@ -56,7 +70,7 @@ public sealed partial class MatchFlowTests
                 var replay = (await black.Client.GetFromJsonAsync<ReplayPageDto>($"{url}/replay?afterSequence=0", Json))!;
                 Assert.Equal(0, Assert.Single(replay.Entries).StateAfter.GetProperty("riverSnares").GetArrayLength());
             }
-            else
+            else if (key == FactionSkillHandler.Forecast)
             {
                 var forecast = $"{url}/forecast?version={played.SequenceNo}";
                 var result = await red.Client.GetFromJsonAsync<JsonElement>(forecast, Json);
@@ -65,6 +79,14 @@ public sealed partial class MatchFlowTests
                 Assert.All(repeated, reply => Assert.True(JsonElement.DeepEquals(result, reply)));
                 using var hidden = await black.Client.GetAsync(forecast);
                 Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode);
+            }
+            else
+            {
+                var soldiersAfterSkill = played.Snapshot.State.GetProperty("pieces").EnumerateArray()
+                    .Where(p => p.GetProperty("side").GetString() == "red" && p.GetProperty("class").GetString() == "soldier").ToArray();
+                Assert.Equal(5, soldiersAfterSkill.Length);
+                Assert.All(soldiersAfterSkill, p => Assert.Contains(p.GetProperty("effects").EnumerateArray(),
+                    e => e.GetProperty("code").GetString() == FactionSkillHandler.Rally));
             }
             await Post<MatchCommandResultDto>(black.Client, $"{url}/commands",
                 new MatchCommandRequest(Guid.NewGuid(), played.SequenceNo, JsonSerializer.SerializeToElement(new { type = "resign" })));

@@ -41,7 +41,7 @@ Gọi login sau khi đăng ký. `/catalog` trả hero đang bật kèm `id`, `na
 - Ở màn xếp đội hình, đọc `heroes[].setupPoints` cho từng quân và `ruleset.setupBudget` cho giới hạn tổng SP. Sau khi lưu, dùng `totalSp`, `budget` và `validationErrors` từ phản hồi lineup. Trong trận và replay, dùng tên và SP từ snapshot của trận.
 - Ghép từng ID trong `heroes[].factionIds` với `factions[].id` để lấy `factions[].name`. Hiện có ba phe Trần, Hậu Lê và Tây Sơn. Mảng `factionIds` rỗng thì bỏ nhãn phe.
 - Nếu `heroes[].trait` là `null` thì ẩn phần trait của hero. Nếu có, hiển thị `trait.name` và `trait.description` khi có mô tả. Trong trận và replay, dùng metadata trait từ snapshot.
-- Có thể chọn tối đa một faction skill trong ba ô Command Skill. Để dùng một trong ba skill dưới đây, đội hình cần ít nhất 8 hero cùng phe trong 11 ô ngoài Tốt. BE kiểm tra lúc lưu và xác nhận đội hình.
+- Có thể chọn tối đa một faction skill trong ba ô Command Skill. Để dùng một trong ba skill dưới đây, đội hình cần ít nhất 5 hero khác nhau cùng phe trong 11 ô ngoài Tốt. BE kiểm tra lúc lưu và xác nhận đội hình. Quyền dùng được chốt khi vào trận, quân bị ăn sau đó không khóa lại kỹ năng.
 
 ## 3. Đội hình
 
@@ -124,6 +124,8 @@ Catalog dùng để hiển thị tên, SP, phe và trait khi xếp đội hình.
 | Quang Trung hệ Tướng | Kiểm tra `traitState.cooldownReady == 1` và `quangTrungCooldownRemaining` bằng 0 hoặc thiếu. Gọi `/hero-actions` để tô các đích server cho phép rồi gửi `hero_active` với `target.to`. |
 
 ### Faction Skill
+
+Unity đọc `teamSkills[].eligibility.minNonSoldierFactionHeroes` từ catalog để hiển thị số quân cần có. Bản DB từng dùng ngưỡng 8 cần chạy `18_faction_skill_requirements.sql` trước khi deploy BE dùng ngưỡng 5. Các hàm `CanUseTranSkill`, `CanUseHauLeSkill` và `CanUseTaySonSkill` trong `FactionSkillEligibility.cs` cho phép thay điều kiện từng phe. Khi đổi ngưỡng sau này, cập nhật metadata eligibility tương ứng để FE hiển thị đồng nhất.
 
 | Phe | `implementationKey` | `target` | CD |
 |---|---|---|---:|
