@@ -21,6 +21,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<HeroFaction> HeroFactions => Set<HeroFaction>();
     public DbSet<TeamSkill> TeamSkills => Set<TeamSkill>();
     public DbSet<Cosmetic> Cosmetics => Set<Cosmetic>();
+    public DbSet<BoardCosmetic> BoardCosmetics => Set<BoardCosmetic>();
+    public DbSet<PlayerBoardCosmetic> PlayerBoardCosmetics => Set<PlayerBoardCosmetic>();
+    public DbSet<PlayerBoardLoadout> PlayerBoardLoadouts => Set<PlayerBoardLoadout>();
     public DbSet<PlayerHero> PlayerHeroes => Set<PlayerHero>();
     public DbSet<PlayerCosmetic> PlayerCosmetics => Set<PlayerCosmetic>();
     public DbSet<SavedLineup> Lineups => Set<SavedLineup>();
@@ -57,6 +60,21 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<HeroTrait>(e => { Table(e, "hero_trait"); e.Property(x => x.ImplementationKey).HasColumnName("implementation_key"); e.Property(x => x.Parameters).HasColumnType("jsonb"); });
         model.Entity<Hero>(e => { Table(e, "hero"); e.Property(x => x.CharacterId).HasColumnName("character_id"); e.Property(x => x.ClassCode).HasColumnName("class_code"); e.Property(x => x.TraitId).HasColumnName("trait_id"); e.Property(x => x.SetupPoints).HasColumnName("setup_points"); e.Property(x => x.CoinPrice).HasColumnName("coin_price"); e.Property(x => x.IsStarter).HasColumnName("is_starter"); e.Property(x => x.IsEnabled).HasColumnName("is_enabled"); e.Property(x => x.IsTestFixture).HasColumnName("is_test_fixture"); e.Property(x => x.AssetKey).HasColumnName("asset_key"); e.HasOne(x => x.Trait).WithOne().HasForeignKey<Hero>(x => x.TraitId); e.HasIndex(x => x.TraitId).IsUnique().HasDatabaseName("uq_hero_trait_id"); });
         model.Entity<Faction>(e => Table(e, "faction"));
+        model.Entity<BoardCosmetic>(e => Table(e, "board_cosmetic"));
+        model.Entity<PlayerBoardCosmetic>(e =>
+        {
+            e.ToTable("player_board_cosmetic", "hero_chess");
+            e.HasKey(x => new { x.PlayerId, x.BoardCosmeticId });
+            e.HasOne<Player>().WithMany().HasForeignKey(x => x.PlayerId);
+            e.HasOne<BoardCosmetic>().WithMany().HasForeignKey(x => x.BoardCosmeticId);
+        });
+        model.Entity<PlayerBoardLoadout>(e =>
+        {
+            e.ToTable("player_board_loadout", "hero_chess");
+            e.HasKey(x => x.PlayerId);
+            e.HasOne<Player>().WithOne().HasForeignKey<PlayerBoardLoadout>(x => x.PlayerId);
+            e.HasOne<BoardCosmetic>().WithMany().HasForeignKey(x => x.BoardCosmeticId);
+        });
         model.Entity<HeroFaction>(e => { e.ToTable("hero_faction", "hero_chess"); e.HasKey(x => new { x.HeroId, x.FactionId }); e.Property(x => x.HeroId).HasColumnName("hero_id"); e.Property(x => x.FactionId).HasColumnName("faction_id"); });
         model.Entity<TeamSkill>(e => { Table(e, "team_skill"); e.Property(x => x.FactionId).HasColumnName("faction_id"); e.Property(x => x.ImplementationKey).HasColumnName("implementation_key"); e.Property(x => x.MaxUses).HasColumnName("max_uses"); e.Property(x => x.CooldownTurns).HasColumnName("cooldown_turns"); e.Property(x => x.IsEnabled).HasColumnName("is_enabled"); e.Property(x => x.IsTestFixture).HasColumnName("is_test_fixture"); e.Property(x => x.AssetKey).HasColumnName("asset_key"); e.Property(x => x.Parameters).HasColumnType("jsonb"); e.Property(x => x.Eligibility).HasColumnType("jsonb"); });
         model.Entity<Cosmetic>(e => { Table(e, "cosmetic"); e.Property(x => x.HeroId).HasColumnName("hero_id"); e.Property(x => x.CoinPrice).HasColumnName("coin_price"); e.Property(x => x.AssetKey).HasColumnName("asset_key"); e.Property(x => x.IsEnabled).HasColumnName("is_enabled"); });

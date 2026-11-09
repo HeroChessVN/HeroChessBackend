@@ -140,6 +140,10 @@ public sealed record ReplayPageDto(Guid MatchId, IReadOnlyList<ReplayEntryDto> E
 
 // PurchaseHeroDto: Kết quả mua, số coin đã trừ và số dư.
 public sealed record PurchaseHeroDto(Guid HeroId, bool Acquired, string CoinBalance, string Charged);
+public sealed record BoardCosmeticDto(Guid Id, string Code, string Name, string CoinPrice, string AssetKey, string PreviewKey, bool IsOwned);
+public sealed record BoardCosmeticCatalogDto(IReadOnlyList<BoardCosmeticDto> Items, string SelectedCode);
+public sealed record EquipBoardCosmeticRequest(string Code);
+public sealed record PurchaseBoardCosmeticDto(Guid BoardCosmeticId, bool Acquired, string CoinBalance, string Charged);
 // UpdatePriceRequest: Giá coin dạng chuỗi và lý do chỉnh.
 public sealed record UpdatePriceRequest(string CoinPrice, string? Reason = null);
 // AdminPriceDto: Xác nhận giá mới và thời điểm thay đổi.

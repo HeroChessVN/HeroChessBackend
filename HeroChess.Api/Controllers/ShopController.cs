@@ -10,6 +10,10 @@ namespace HeroChess.Api.Controllers;
 [ApiController, Authorize(Policy = AccountPolicies.Player), Route("api/v1/shop")]
 public sealed class ShopController(ShopService shop, ICurrentUser current) : ControllerBase
 {
+    [HttpPost("board-cosmetics/{id:guid}/purchase")]
+    public Task<PurchaseBoardCosmeticDto> PurchaseBoard(Guid id, CancellationToken ct) =>
+        shop.PurchaseBoardAsync(current.UserId, id, Request.Headers["Idempotency-Key"].FirstOrDefault(), ct);
+
     [HttpPost("heroes/{heroId:guid}/purchase")]
     // PurchaseHero: Đọc header Idempotency-Key và chuyển actor/hero sang ShopService.
     public async Task<ActionResult<PurchaseHeroDto>> PurchaseHero(Guid heroId, CancellationToken ct) =>

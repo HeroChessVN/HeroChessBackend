@@ -99,6 +99,7 @@ builder.Services.AddScoped<SettlementService>();
 builder.Services.AddScoped<MatchHistoryService>();
 builder.Services.AddScoped<RankingService>();
 builder.Services.AddScoped<ShopService>();
+builder.Services.AddScoped<BoardCosmeticService>();
 builder.Services.AddScoped<AdminService>();
 // Worker startup phục hồi trận; các BackgroundService sau đó theo dõi bot, timeout và việc cần retry.
 builder.Services.AddHostedService<MatchRecoveryHostedService>();
@@ -126,7 +127,7 @@ app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSecond
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// Liveness kiểm tra process; readiness còn kiểm tra migration phòng riêng trước khi nhận traffic.
+// Readiness kiểm tra schema phòng riêng và bàn cờ trước khi nhận traffic.
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
 app.MapGet("/health/ready", async (AppDbContext db, CancellationToken cancellationToken) =>
 {
@@ -135,7 +136,12 @@ app.MapGet("/health/ready", async (AppDbContext db, CancellationToken cancellati
         var roomSchemaReady = await db.Database.SqlQueryRaw<bool>("""
             SELECT (to_regclass('hero_chess.custom_room') IS NOT NULL
                 AND to_regclass('hero_chess.custom_room_member') IS NOT NULL
-                AND to_regclass('hero_chess.custom_room_rematch') IS NOT NULL) AS "Value"
+                AND to_regclass('hero_chess.custom_room_rematch') IS NOT NULL
+                AND to_regclass('hero_chess.board_cosmetic') IS NOT NULL
+                AND to_regclass('hero_chess.player_board_cosmetic') IS NOT NULL
+                AND to_regclass('hero_chess.player_board_loadout') IS NOT NULL
+                AND EXISTS (SELECT FROM information_schema.columns
+                    WHERE table_schema='hero_chess' AND table_name='coin_transaction' AND column_name='board_cosmetic_id')) AS "Value"
             """).SingleAsync(cancellationToken);
         return roomSchemaReady
             ? Results.Ok(new { status = "ready", database = "connected" })

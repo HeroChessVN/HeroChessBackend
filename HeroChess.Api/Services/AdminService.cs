@@ -15,6 +15,8 @@ public sealed class AdminService(AppDbContext db, TimeProvider clock)
     // UpdateCosmeticPriceAsync: Chuyển yêu cầu đổi giá cosmetic vào logic transaction chung.
     public Task<AdminPriceDto> UpdateCosmeticPriceAsync(Guid actorId, Guid id, UpdatePriceRequest request, CancellationToken ct) =>
         UpdatePrice(actorId, id, "cosmetic", request, ct);
+    public Task<AdminPriceDto> UpdateBoardPriceAsync(Guid actorId, Guid id, UpdatePriceRequest request, CancellationToken ct) =>
+        UpdatePrice(actorId, id, "board_cosmetic", request, ct);
 
     // UpdatePrice: Parse coinPrice, lock nội dung, lưu giá trước/sau và lý do vào audit cùng transaction.
     private async Task<AdminPriceDto> UpdatePrice(Guid actorId, Guid id, string entityType, UpdatePriceRequest request, CancellationToken ct)
@@ -27,6 +29,14 @@ public sealed class AdminService(AppDbContext db, TimeProvider clock)
         {
             var entity = await db.Heroes.FromSqlInterpolated($"SELECT * FROM hero_chess.hero WHERE id={id} FOR UPDATE").SingleOrDefaultAsync(ct)
                 ?? throw new ApiException(404, "HERO_NOT_FOUND", "The hero was not found.");
+            before = entity.CoinPrice; entity.CoinPrice = price;
+        }
+        else if (entityType == "board_cosmetic")
+        {
+            var entity = await db.BoardCosmetics.FromSqlInterpolated($"SELECT * FROM hero_chess.board_cosmetic WHERE id={id} FOR UPDATE").SingleOrDefaultAsync(ct)
+                ?? throw new ApiException(404, "BOARD_NOT_FOUND", "The board was not found.");
+            if (entity.Code == BoardCosmeticService.DefaultCode && price != 0)
+                throw new ApiException(422, "DEFAULT_BOARD_FREE", "The default board is always free.");
             before = entity.CoinPrice; entity.CoinPrice = price;
         }
         else

@@ -143,6 +143,37 @@ Trong trận có `state.publicRiverStakes`, đọc trait trên `state.pieces`, h
 
 Command hợp lệ trả `MatchCommandResultDto`: `matchId`, `commandId`, `sequenceNo`, `duplicate`, `resolvedEvents`, `snapshot`. Render bàn cờ từ `snapshot` mới; bot có thể đi ngay sau đó nên phải nhận cập nhật tiếp. Retry **cùng một command** bằng đúng `commandId` và action cũ để tránh ghi hai lần. Khi `409 STALE_STATE`, lấy `/state` mới rồi cho người chơi chọn lại nước với `commandId` mới. Deadline dùng `deadlineAt` so với `serverNow`; server tự xử lý hết giờ, FE chỉ hiển thị đếm ngược.
 
+### Trang phục bàn cờ
+
+Bốn code khớp Unity là `mac-dinh`, `son-mai`, `son-son`, `su-thanh`. Bàn mặc định được sở hữu sẵn. Giá khởi tạo ba mẫu còn lại là 200 gold mỗi mẫu. Mỗi người nhìn toàn bộ bàn theo mẫu của mình, áp dụng khi mở bàn tiếp theo.
+
+| Method và route | Request và response |
+|---|---|
+| GET /board-cosmetics | Trả `items` và `selectedCode` cho tài khoản Player |
+| POST /shop/board-cosmetics/{id}/purchase | Header `Idempotency-Key: <UUID>`. Trả `boardCosmeticId, acquired, coinBalance, charged` |
+| PUT /me/board-cosmetic | Body `{"code":"son-son"}`. Trả item đã trang bị |
+| PATCH /admin/board-cosmetics/{id}/price | Admin gửi `{"coinPrice":"200","reason":"..."}`, lưu audit |
+
+Mỗi item có `id, code, name, coinPrice, assetKey, previewKey, isOwned`. Giá và số dư là chuỗi số nguyên như shop hero. Item mặc định luôn có trong catalog. Mẫu bị tắt ẩn khỏi catalog, lựa chọn effective quay về `mac-dinh`.
+
+Lỗi mua gồm `BOARD_NOT_FOUND`, `BOARD_DISABLED`, `BOARD_ALREADY_OWNED`, `INSUFFICIENT_COINS`, `INVALID_IDEMPOTENCY_KEY` và `IDEMPOTENCY_KEY_CONFLICT`. Lỗi trang bị mẫu chưa sở hữu là `BOARD_NOT_OWNED`. Mỗi lần mua mới tạo UUID mới. Khi retry cùng lần mua, giữ UUID và ID bàn cũ. Dùng key đã mua hero cho bàn cờ hoặc ngược lại trả 409.
+
+Unity nối như sau.
+
+1. Sau login và vào shop, GET catalog bàn để nhận quyền sở hữu và `selectedCode`. Tra model theo code trong BoardCosmeticCatalog hiện có.
+2. Shop hiển thị MUA hoặc TRANG BỊ theo `isOwned`. Mua thành công cập nhật ví, catalog và quyền trang bị. Server không tự trang bị sau khi mua.
+3. Khi bấm TRANG BỊ, PUT lựa chọn. Chỉ cập nhật cache BoardCosmeticCatalog sau response thành công.
+4. Cache phải tách theo userId. Logout hoặc đổi tài khoản nạp lại lựa chọn. PlayerPrefs cũ chỉ là lựa chọn local và không cấp quyền sở hữu.
+5. XiangqiBoardDirector chốt code lúc tạo bàn, tải Resources và giữ model trong phiên xem trận. Code lạ hoặc thiếu model thì dùng mặc định. Hai người có thể thấy hai mẫu khác nhau.
+
+Giữ skin hero và `entries[].cosmeticId` cũ để đọc đội hình và replay đã lưu. Bàn mới dùng endpoint riêng. Team Unity có thể ẩn tab Bộ quân khi thu hẹp giao diện về cosmetic bàn.
+
+Triển khai production theo thứ tự sau.
+
+1. Chạy `HeroChess.Api/Data/Bootstrap/17_board_cosmetics.sql` trên Supabase trước khi deploy BE mới. SQL tạo bảng, mở rộng ledger và seed bốn mẫu. Chạy lại giữ giá và dữ liệu đã có.
+2. Deploy backend, kiểm tra `/health/ready`. Thiếu bảng board hoặc cột ledger mới sẽ trả 503 để workflow dừng nhận bản schema chưa đủ.
+3. Nối Unity bằng bốn route trên. Bản backend mặc định tắt bootstrap nên deploy riêng sẽ không tự cài SQL production.
+
 ## 6. Đồng bộ thời gian thực
 
 REST polling đủ để làm bản demo; nếu cần cập nhật ngay giữa hai máy, dùng WebSocket:

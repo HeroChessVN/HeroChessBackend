@@ -19,6 +19,110 @@ public sealed class ShopAdminTests : IClassFixture<HeroChessFactory>
     public ShopAdminTests(HeroChessFactory factory) => _factory = factory;
 
     [Fact]
+    public async Task Board_purchase_and_equipment_survive_retry_and_account_switch()
+    {
+        var player = await Register();
+        var other = await Register();
+        const string catalogPath = "/api/v1/board-cosmetics";
+        var catalog = (await player.GetFromJsonAsync<BoardCosmeticCatalogDto>(catalogPath, Json))!;
+        Assert.Equal(4, catalog.Items.Count);
+        Assert.Equal("mac-dinh", catalog.SelectedCode);
+        Assert.True(catalog.Items.Single(x => x.Code == "mac-dinh").IsOwned);
+        var board = catalog.Items.Single(x => x.Code == "son-son");
+        Assert.Equal("200", board.CoinPrice);
+        Assert.False(board.IsOwned);
+        using var denied = await player.PutAsJsonAsync("/api/v1/me/board-cosmetic", new EquipBoardCosmeticRequest(board.Code), Json);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, denied.StatusCode);
+        var key = Guid.NewGuid();
+        var purchased = await Task.WhenAll(PurchaseBoard(player, board.Id, key), PurchaseBoard(player, board.Id, key));
+        Assert.All(purchased, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        var first = (await purchased[0].Content.ReadFromJsonAsync<PurchaseBoardCosmeticDto>(Json))!;
+        Assert.Equal(first, await purchased[1].Content.ReadFromJsonAsync<PurchaseBoardCosmeticDto>(Json));
+        Assert.Equal("800", first.CoinBalance);
+        Assert.Equal("200", first.Charged);
+        Assert.Equal(HttpStatusCode.Conflict, (await PurchaseBoard(player, board.Id, Guid.NewGuid())).StatusCode);
+        Assert.Equal(board.Code, (await Put<BoardCosmeticDto>(player, "/api/v1/me/board-cosmetic", new EquipBoardCosmeticRequest(board.Code))).Code);
+        Assert.Equal(board.Code, (await player.GetFromJsonAsync<BoardCosmeticCatalogDto>(catalogPath, Json))!.SelectedCode);
+        Assert.Equal("mac-dinh", (await other.GetFromJsonAsync<BoardCosmeticCatalogDto>(catalogPath, Json))!.SelectedCode);
+        Assert.Equal("mac-dinh", (await Put<BoardCosmeticDto>(player, "/api/v1/me/board-cosmetic", new EquipBoardCosmeticRequest("mac-dinh"))).Code);
+
+        var heroes = (await player.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
+        var free = heroes.Heroes.Single(h => h.Code == "dev-free-soldier");
+        Assert.Equal(HttpStatusCode.Conflict, (await Purchase(player, free.Id, key)).StatusCode);
+        var heroKey = Guid.NewGuid();
+        Assert.Equal(HttpStatusCode.OK, (await Purchase(player, free.Id, heroKey)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await PurchaseBoard(player, catalog.Items.Single(x => x.Code == "su-thanh").Id, heroKey)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await player.PostAsync($"/api/v1/shop/board-cosmetics/{board.Id}/purchase", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Board_purchase_race_charges_once_and_disabled_selection_falls_back()
+    {
+        var player = await Register();
+        var catalog = (await player.GetFromJsonAsync<BoardCosmeticCatalogDto>("/api/v1/board-cosmetics", Json))!;
+        var board = catalog.Items.Single(b => b.Code == "son-mai");
+        var responses = await Task.WhenAll(PurchaseBoard(player, board.Id, Guid.NewGuid()), PurchaseBoard(player, board.Id, Guid.NewGuid()));
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.OK);
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Conflict);
+        await Put<BoardCosmeticDto>(player, "/api/v1/me/board-cosmetic", new EquipBoardCosmeticRequest(board.Code));
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.BoardCosmetics.SingleAsync(b => b.Id == board.Id);
+        try
+        {
+            row.IsEnabled = false;
+            await db.SaveChangesAsync();
+            var refreshed = (await player.GetFromJsonAsync<BoardCosmeticCatalogDto>("/api/v1/board-cosmetics", Json))!;
+            Assert.Equal("mac-dinh", refreshed.SelectedCode);
+            Assert.DoesNotContain(refreshed.Items, b => b.Id == board.Id);
+            var buyer = await Register();
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await PurchaseBoard(buyer, board.Id, Guid.NewGuid())).StatusCode);
+        }
+        finally { row.IsEnabled = true; await db.SaveChangesAsync(); }
+    }
+
+    [Fact]
+    public async Task Board_migration_preserves_prices_and_free_purchase_has_no_zero_ledger()
+    {
+        await using var factory = new HeroChessFactory();
+        var isolated = new ShopAdminTests(factory);
+        var player = await isolated.Register();
+        var admin = await isolated.Register(factory.DevelopmentAdminEmail);
+        var catalog = (await player.GetFromJsonAsync<BoardCosmeticCatalogDto>("/api/v1/board-cosmetics", Json))!;
+        var board = catalog.Items.Single(b => b.Code == "su-thanh");
+        var priceUrl = $"/api/v1/admin/board-cosmetics/{board.Id}/price";
+        Assert.Equal(HttpStatusCode.Forbidden, (await player.PatchAsJsonAsync(priceUrl, new UpdatePriceRequest("0", "forbidden"), Json)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/v1/board-cosmetics")).StatusCode);
+        try
+        {
+            Assert.Equal(HttpStatusCode.OK, (await admin.PatchAsJsonAsync(priceUrl, new UpdatePriceRequest("2001", "test board price"), Json)).StatusCode);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await PurchaseBoard(player, board.Id, Guid.NewGuid())).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PatchAsJsonAsync(priceUrl, new UpdatePriceRequest("0", "free test"), Json)).StatusCode);
+            var key = Guid.NewGuid();
+            var acquired = (await (await PurchaseBoard(player, board.Id, key)).Content.ReadFromJsonAsync<PurchaseBoardCosmeticDto>(Json))!;
+            Assert.Equal("0", acquired.Charged);
+            Assert.Equal("1000", acquired.CoinBalance);
+            await using var scope = factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Database", "17_board_cosmetics.sql"));
+            await db.Database.ExecuteSqlRawAsync(sql);
+            await db.Database.ExecuteSqlRawAsync(sql);
+            Assert.Equal(0, (await db.BoardCosmetics.AsNoTracking().SingleAsync(x => x.Id == board.Id)).CoinPrice);
+            Assert.False(await db.CoinTransactions.AnyAsync(x => x.IdempotencyKey == key.ToString("D")));
+            Assert.Contains((await admin.GetFromJsonAsync<AdminAuditPageDto>("/api/v1/admin/audit?limit=100", Json))!.Items,
+                entry => entry.EntityId == board.Id.ToString() && entry.EntityType == "board_cosmetic");
+        }
+        finally { (await admin.PatchAsJsonAsync(priceUrl, new UpdatePriceRequest("200", "restore"), Json)).EnsureSuccessStatusCode(); }
+    }
+
+    private static Task<HttpResponseMessage> PurchaseBoard(HttpClient client, Guid id, Guid key)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/shop/board-cosmetics/{id}/purchase");
+        request.Headers.Add("Idempotency-Key", key.ToString("D"));
+        return client.SendAsync(request);
+    }
+
+    [Fact]
     // Purchase_is_atomic_idempotent_and_admin_price_changes_are_audited: Kiểm tra trừ coin/ownership, retry cùng key, quyền admin và giá trước/sau trong audit.
     public async Task Purchase_is_atomic_idempotent_and_admin_price_changes_are_audited()
     {
@@ -93,7 +197,8 @@ public sealed class ShopAdminTests : IClassFixture<HeroChessFactory>
         var client = _factory.CreateClient(); var email = requestedEmail ?? $"shop-{Guid.NewGuid():N}@hero.local"; var password = $"A1!{Guid.NewGuid():N}";
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password })).StatusCode);
         var login = await (await client.PostAsJsonAsync("/api/v1/auth/login?useCookies=false", new { email, password })).Content.ReadFromJsonAsync<TokenResponse>(Json);
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken); return client;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+        return client;
     }
 
     // Purchase: POST mua hero kèm Idempotency-Key.
