@@ -4,6 +4,17 @@ Tài liệu này ghi lại cách chạy trang quản trị AdminWeb (React) + Ba
 
 > Chi tiết contract DTO của từng endpoint: [`ADMIN_API_GUIDE.md`](./ADMIN_API_GUIDE.md).
 
+> **AdminWeb đã tách thành repository độc lập:**
+> <https://github.com/HeroChessVN/HeroChessAdminWeb>
+>
+> Thư mục `admin-web/` **không còn nằm trong repository Backend này**. Backend vẫn sở hữu
+> và phục vụ toàn bộ Admin API; contract API không thay đổi.
+>
+> | Nội dung | Nơi nằm |
+> |---|---|
+> | Source AdminWeb, docs của AdminWeb, UI audit | [`HeroChessAdminWeb`](https://github.com/HeroChessVN/HeroChessAdminWeb) |
+> | Contract Admin API, authorization, database | Repository này (`HeroChessBackend`), mục `docs/admin/` |
+
 ---
 
 ## 1. Chạy code
@@ -24,8 +35,13 @@ dotnet run --launch-profile http
 
 ### 1.2 AdminWeb frontend (port 5175)
 
+> AdminWeb nằm ở repository riêng: <https://github.com/HeroChessVN/HeroChessAdminWeb>
+>
+> Clone về một thư mục độc lập, ví dụ `C:\Users\ptien\Herochess\Code\HeroChessAdminWeb`:
+
 ```powershell
-cd C:\Users\ptien\Herochess\Code\HeroChessBackend\admin-web
+git clone https://github.com/HeroChessVN/HeroChessAdminWeb.git C:\Users\ptien\Herochess\Code\HeroChessAdminWeb
+cd C:\Users\ptien\Herochess\Code\HeroChessAdminWeb
 npm ci          # chỉ lần đầu
 npm run dev     # vite --host 127.0.0.1 --port 5175
 ```
@@ -34,6 +50,7 @@ npm run dev     # vite --host 127.0.0.1 --port 5175
 - Vite proxy `/api/v1` → backend. Đổi backend thì set `HERO_CHESS_API_URL=http://localhost:5012` trước khi `npm run dev`.
 - `VITE_ADMIN_API_URL` (tuỳ chọn) để ghi đè base URL của client.
 - Build để serve tĩnh: `npm run build` → `dist/` (base `/admin/`).
+- Chi tiết cấu trúc, deploy và xử lý sự cố: `docs/` trong repository AdminWeb.
 
 ---
 
@@ -206,7 +223,7 @@ Bảng `hero_chess.chess_class` (7 dòng) là nguồn duy nhất. AdminWeb **kh�
 - Backend: `GET /api/v1/admin/chess-classes` đọc thẳng bảng `chess_class`, trả `ChessClassDto` (`code`, `nameVi`, `baseSp`, `requiredCount`, `baseMovementCode`).
 - Form tạo hero: trường "Lớp quân" là **text read-only**, hiển thị nhãn lấy từ DB. Hero mới luôn thuộc lớp mặc định `ADVISOR` (quân Sĩ) — không có dropdown chọn.
 - Form sửa hero: lớp hiển thị **read-only** (`disabled`) — không đổi được sau khi tạo; API `PATCH /admin/heroes/{id}` cũng không nhận `classCode`.
-- `admin-web/src/lib/chessClasses.ts` có fallback `FALLBACK_CLASSES` (ảnh chụp DB) để console vẫn chạy được khi backend chưa có endpoint mới.
+- `src/lib/chessClasses.ts` trong repository AdminWeb có fallback `FALLBACK_CLASSES` (ảnh chụp DB) để console vẫn chạy được khi backend chưa có endpoint mới.
 
 ---
 

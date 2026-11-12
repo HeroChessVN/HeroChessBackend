@@ -161,7 +161,14 @@ DB test: PostgreSQL 17.4 portable, cổng `55439`, database `hero_chess_test`, `
 
 ## 9. AdminWeb (React + TypeScript) — giai đoạn frontend
 
-Thư mục `admin-web/` — package riêng, không đụng `frontend/` (frontend đang dùng để test backend).
+> **Lưu ý (cập nhật):** AdminWeb đã được tách thành repository độc lập:
+> <https://github.com/HeroChessVN/HeroChessAdminWeb>.
+> Thư mục `admin-web/` **không còn nằm trong repository Backend này** — mục này giữ lại
+> lịch sử triển khai và các quy ước kỹ thuật đã áp dụng.
+> Tài liệu vận hành hiện hành của AdminWeb nằm ở repository AdminWeb (`docs/`).
+> Backend vẫn sở hữu Admin API và contract của nó.
+
+Thư mục `admin-web/` (nay đã tách riêng) — package riêng, không đụng `frontend/` (frontend đang dùng để test backend).
 
 | Hạng mục | Lựa chọn | Vì sao |
 |---|---|---|
@@ -172,6 +179,9 @@ Thư mục `admin-web/` — package riêng, không đụng `frontend/` (frontend
 | Biểu đồ | `recharts` | Chỉ dùng ở màn Analytics (bước 5). |
 
 ### 9.1 Cấu trúc
+
+> Ảnh chụp cấu trúc tại thời điểm giai đoạn frontend. Cấu trúc hiện hành (12 page,
+> 11 component UI, 3 feature drawer, `ui-audit/`, `docs/`) nằm ở repository AdminWeb.
 
 ```
 admin-web/
@@ -200,8 +210,12 @@ admin-web/
 
 ### 9.3 Cấu hình chạy
 
+> Thư mục `admin-web/` nay độc lập — clone từ
+> <https://github.com/HeroChessVN/HeroChessAdminWeb> vào một thư mục riêng, ví dụ
+> `C:\Users\ptien\Herochess\Code\HeroChessAdminWeb`.
+
 ```bash
-cd admin-web
+cd C:\Users\ptien\Herochess\Code\HeroChessAdminWeb
 npm install
 npm run dev          # http://127.0.0.1:5175  (proxy /api/v1 -> HERO_CHESS_API_URL, mặc định http://127.0.0.1:5012)
 npm run build        # tsc -b && vite build -> dist/ (base '/admin/' khi build)
