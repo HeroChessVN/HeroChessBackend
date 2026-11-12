@@ -121,6 +121,7 @@ Header bắt buộc: `Authorization: Bearer <accessToken>`.
 | Method | Endpoint | Policy | Mục đích |
 |---|---|---|---|
 | GET | `/admin/heroes?limit=50` | `admin-read:hero` | Danh sách hero (lọc `query`, `classCode`, `factionCode`, `enabled`, `inShop`) |
+| GET | `/admin/chess-classes` | `admin-read:hero` | Danh sách lớp quân lấy nguyên từ bảng `hero_chess.chess_class` |
 | GET | `/admin/heroes/{id}` | `admin-read:hero` | Chi tiết hero + cosmetics + skills + lịch sử giá |
 | POST | `/admin/heroes` | `admin-write:hero` | Tạo hero |
 | PATCH | `/admin/heroes/{id}` | `admin-write:hero` | Sửa hero (bật/tắt, đổi giá…) |
@@ -197,6 +198,15 @@ Cấu hình nằm trong `hero_chess.admin_permission` (`admin_user_id`, `permiss
 - Miền: `read`, `hero`, `shop`, `player`, `giftcode`, `analytics`, `ruleset`, `audit`, `admin`.
 
 Mọi thao tác **ghi** đều được ghi vào `hero_chess.admin_audit_log` (actor, before/after, reason).
+
+### 5.1 Lớp quân — nguồn duy nhất là DB
+
+Bảng `hero_chess.chess_class` (7 dòng) là nguồn duy nhất. AdminWeb **không** hardcode danh sách lớp:
+
+- Backend: `GET /api/v1/admin/chess-classes` đọc thẳng bảng `chess_class`, trả `ChessClassDto` (`code`, `nameVi`, `baseSp`, `requiredCount`, `baseMovementCode`).
+- Form tạo hero: trường "Lớp quân" là **text read-only**, hiển thị nhãn lấy từ DB. Hero mới luôn thuộc lớp mặc định `ADVISOR` (quân Sĩ) — không có dropdown chọn.
+- Form sửa hero: lớp hiển thị **read-only** (`disabled`) — không đổi được sau khi tạo; API `PATCH /admin/heroes/{id}` cũng không nhận `classCode`.
+- `admin-web/src/lib/chessClasses.ts` có fallback `FALLBACK_CLASSES` (ảnh chụp DB) để console vẫn chạy được khi backend chưa có endpoint mới.
 
 ---
 

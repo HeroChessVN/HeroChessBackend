@@ -4,10 +4,11 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Filter, Plus, RefreshCw, Search, Swords } from 'lucide-react';
 import { api, buildQuery } from '../lib/api';
+import { loadChessClasses } from '../lib/chessClasses';
 import { usePagedResource, useResource } from '../lib/useResource';
 import { useAuth } from '../auth/AuthContext';
 import { canWrite, PERMISSION_HERO } from '../lib/permissions';
-import type { AdminFactionDto, AdminHeroDto, AdminHeroPageDto } from '../lib/types';
+import type { AdminFactionDto, AdminHeroDto, AdminHeroPageDto, ChessClassDto } from '../lib/types';
 import { formatCoin } from '../lib/format';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -63,6 +64,8 @@ export function HeroesPage() {
 
   const heroes = usePagedResource(load, [applied]);
   const factions = useResource<AdminFactionDto[]>(signal => api.get<AdminFactionDto[]>('/admin/factions', signal), []);
+  // Lớp quân lấy nguyên từ DB; nhãn hiển thị theo name_vi của bảng chess_class.
+  const classes = useResource<ChessClassDto[]>(signal => loadChessClasses(signal), []);
 
   const classCodes = useMemo(() => {
     const codes = new Set<string>();
@@ -144,7 +147,7 @@ export function HeroesPage() {
               <option value="">Tất cả</option>
               {classCodes.map(code => (
                 <option key={code} value={code}>
-                  {classLabel(code)}
+                  {classLabel(code, classes.data)}
                 </option>
               ))}
             </select>
@@ -229,7 +232,7 @@ export function HeroesPage() {
                         </button>
                         <p className="font-mono text-xs text-ink-dim">{hero.code}</p>
                       </td>
-                      <td className="text-ink-muted">{classLabel(hero.classCode)}</td>
+                      <td className="text-ink-muted">{classLabel(hero.classCode, classes.data)}</td>
                       <td className="text-ink-muted">{hero.factionCodes.length > 0 ? hero.factionCodes.join(', ') : '—'}</td>
                       <td className="text-right tabular-nums text-ink-muted">{hero.setupPoints}</td>
                       <td className="text-right tabular-nums text-ink">{formatCoin(hero.coinPrice)}</td>
@@ -287,6 +290,7 @@ export function HeroesPage() {
       {editing && (
         <HeroForm
           hero={editing === 'new' ? null : editing}
+          classes={classes.data ?? []}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);

@@ -1,20 +1,23 @@
-// Vai trò file: Nhãn tiếng Việt cho mã lớp hero. Mã lớp lấy từ seed catalog thực tế
-// (Hero_Chess_DB_Prototype_v0_1/02_seed_catalog.sql): ADVISOR, GENERAL, ELEPHANT, HORSE, ROOK, CANNON, SOLDIER.
+// Vai trò file: Nhãn tiếng Việt + danh sách lớp quân. Nguồn chuẩn là bảng hero_chess.chess_class
+// (GET /api/v1/admin/chess-classes). Bảng fallback chỉ dùng khi backend chưa có endpoint mới.
 
-const labels: Record<string, string> = {
-  ADVISOR: 'Quân sư',
-  GENERAL: 'Tướng quân',
-  ELEPHANT: 'Tượng',
-  HORSE: 'Mã',
-  ROOK: 'Xe',
-  CANNON: 'Pháo',
-  SOLDIER: 'Binh'
-};
+import type { ChessClassDto } from './types';
 
-// classLabel: Dịch mã lớp sang nhãn; mã lạ giữ nguyên để không mất thông tin.
-export function classLabel(code: string): string {
-  return labels[code.toUpperCase()] ?? code;
+// FALLBACK_CLASSES: Ảnh chụp của hero_chess.chess_class, dùng khi gọi /admin/chess-classes lỗi.
+export const FALLBACK_CLASSES: ChessClassDto[] = [
+  { code: 'ADVISOR', nameVi: 'Sĩ', baseSp: 1, requiredCount: 2, baseMovementCode: 'xiangqi.advisor' },
+  { code: 'CANNON', nameVi: 'Pháo', baseSp: 6, requiredCount: 2, baseMovementCode: 'xiangqi.cannon' },
+  { code: 'ELEPHANT', nameVi: 'Tượng', baseSp: 2, requiredCount: 2, baseMovementCode: 'xiangqi.elephant' },
+  { code: 'GENERAL', nameVi: 'Tướng', baseSp: 0, requiredCount: 1, baseMovementCode: 'xiangqi.general' },
+  { code: 'HORSE', nameVi: 'Mã', baseSp: 4, requiredCount: 2, baseMovementCode: 'xiangqi.horse' },
+  { code: 'ROOK', nameVi: 'Xe', baseSp: 7, requiredCount: 2, baseMovementCode: 'xiangqi.rook' },
+  { code: 'SOLDIER', nameVi: 'Tốt', baseSp: 1, requiredCount: 5, baseMovementCode: 'xiangqi.soldier' }
+];
+
+const fallback: Record<string, string> = Object.fromEntries(FALLBACK_CLASSES.map(x => [x.code, x.nameVi]));
+
+// classLabel: Dịch mã lớp sang nhãn. Ưu tiên name_vi từ DB; mã lạ giữ nguyên để không mất thông tin.
+export function classLabel(code: string, classes?: ChessClassDto[] | null): string {
+  const fromDb = classes?.find(x => x.code === code)?.nameVi;
+  return fromDb ?? fallback[code.toUpperCase()] ?? code;
 }
-
-// CLASS_CODES: Danh sách lớp hợp lệ dùng cho form tạo hero.
-export const CLASS_CODES = Object.keys(labels);

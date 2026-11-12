@@ -6,6 +6,15 @@ export interface AdminPermissionDto {
   description: string;
 }
 
+// ChessClassDto: Lớp quân lấy nguyên từ bảng hero_chess.chess_class (GET /admin/chess-classes).
+export interface ChessClassDto {
+  code: string;
+  nameVi: string;
+  baseSp: number;
+  requiredCount: number;
+  baseMovementCode: string;
+}
+
 export interface AdminHeroDto {
   id: string;
   code: string;

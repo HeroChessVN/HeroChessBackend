@@ -5,9 +5,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FileJson, ListOrdered, Users } from 'lucide-react';
 import { api } from '../../lib/api';
+import { loadChessClasses } from '../../lib/chessClasses';
 import { formatDateTime, formatNumber } from '../../lib/format';
 import { classLabel } from '../../lib/classLabel';
-import type { AdminMatchActionDto, AdminMatchDetailDto } from '../../lib/types';
+import type { AdminMatchActionDto, AdminMatchDetailDto, ChessClassDto } from '../../lib/types';
 import { Drawer } from '../ui/Drawer';
 import { Badge, statusTone } from '../ui/Badge';
 import { Skeleton } from '../ui/Skeleton';
@@ -23,6 +24,7 @@ interface MatchDetailDrawerProps {
 export function MatchDetailDrawer({ matchId, onClose }: MatchDetailDrawerProps) {
   const [detail, setDetail] = useState<AdminMatchDetailDto | null>(null);
   const [actions, setActions] = useState<AdminMatchActionDto[]>([]);
+  const [classes, setClasses] = useState<ChessClassDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [actionsLoading, setActionsLoading] = useState(false);
@@ -33,6 +35,8 @@ export function MatchDetailDrawer({ matchId, onClose }: MatchDetailDrawerProps) 
     try {
       const result = await api.get<AdminMatchDetailDto>(`/admin/matches/${matchId}`);
       setDetail(result);
+      // Lớp quân lấy nhãn từ DB; lỗi endpoint này không được làm hỏng drawer trận.
+      loadChessClasses().then(setClasses).catch(() => setClasses([]));
       // Nhật ký hành động tải riêng để trận chi tiết vẫn hiện nhanh.
       setActionsLoading(true);
       try {
@@ -145,7 +149,7 @@ export function MatchDetailDrawer({ matchId, onClose }: MatchDetailDrawerProps) 
                                 {hero.heroName ?? hero.heroCode ?? '—'}
                                 {hero.heroCode && <span className="ml-1 font-mono text-xs text-ink-dim">{hero.heroCode}</span>}
                               </td>
-                              <td className="text-ink-muted">{classLabel(hero.classCode)}</td>
+                              <td className="text-ink-muted">{classLabel(hero.classCode, classes)}</td>
                               <td className="text-ink-muted">{hero.factionCode ?? '—'}</td>
                               <td className="text-right tabular-nums text-ink-muted">{hero.setupPoints}</td>
                               <td className="text-right tabular-nums text-ink-dim">

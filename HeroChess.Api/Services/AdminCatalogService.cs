@@ -171,6 +171,11 @@ public sealed class AdminCatalogService(AppDbContext db, AdminAuditWriter audit)
         return (await SkillDtosAsync([skill], ct))[0];
     }
 
+    // ListChessClassesAsync: Danh sách lớp quân lấy nguyên từ bảng hero_chess.chess_class; nguồn duy nhất cho form tạo hero.
+    public async Task<IReadOnlyList<ChessClassDto>> ListChessClassesAsync(CancellationToken ct) =>
+        await db.ChessClasses.AsNoTracking().OrderBy(x => x.Code)
+            .Select(x => new ChessClassDto(x.Code, x.NameVi, x.BaseSp, x.RequiredCount, x.BaseMovementCode)).ToListAsync(ct);
+
     // ListFactionsAsync: Danh sách phe kèm số hero và số skill thuộc phe.
     public async Task<IReadOnlyList<AdminFactionDto>> ListFactionsAsync(CancellationToken ct)
     {

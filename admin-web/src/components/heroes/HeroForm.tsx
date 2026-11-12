@@ -5,8 +5,8 @@
 import { useState } from 'react';
 import { Save, X } from 'lucide-react';
 import { api } from '../../lib/api';
-import { CLASS_CODES, classLabel } from '../../lib/classLabel';
-import type { AdminHeroDto, AdminHeroUpdateRequest, AdminHeroUpsertRequest } from '../../lib/types';
+import { DEFAULT_CLASS_CODE } from '../../lib/chessClasses';
+import type { AdminHeroDto, AdminHeroUpdateRequest, AdminHeroUpsertRequest, ChessClassDto } from '../../lib/types';
 import { Button } from '../ui/Button';
 import { Field } from '../ui/Field';
 import { Drawer } from '../ui/Drawer';
@@ -14,6 +14,8 @@ import { useToast } from '../ui/Toast';
 
 interface HeroFormProps {
   hero: AdminHeroDto | null;
+  // Lớp quân lấy nguyên từ DB (hero_chess.chess_class) — parent tải và truyền vào.
+  classes: ChessClassDto[];
   onClose: () => void;
   onSaved: () => void;
 }
@@ -35,7 +37,7 @@ interface FormState {
 const blank: FormState = {
   code: '',
   name: '',
-  classCode: CLASS_CODES[0] ?? 'ADVISOR',
+  classCode: DEFAULT_CLASS_CODE,
   setupPoints: '1',
   coinPrice: '0',
   isEnabled: true,
@@ -46,7 +48,7 @@ const blank: FormState = {
   reason: ''
 };
 
-export function HeroForm({ hero, onClose, onSaved }: HeroFormProps) {
+export function HeroForm({ hero, classes, onClose, onSaved }: HeroFormProps) {
   const { notify } = useToast();
   const [form, setForm] = useState<FormState>(() =>
     hero
@@ -159,25 +161,20 @@ export function HeroForm({ hero, onClose, onSaved }: HeroFormProps) {
           {props => <input {...props} className="input" value={form.name} onChange={event => set('name', event.target.value)} />}
         </Field>
 
-        <Field label="Lớp quân" required error={errors.classCode}>
+        <Field
+          label="Lớp quân"
+          required
+          error={errors.classCode}
+          hint="Lớp quân lấy từ DB và không đổi được. Hero mới luôn thuộc lớp mặc định."
+        >
           {props => (
-            <select
+            <input
               {...props}
               className="input"
-              value={form.classCode}
-              onChange={event => {
-                const classCode = event.target.value;
-                // Luật DB: class khác GENERAL phải có setupPoints >= 1 — nâng giá trị ngay để form hợp lệ.
-                const setupPoints = classCode !== 'GENERAL' && Number(form.setupPoints) < 1 ? '1' : form.setupPoints;
-                setForm(current => ({ ...current, classCode, setupPoints }));
-              }}
-            >
-              {CLASS_CODES.map(code => (
-                <option key={code} value={code}>
-                  {classLabel(code)} ({code})
-                </option>
-              ))}
-            </select>
+              value={classes.find(x => x.code === form.classCode)?.nameVi ?? form.classCode}
+              readOnly
+              disabled
+            />
           )}
         </Field>
 

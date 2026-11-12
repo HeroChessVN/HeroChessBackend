@@ -4,9 +4,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Coins, Crown, Layers, ScrollText, Tag, Users } from 'lucide-react';
 import { api } from '../../lib/api';
+import { loadChessClasses } from '../../lib/chessClasses';
 import { formatCoin, formatDateTime, formatNumber } from '../../lib/format';
 import { classLabel } from '../../lib/classLabel';
-import type { AdminFactionDto, AdminHeroDetailDto } from '../../lib/types';
+import type { AdminFactionDto, AdminHeroDetailDto, ChessClassDto } from '../../lib/types';
 import { Drawer } from '../ui/Drawer';
 import { Badge, statusTone } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -27,6 +28,7 @@ export function HeroDetailDrawer({ heroId, writable, onClose, onChanged }: HeroD
   const { notify } = useToast();
   const [detail, setDetail] = useState<AdminHeroDetailDto | null>(null);
   const [factions, setFactions] = useState<AdminFactionDto[]>([]);
+  const [classes, setClasses] = useState<ChessClassDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [factionId, setFactionId] = useState('');
@@ -37,12 +39,14 @@ export function HeroDetailDrawer({ heroId, writable, onClose, onChanged }: HeroD
     setLoading(true);
     setError(null);
     try {
-      const [heroDetail, factionList] = await Promise.all([
+      const [heroDetail, factionList, classList] = await Promise.all([
         api.get<AdminHeroDetailDto>(`/admin/heroes/${heroId}`),
-        api.get<AdminFactionDto[]>('/admin/factions')
+        api.get<AdminFactionDto[]>('/admin/factions'),
+        loadChessClasses()
       ]);
       setDetail(heroDetail);
       setFactions(factionList);
+      setClasses(classList);
       setFactionId(heroDetail.hero.factionCodes.length > 0 ? (factionList.find(x => x.code === heroDetail.hero.factionCodes[0])?.id ?? '') : '');
     } catch (cause) {
       setError(cause);
@@ -88,7 +92,7 @@ export function HeroDetailDrawer({ heroId, writable, onClose, onChanged }: HeroD
       ) : (
         <div className="space-y-5">
           <section className="grid gap-3 sm:grid-cols-2">
-            <InfoTile icon={Tag} label="Lớp" value={classLabel(detail.hero.classCode)} hint={detail.hero.classCode} />
+            <InfoTile icon={Tag} label="Lớp" value={classLabel(detail.hero.classCode, classes)} hint={detail.hero.classCode} />
             <InfoTile icon={Crown} label="Phe" value={detail.hero.factionCodes.length > 0 ? detail.hero.factionCodes.join(', ') : 'Chưa gán'} />
             <InfoTile icon={Coins} label="Giá coin" value={formatCoin(detail.hero.coinPrice)} />
             <InfoTile icon={Users} label="Số chủ sở hữu" value={formatNumber(detail.ownerCount)} />

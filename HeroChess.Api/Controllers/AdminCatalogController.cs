@@ -56,6 +56,12 @@ public sealed class AdminCatalogController(AdminCatalogService catalog, ICurrent
     public async Task<ActionResult<AdminSkillDto>> UpdateSkill(Guid id, AdminSkillUpdateRequest request, CancellationToken ct = default) =>
         Ok(await catalog.UpdateSkillAsync(current.UserId, id, request, ct));
 
+    // ChessClasses: Danh sách lớp quân lấy từ DB; dùng cho dropdown lớp ở form tạo hero.
+    [HttpGet("chess-classes")]
+    [Authorize(Policy = AccountPolicies.HeroRead)]
+    public async Task<ActionResult<IReadOnlyList<ChessClassDto>>> ChessClasses(CancellationToken ct = default) =>
+        Ok(await catalog.ListChessClassesAsync(ct));
+
     // Factions: Danh sách phe kèm số hero và số skill.
     [HttpGet("factions")]
     [Authorize(Policy = AccountPolicies.HeroRead)]
