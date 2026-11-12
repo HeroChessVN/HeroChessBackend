@@ -22,6 +22,10 @@ public sealed partial class UserMigrationTests
                 """, connection)) await legacy.ExecuteNonQueryAsync();
             await SqlFile(connection, "07_exclusive_hero_traits.sql");
             await SqlFile(connection, "07_exclusive_hero_traits.sql");
+            // Model EF hiện tại kỳ vọng cột is_in_shop từ migration admin; DB legacy này chưa hợp nhất user (còn bảng player)
+            // nên không chạy được 13_admin_module.sql. Thêm riêng cột để model khớp schema.
+            await using (var column = new NpgsqlCommand("ALTER TABLE hero_chess.hero ADD COLUMN IF NOT EXISTS is_in_shop boolean NOT NULL DEFAULT true", connection))
+                await column.ExecuteNonQueryAsync();
             await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connectionString).Options);
             var heroes = await db.Heroes.Include(h => h.Trait)
                 .Where(h => h.Code == "tran-binh-trong-elephant" || h.Code == "bui-thi-xuan-elephant")

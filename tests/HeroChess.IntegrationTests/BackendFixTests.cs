@@ -48,7 +48,7 @@ public sealed class BackendFixTests
         var error = await Assert.ThrowsAsync<ApiException>(() => new MatchHistoryService(db, new PlayerProfileService(db)).ListAsync(Guid.NewGuid(), cursor, 10, null, null, CancellationToken.None));
         Assert.Equal(400, error.StatusCode);
         Assert.Equal("INVALID_CURSOR", error.Code);
-        var auditError = await Assert.ThrowsAsync<ApiException>(() => new AdminService(db, TimeProvider.System).AuditAsync(cursor, 10, CancellationToken.None));
+        var auditError = await Assert.ThrowsAsync<ApiException>(() => new AdminService(db, TimeProvider.System).AuditAsync(cursor, 10, null, null, null, null, null, null, CancellationToken.None));
         Assert.Equal(400, auditError.StatusCode);
         Assert.Equal("INVALID_CURSOR", auditError.Code);
     }

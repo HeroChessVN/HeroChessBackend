@@ -7,20 +7,24 @@ using Microsoft.Extensions.Options;
 namespace HeroChess.Api.Auth;
 
 public sealed class UserStore(AppDbContext db, IHostEnvironment environment, IOptions<OnboardingOptions> options) :
-    IUserPasswordStore<User>, IUserEmailStore<User>, IUserSecurityStampStore<User>
+    IUserPasswordStore<User>, IUserEmailStore<User>, IUserSecurityStampStore<User>, IUserLockoutStore<User>
 {
     // CreateAsync: Lưu đúng một subtype User. Chỉ Player được onboarding ví/rating/hero; tất cả trong một transaction.
     public async Task<IdentityResult> CreateAsync(User user, CancellationToken cancellationToken)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        // Chọn subtype từ cấu hình server; public register không cho client tự chọn admin.
+        // Chọn subtype: Admin nếu caller đã truyền Admin (đường cấp admin qua UserManager) hoặc email nằm trong danh sách dev.
+        // Public register không cho client tự chọn admin vì tầng HTTP luôn tạo Player.
         var now = DateTimeOffset.UtcNow;
-        var displayName = (user.Email ?? user.UserName ?? "Player").Split('@')[0].Trim();
+        // Giữ DisplayName do caller đặt (đường tạo admin); nếu rỗng thì suy ra từ email.
+        var displayName = string.IsNullOrWhiteSpace(user.DisplayName)
+            ? (user.Email ?? user.UserName ?? "Player").Split('@')[0].Trim()
+            : user.DisplayName.Trim();
         if (displayName.Length == 0) displayName = "Player";
         if (displayName.Length > 80) displayName = displayName[..80];
         var isDevelopmentAdmin = environment.IsDevelopment() && user.Email is not null &&
             options.Value.DevelopmentAdminEmails.Contains(user.Email, StringComparer.OrdinalIgnoreCase);
-        User account = isDevelopmentAdmin ? new Admin() : new Player { IsGuest = false };
+        User account = user is Admin || isDevelopmentAdmin ? new Admin() : new Player { IsGuest = false };
         account.Id = user.Id; account.UserName = user.UserName; account.NormalizedUserName = user.NormalizedUserName;
         account.Email = user.Email; account.NormalizedEmail = user.NormalizedEmail; account.PasswordHash = user.PasswordHash;
         account.EmailConfirmed = user.EmailConfirmed;
@@ -118,6 +122,18 @@ public sealed class UserStore(AppDbContext db, IHostEnvironment environment, IOp
     public Task SetSecurityStampAsync(User user, string stamp, CancellationToken cancellationToken) { user.SecurityStamp = stamp; return Task.CompletedTask; }
     // GetSecurityStampAsync: Đọc stamp hiện tại của user.
     public Task<string?> GetSecurityStampAsync(User user, CancellationToken cancellationToken) => Task.FromResult<string?>(user.SecurityStamp);
+
+    // Lockout dùng cột status: tài khoản bị admin ban (status='disabled') không được đăng nhập.
+    // Đây là chặn duy nhất cho luồng login — AccountPolicies chỉ chặn API, không chặn đăng nhập.
+    public Task<DateTimeOffset?> GetLockoutEndDateAsync(User user, CancellationToken cancellationToken) =>
+        Task.FromResult(user.Status == "disabled" ? DateTimeOffset.MaxValue : (DateTimeOffset?)null);
+    public Task SetLockoutEndDateAsync(User user, DateTimeOffset? lockoutEnd, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task<int> IncrementAccessFailedCountAsync(User user, CancellationToken cancellationToken) => Task.FromResult(0);
+    public Task ResetAccessFailedCountAsync(User user, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task<int> GetAccessFailedCountAsync(User user, CancellationToken cancellationToken) => Task.FromResult(0);
+    public Task<bool> GetLockoutEnabledAsync(User user, CancellationToken cancellationToken) => Task.FromResult(user.Status == "disabled");
+    public Task SetLockoutEnabledAsync(User user, bool lockoutEnabled, CancellationToken cancellationToken) => Task.CompletedTask;
+
     // Dispose: Không tự dispose DbContext: container DI quản lý vòng đời của dependency này.
     public void Dispose() { }
 }

@@ -50,6 +50,8 @@ Harness chạy 30 lượt bot, dùng undo để lặp lại thế khởi đầu 
 
 Kết quả ngày 2026-11-03 trên máy Windows hiện tại + Docker PostgreSQL local, 1 trận, 30 thế mở đầu lặp: queue p95 1.67 ms; state-read 63.36 ms; search 46.96 ms; command 209.50 ms; total 303.41 ms. DB-commit command thường n=90, p95 20.09 ms. Không suy ra công suất/latency Azure từ số này.
 
-Regression hiện có lỗi fixture `Legacy_hero_command_retry_is_idempotent_but_new_hero_commands_are_blocked`: đổi `kind` của sequence 0 khỏi `start`, vi phạm constraint DB `match_action_check`. Không nới constraint production để làm test xanh.
+Đã sửa fixture `Legacy_hero_command_retry_is_idempotent_but_new_hero_commands_are_blocked`: không đổi `kind` của sequence 0 khỏi `start` nữa (vi phạm ràng buộc DB `match_action_check`). Fixture chỉ đổi `command_id`/`actor_side`/`request_payload`; command id trùng vẫn được nhận diện là retry nên test vẫn kiểm đúng hành vi idempotent. Không nới ràng buộc production.
+
+Đã sửa `BotWorkQueue.Stop()`: trước đây đóng channel vĩnh viễn khiến `BotTurnScheduler` singleton không đọc được nữa sau khi worker khởi động lại, làm mất lượt bot của các test chạy sau. `Stop()` nay chỉ dọn hàng đợi đang chờ.
 
 Nguồn: [Grafana Cloud OTLP](https://grafana.com/docs/grafana-cloud/send-data/otlp/send-data-otlp/), [OpenTelemetry .NET exporter](https://opentelemetry.io/docs/languages/dotnet/exporters/).

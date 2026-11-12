@@ -1,0 +1,171 @@
+/* Vai trò file: Design system của AdminWeb. Tái sử dụng bảng màu thực tế của dự án Hero Chess
+   (nền #10171e, panel #1b2832, accent vàng #e6bf84) và bổ sung navy đậm cho sidebar.
+   Tailwind v4 dùng cấu hình CSS-first: token khai báo trong @theme, class dùng như bg-surface. */
+
+@import 'tailwindcss';
+
+@theme {
+  /* Sidebar navy đậm */
+  --color-navy-950: #0a1220;
+  --color-navy-900: #0f1a2e;
+  --color-navy-800: #16233c;
+  --color-navy-700: #1e2f4d;
+  --color-navy-600: #2a3f63;
+
+  /* Nền app (nhất quán với frontend sản phẩm) */
+  --color-surface: #10171e;
+  --color-surface-2: #17222b;
+  --color-panel: #1b2832;
+  --color-panel-2: #23323d;
+  --color-border: #34474f;
+  --color-border-strong: #466473;
+
+  /* Chữ */
+  --color-ink: #e8edf3;
+  --color-ink-muted: #a0b1bc;
+  --color-ink-dim: #7d8f9a;
+
+  /* Accent vàng đồng */
+  --color-gold-400: #f0cf95;
+  --color-gold-500: #e6bf84;
+  --color-gold-600: #c9a06a;
+  --color-gold-700: #9a7a4e;
+
+  /* Trạng thái */
+  --color-ok: #8fd6ac;
+  --color-ok-bg: #24483a;
+  --color-warn: #f0cf95;
+  --color-warn-bg: #453a24;
+  --color-danger: #f0a9a9;
+  --color-danger-bg: #4a2629;
+  --color-info: #9ec8e0;
+  --color-info-bg: #22394a;
+
+  --font-sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+
+  --radius-card: 14px;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Vòng focus rõ ràng: bắt buộc cho điều hướng bằng bàn phím. */
+  :focus-visible {
+    outline: 2px solid var(--color-gold-500);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .card {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
+  }
+
+  .field-label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    margin-bottom: 0.35rem;
+  }
+
+  .input {
+    width: 100%;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 9px;
+    padding: 0.6rem 0.75rem;
+    transition: border-color 120ms ease;
+  }
+
+  .input:hover:not(:disabled) {
+    border-color: var(--color-border-strong);
+  }
+
+  .input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .input::placeholder {
+    color: var(--color-ink-dim);
+  }
+
+  /* Bảng cuộn ngang trong thẻ thay vì làm tràn ngang màn hình. */
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .data-table th {
+    text-align: left;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+  }
+
+  .data-table td {
+    padding: 0.65rem 0.7rem;
+    border-bottom: 1px solid #26343d;
+    vertical-align: middle;
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--color-panel-2);
+  }
+
+  /* Skeleton dùng chung cho mọi vùng đang tải. */
+  .skeleton {
+    background: linear-gradient(90deg, #1e2b35 25%, #27363f 50%, #1e2b35 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.4s ease-in-out infinite;
+    border-radius: 6px;
+  }
+
+  @keyframes skeleton-pulse {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+    }
+  }
+}

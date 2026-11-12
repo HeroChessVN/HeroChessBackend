@@ -31,4 +31,13 @@ internal static class CursorCodec
 
     public static string FormatRating(int elo, Guid id) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(FormattableString.Invariant($"{elo}|{id}")));
+
+    // ParseText/FormatText: Cursor cho bảng không có created_at (ví dụ hero); mã base64 của chuỗi khoá.
+    public static string ParseText(string cursor)
+    {
+        try { return Encoding.UTF8.GetString(Convert.FromBase64String(cursor)); }
+        catch (FormatException) { throw new ApiException(400, "INVALID_CURSOR", "The cursor is invalid."); }
+    }
+
+    public static string FormatText(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
 }
