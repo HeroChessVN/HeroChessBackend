@@ -52,6 +52,15 @@ public sealed partial class MatchFlowTests
             Assert.Contains("FACTION_REQUIREMENT_NOT_MET", await fourHeroes.Content.ReadAsStringAsync());
             db.HeroFactions.Add(new HeroFaction { HeroId = heroIds[4], FactionId = faction.Id });
             await db.SaveChangesAsync();
+            skill.Eligibility = JsonDocument.Parse("""{"minNonSoldierFactionHeroes":6,"keepThisSetting":true}""");
+            await db.SaveChangesAsync();
+            var catalog = (await red.Client.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
+            Assert.Equal(6, catalog.TeamSkills.Single(s => s.Id == skill.Id).Eligibility.GetProperty("minNonSoldierFactionHeroes").GetInt32());
+            using var fiveBelowSix = await red.Client.PutAsJsonAsync(lineupUrl, request, Json);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, fiveBelowSix.StatusCode);
+            Assert.Contains("FACTION_REQUIREMENT_NOT_MET", await fiveBelowSix.Content.ReadAsStringAsync());
+            skill.Eligibility = JsonDocument.Parse("""{"minNonSoldierFactionHeroes":5,"keepThisSetting":true}""");
+            await db.SaveChangesAsync();
             var lineup = await Post<LineupDto>(red.Client, lineupUrl, request, HttpMethod.Put);
             await Select((red.Client, lineup), id);
             (await red.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();

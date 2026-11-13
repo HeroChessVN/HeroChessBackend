@@ -84,7 +84,7 @@ public sealed class LineupValidator(AppDbContext db, IOptions<MatchRuntimeOption
         {
             var nonSoldiers = heroes.Values.Where(h => h.ClassCode != "SOLDIER").Select(h => h.Id).ToArray();
             var members = await db.HeroFactions.CountAsync(link => link.FactionId == newFactionSkill.FactionId && nonSoldiers.Contains(link.HeroId), cancellationToken);
-            if (!FactionSkillEligibility.CanUse(newFactionSkill.ImplementationKey, members))
+            if (!FactionSkillEligibility.CanUse(newFactionSkill.ImplementationKey, members, newFactionSkill.Eligibility.RootElement))
                 errors.Add(new("FACTION_REQUIREMENT_NOT_MET", "The lineup does not meet this faction skill's hero requirement, excluding soldiers."));
         }
 

@@ -125,7 +125,21 @@ Catalog dùng để hiển thị tên, SP, phe và trait khi xếp đội hình.
 
 ### Faction Skill
 
-Unity đọc `teamSkills[].eligibility.minNonSoldierFactionHeroes` từ catalog để hiển thị số quân cần có. Bản DB từng dùng ngưỡng 8 cần chạy `18_faction_skill_requirements.sql` trước khi deploy BE dùng ngưỡng 5. Các hàm `CanUseTranSkill`, `CanUseHauLeSkill` và `CanUseTaySonSkill` trong `FactionSkillEligibility.cs` cho phép thay điều kiện từng phe. Khi đổi ngưỡng sau này, cập nhật metadata eligibility tương ứng để FE hiển thị đồng nhất.
+Unity đọc `teamSkills[].eligibility.minNonSoldierFactionHeroes` từ `GET /api/v1/catalog` để hiển thị **và kiểm tra** số tướng cần có, không ghi cố định 5 hoặc 8. BE cũng kiểm tra bằng chính trường `team_skill.eligibility` này trong DB. Ba phe có thể có ngưỡng khác nhau; giá trị hợp lệ là số nguyên từ 1 đến 11.
+
+Ví dụ một phần tử trong `teamSkills` (chỉ trích các trường liên quan):
+
+```json
+{
+  "code": "bach_dang_tran_phap",
+  "factionId": "<uuid-phe-Tran>",
+  "eligibility": { "minNonSoldierFactionHeroes": 5 }
+}
+```
+
+FE đếm các `heroId` khác nhau trong đội hình có `classCode != "SOLDIER"` và `factionIds` chứa `skill.factionId`, rồi so với ngưỡng của skill. Năm Tốt không được tính, kể cả model cùng phe. Thiếu trường hoặc cấu hình sai thì tải lại catalog và không tự mặc định 8. Khi BE trả `FACTION_REQUIREMENT_NOT_MET`, đọc lại catalog và đội hình thay vì ép gửi lệnh. Điều kiện được kiểm tra khi lưu/chọn đội hình; mất quân trong trận không thu hồi faction skill đã chọn.
+
+Đổi ngưỡng bằng cách sửa `team_skill.eligibility.minNonSoldierFactionHeroes` trên DB, giữ các thuộc tính eligibility khác. Trận mới dùng dữ liệu mới, trận đã bắt đầu giữ skill đã chốt. Nếu catalog đổi giữa lúc ghép trận và xác nhận, cần chọn lại theo phản hồi BE. File `18_faction_skill_requirements.sql` là bản chuyển đổi một lần từ ngưỡng cũ về 5; không chạy lại nó sau khi đã tự cân bằng ngưỡng khác. Startup không chạy lại file này để tránh ghi đè cấu hình đã sửa. Các hàm điều kiện riêng cho từng phe vẫn được giữ để mở rộng sau này.
 
 | Phe | `implementationKey` | `target` | CD |
 |---|---|---|---:|
