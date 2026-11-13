@@ -71,6 +71,7 @@ public sealed class ShopService(AppDbContext db, TimeProvider clock)
         var hero = await db.Heroes.FromSqlInterpolated($"SELECT * FROM hero_chess.hero WHERE id={heroId} FOR SHARE").SingleOrDefaultAsync(ct)
             ?? throw new ApiException(404, "HERO_NOT_FOUND", "The hero was not found.");
         if (!hero.IsEnabled) throw new ApiException(422, "HERO_DISABLED", "The hero is not available for purchase.");
+        if (!hero.IsInShop) throw new ApiException(422, "HERO_NOT_IN_SHOP", "The hero is not listed in the shop.");
         if (await db.PlayerHeroes.AsNoTracking().AnyAsync(x => x.PlayerId == playerId && x.HeroId == heroId, ct))
             throw new ApiException(409, "HERO_ALREADY_OWNED", "The hero is already owned.");
         if (wallet.Balance < hero.CoinPrice)

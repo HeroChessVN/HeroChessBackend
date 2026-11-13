@@ -101,6 +101,15 @@ builder.Services.AddScoped<RankingService>();
 builder.Services.AddScoped<ShopService>();
 builder.Services.AddScoped<BoardCosmeticService>();
 builder.Services.AddScoped<AdminService>();
+builder.Services.AddScoped<AdminAuditWriter>();
+builder.Services.AddScoped<AdminCatalogService>();
+builder.Services.AddScoped<AdminShopService>();
+builder.Services.AddScoped<AdminPlayerService>();
+builder.Services.AddScoped<AdminMatchService>();
+builder.Services.AddScoped<AdminAnalyticsService>();
+builder.Services.AddScoped<AdminGiftCodeService>();
+builder.Services.AddScoped<AdminAccountService>();
+builder.Services.AddScoped<ShopCatalogService>();
 // Worker startup phục hồi trận; các BackgroundService sau đó theo dõi bot, timeout và việc cần retry.
 builder.Services.AddHostedService<MatchRecoveryHostedService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BotTurnScheduler>());

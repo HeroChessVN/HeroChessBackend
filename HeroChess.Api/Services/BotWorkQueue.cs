@@ -62,11 +62,12 @@ public sealed class BotWorkQueue
         }
     }
 
+    // Stop: Bỏ hàng đợi đang chờ nhưng KHÔNG đóng channel.
+    // Đóng channel vĩnh viễn làm worker đã restart không đọc được nữa, nên lượt bot sau đó mất tín hiệu.
     public void Stop()
     {
         lock (_gate)
         {
-            _channel.Writer.TryComplete();
             while (_channel.Reader.TryRead(out var item)) _pending.Remove((item.MatchId, item.Version));
             BotTelemetry.Waiting.Add(-_waiting);
             _waiting = 0;

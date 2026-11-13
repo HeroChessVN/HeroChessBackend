@@ -33,7 +33,9 @@ public sealed partial class UserMigrationTests
             }
             await SqlFile(connection, "06_user_inheritance.sql");
             await SqlFile(connection, "06_user_inheritance.sql");
+            // Model EF hiện tại kỳ vọng các cột cộng thêm từ migration sau; DB legacy trong test phải có chúng.
             await SqlFile(connection, "11_email_confirmation.sql");
+            await SqlFile(connection, "13_admin_module.sql");
             await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connectionString).Options);
             var migrated = Assert.IsType<Admin>(await db.Users.SingleAsync(x => x.Id == admin));
             Assert.Equal("admin-stamp", migrated.SecurityStamp); Assert.Equal(hash, migrated.PasswordHash);

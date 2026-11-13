@@ -53,8 +53,9 @@ public sealed class AdminService(AppDbContext db, TimeProvider clock)
         return new(id, entityType, price.ToString(), now);
     }
 
-    // AuditAsync: Đọc audit theo cursor thời gian/ID, giới hạn số bản ghi mỗi trang.
-    public async Task<AdminAuditPageDto> AuditAsync(string? cursor, int limit, CancellationToken ct)
+    // AuditAsync: Đọc audit theo cursor thời gian/ID, lọc theo action/đích/actor/khoảng thời gian, giới hạn số bản ghi mỗi trang.
+    public async Task<AdminAuditPageDto> AuditAsync(string? cursor, int limit, string? action, string? entityType, string? entityId,
+        Guid? actorUserId, DateTimeOffset? from, DateTimeOffset? to, CancellationToken ct)
     {
         limit = Math.Clamp(limit, 1, 100);
         var query = db.AdminAuditLogs.AsNoTracking().AsQueryable();
@@ -63,6 +64,12 @@ public sealed class AdminService(AppDbContext db, TimeProvider clock)
             var (at, id) = CursorCodec.Parse(cursor);
             query = query.Where(x => x.CreatedAt < at || (x.CreatedAt == at && x.Id.CompareTo(id) < 0));
         }
+        if (!string.IsNullOrWhiteSpace(action)) query = query.Where(x => x.Action == action);
+        if (!string.IsNullOrWhiteSpace(entityType)) query = query.Where(x => x.EntityType == entityType);
+        if (!string.IsNullOrWhiteSpace(entityId)) query = query.Where(x => x.EntityId == entityId);
+        if (actorUserId is not null) query = query.Where(x => x.ActorUserId == actorUserId);
+        if (from.HasValue) query = query.Where(x => x.CreatedAt >= from.Value);
+        if (to.HasValue) query = query.Where(x => x.CreatedAt <= to.Value);
         var rows = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Take(limit + 1).ToListAsync(ct);
         var items = rows.Take(limit).Select(x => new AdminAuditDto(x.Id, x.ActorUserId, x.Action, x.EntityType, x.EntityId,
             x.BeforeData?.RootElement.Clone(), x.AfterData?.RootElement.Clone(), x.Reason, x.CreatedAt)).ToArray();
