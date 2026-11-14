@@ -10,6 +10,22 @@ namespace HeroChess.IntegrationTests;
 public sealed class BotDifficultyTests
 {
     [Fact]
+    public void Move_event_reports_the_actual_snare_stop_instead_of_the_requested_capture_square()
+    {
+        var state = Position();
+        state.RiverSnares.Add(new(Side.Black, new(0, 5), 10));
+        var rook = state.Pieces.Single(p => p.Class == PieceClass.Rook && p.Side == Side.Red);
+        var move = new MoveAction(rook.PieceId, new(0, 6));
+        var applied = new XiangqiRulesEngine().ApplyMove(state, move);
+        Assert.True(applied.Accepted);
+        var entry = GameJson.Element(MatchTurnRules.MoveEvent(state, move, applied));
+        Assert.Equal("piece.moved", entry.GetProperty("type").GetString());
+        Assert.Equal(0, entry.GetProperty("to").GetProperty("x").GetInt32());
+        Assert.Equal(5, entry.GetProperty("to").GetProperty("y").GetInt32());
+        Assert.Equal(PieceStatus.Alive, applied.State.Pieces.Single(p => p.Side == Side.Black && p.Class == PieceClass.Soldier).Status);
+    }
+
+    [Fact]
     public void Faction_snare_projection_only_returns_the_viewers_traps()
     {
         var state = Position();

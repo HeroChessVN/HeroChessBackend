@@ -17,4 +17,7 @@ public static class BotTelemetry
     public static readonly Histogram<double> Command = Meter.CreateHistogram<double>("herochess.bot.command", "s");
     public static readonly Histogram<double> Total = Meter.CreateHistogram<double>("herochess.bot.total", "s");
     public static readonly Histogram<double> DbCommit = Meter.CreateHistogram<double>("herochess.match.db_commit", "s");
+    public static readonly Counter<long> Forecasts = Meter.CreateCounter<long>("herochess.forecast.requests");
+    public static readonly Histogram<double> ForecastWait = Meter.CreateHistogram<double>("herochess.forecast.queue_wait", "s");
+    public static readonly Histogram<double> ForecastSearch = Meter.CreateHistogram<double>("herochess.forecast.search", "s");
 }

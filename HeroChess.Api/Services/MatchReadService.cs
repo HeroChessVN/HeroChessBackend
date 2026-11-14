@@ -15,6 +15,12 @@ namespace HeroChess.Api.Services;
 public sealed class MatchReadService(AppDbContext db, TimeProvider clock, PlayerProfileService profiles, ILogger<MatchReadService> logger)
 {
     private static readonly MemoryCache ForecastCache = new(new MemoryCacheOptions { SizeLimit = 128 });
+    private static readonly MatchLockRegistry ForecastLocks = new();
+    private static readonly PartitionedRateLimiter<Guid> ForecastRequests = PartitionedRateLimiter.Create<Guid, Guid>(playerId =>
+        RateLimitPartition.GetFixedWindowLimiter(playerId, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+        }));
     private static readonly ConcurrencyLimiter ForecastLimiter = new(new ConcurrencyLimiterOptions
     {
         PermitLimit = 1, QueueLimit = 4, QueueProcessingOrder = QueueProcessingOrder.OldestFirst
@@ -22,35 +28,101 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
 
     public async Task<object> ForecastAsync(Guid playerId, Guid matchId, int version, CommandSkillDispatcher dispatcher, CancellationToken ct)
     {
+        if (version < 1) throw new ApiException(400, "INVALID_FORECAST_VERSION", "A positive activation sequence is required.");
+        using var requestLease = ForecastRequests.AttemptAcquire(playerId);
+        if (!requestLease.IsAcquired) throw new ApiException(429, "FORECAST_RATE_LIMITED", "Too many forecast requests. Try again later.");
+        var actionId = await ValidateForecastAsync(playerId, matchId, version, ct);
         var key = (playerId, matchId, version);
-        if (ForecastCache.TryGetValue<JsonElement>(key, out var cached)) return cached;
-        using var lease = await ForecastLimiter.AcquireAsync(1, ct);
-        if (!lease.IsAcquired) throw new ApiException(429, "FORECAST_BUSY", "The forecast worker is busy.");
-        if (ForecastCache.TryGetValue<JsonElement>(key, out cached)) return cached;
+        if (ForecastCache.TryGetValue<JsonElement>(key, out var cached))
+        {
+            BotTelemetry.Forecasts.Add(1, new KeyValuePair<string, object?>("outcome", "cache_hit"));
+            return cached;
+        }
+        // Reuse bounded striped gates to coalesce retries without holding the match's command lock.
+        var gate = ForecastLocks.For(matchId);
+        var waitingAt = Stopwatch.GetTimestamp();
+        await gate.WaitAsync(ct);
+        try
+        {
+            await ValidateForecastAsync(playerId, matchId, version, ct);
+            if (ForecastCache.TryGetValue<JsonElement>(key, out cached))
+            {
+                BotTelemetry.Forecasts.Add(1, new KeyValuePair<string, object?>("outcome", "cache_hit"));
+                return cached;
+            }
+            using var lease = await ForecastLimiter.AcquireAsync(1, ct);
+            if (!lease.IsAcquired) throw new ApiException(429, "FORECAST_BUSY", "The forecast worker is busy.");
+            BotTelemetry.ForecastWait.Record(Stopwatch.GetElapsedTime(waitingAt).TotalSeconds);
+            var action = await db.MatchActions.AsNoTracking().SingleAsync(a => a.Id == actionId, ct);
+            var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId, ct);
+            var participants = await db.MatchParticipants.AsNoTracking().Where(p => p.MatchId == matchId).ToListAsync(ct);
+            JsonElement result;
+            try
+            {
+                var lineups = participants.ToDictionary(p => p.Side == "red" ? Side.Red : Side.Black,
+                    p => GameJson.Read<FrozenLineup>(p.LineupSnapshot));
+                var state = StateSchemaUpgrade.UpgradeToCurrent(GameJson.Read<GameState>(action.StateAfter));
+                var actor = participants.Single(p => p.PlayerId == playerId);
+                var side = actor.Side == "red" ? Side.Red : Side.Black;
+                var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
+                var searchAt = Stopwatch.GetTimestamp();
+                var prediction = new BotEngine(dispatcher, clock).Forecast(state, rules, lineups, ct, side);
+                BotTelemetry.ForecastSearch.Record(Stopwatch.GetElapsedTime(searchAt).TotalSeconds);
+                result = GameJson.Element(new { version, prediction });
+            }
+            catch (Exception error) when (error is JsonException or InvalidDataException or ArgumentException or InvalidOperationException or NullReferenceException)
+            {
+                logger.LogWarning(error, "Invalid forecast snapshot for match {MatchId} activation {Version}", matchId, version);
+                throw new ApiException(422, "INVALID_FORECAST_SNAPSHOT", "The stored forecast position cannot be analysed.");
+            }
+            ct.ThrowIfCancellationRequested();
+            // An Undo may have committed while this request waited or calculated.
+            await ValidateForecastAsync(playerId, matchId, version, ct);
+            ForecastCache.Set(key, result, new MemoryCacheEntryOptions
+            {
+                Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2)
+            });
+            BotTelemetry.Forecasts.Add(1, new KeyValuePair<string, object?>("outcome", "computed"));
+            return result;
+        }
+        finally { gate.Release(); }
+    }
 
+    private async Task<Guid> ValidateForecastAsync(Guid playerId, Guid matchId, int version, CancellationToken ct)
+    {
         var actor = await db.MatchParticipants.AsNoTracking().SingleOrDefaultAsync(p => p.MatchId == matchId && p.PlayerId == playerId, ct)
             ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
-        var action = await db.MatchActions.AsNoTracking().SingleOrDefaultAsync(a => a.MatchId == matchId && a.SequenceNo == version &&
-            a.Kind == "team_skill" && a.ActorSide == actor.Side, ct);
-        if (action is null || !action.ResolvedEvents.RootElement.EnumerateArray().Any(e =>
-            e.TryGetProperty("type", out var type) && type.GetString() == "team_skill.activated" &&
-            e.TryGetProperty("code", out var code) && code.GetString() == FactionSkillHandler.Forecast))
-            throw new ApiException(404, "FORECAST_NOT_FOUND", "No forecast was activated by this player at that version.");
-        if (!await db.MatchStates.AnyAsync(s => s.MatchId == matchId && s.Version == version, ct))
-            throw new ApiException(409, "STALE_STATE", "The board has already changed.");
-        var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId, ct);
-        var participants = await db.MatchParticipants.AsNoTracking().Where(p => p.MatchId == matchId).ToListAsync(ct);
-        var lineups = participants.ToDictionary(p => p.Side == "red" ? Side.Red : Side.Black, p => GameJson.Read<FrozenLineup>(p.LineupSnapshot));
-        var state = GameJson.Read<GameState>(action.StateAfter);
-        var side = actor.Side == "red" ? Side.Red : Side.Black;
-        state.RiverSnares.RemoveAll(trap => trap.Owner != side);
-        var prediction = new BotEngine(dispatcher).Forecast(state, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot), lineups, ct);
-        var result = GameJson.Element(new { version, prediction });
-        ForecastCache.Set(key, result, new MemoryCacheEntryOptions
+        var action = await db.MatchActions.AsNoTracking().Where(a => a.MatchId == matchId && a.SequenceNo == version &&
+            a.Kind == "team_skill" && a.ActorSide == actor.Side).Select(a => new { a.Id, a.ResolvedEvents }).SingleOrDefaultAsync(ct);
+        if (action is null || action.ResolvedEvents.RootElement.ValueKind != JsonValueKind.Array ||
+            !action.ResolvedEvents.RootElement.EnumerateArray().Any(e => e.ValueKind == JsonValueKind.Object &&
+            e.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == "team_skill.activated" &&
+            e.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String && code.GetString() == FactionSkillHandler.Forecast))
+            throw ForecastNotFound();
+        var head = await db.MatchStates.AsNoTracking().Where(s => s.MatchId == matchId).Select(s => (int?)s.Version).SingleOrDefaultAsync(ct);
+        if (head is null || head < version) throw ForecastNotFound();
+        // Only Undo entries can jump over the activation; ordinary moves need no per-action reads.
+        var undos = await db.MatchActions.AsNoTracking().Where(a => a.MatchId == matchId && a.Kind == "undo" &&
+            a.SequenceNo > version && a.SequenceNo <= head).OrderByDescending(a => a.SequenceNo)
+            .Select(a => new { a.SequenceNo, a.ResolvedEvents }).Take(257).ToListAsync(ct);
+        // shortcut: cap lineage work at 256 Undo entries; page this indexed query if real matches exceed that ceiling.
+        if (undos.Count > 256) throw new ApiException(422, "FORECAST_HISTORY_TOO_LONG", "The forecast history is too long to validate.");
+        foreach (var undo in undos)
         {
-            Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2)
-        });
-        return result;
+            if (undo.SequenceNo > head) continue;
+            var entry = undo.ResolvedEvents.RootElement.ValueKind == JsonValueKind.Array
+                ? undo.ResolvedEvents.RootElement.EnumerateArray().FirstOrDefault(e => e.ValueKind == JsonValueKind.Object &&
+                    e.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == "match.undone")
+                : default;
+            if (entry.ValueKind == JsonValueKind.Undefined || !entry.TryGetProperty("targetSequence", out var target) ||
+                target.ValueKind != JsonValueKind.Number || !target.TryGetInt32(out var sequence) || sequence < 0 || sequence >= undo.SequenceNo)
+                throw new ApiException(422, "INVALID_FORECAST_HISTORY", "The stored Undo history is invalid.");
+            head = sequence;
+            if (head < version) throw ForecastNotFound();
+        }
+        return action.Id;
+
+        static ApiException ForecastNotFound() => new(404, "FORECAST_NOT_FOUND", "No valid forecast activation exists on this match branch.");
     }
     // StateAsync: Authorize rồi đọc match/state hiện tại, báo chưa start nếu chưa có bàn cờ.
     public async Task<MatchStateDto> StateAsync(Guid playerId, Guid matchId, CancellationToken ct)

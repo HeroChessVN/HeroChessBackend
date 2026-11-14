@@ -64,7 +64,8 @@ public static class MatchTurnRules
 
     public static object MoveEvent(GameState before, MoveAction move, ApplyMoveResult applied)
     {
-        if (applied.StakeHit is not { } hit) return new { type = "piece.moved", pieceId = move.PieceId, to = move.To };
+        if (applied.StakeHit is not { } hit) return new { type = "piece.moved", pieceId = move.PieceId,
+            to = applied.State.Pieces.Single(p => p.PieceId == move.PieceId).Position };
         var piece = before.Pieces.Single(p => p.PieceId == move.PieceId);
         return new { type = "river_stake.hit", pieceId = move.PieceId, position = hit.Position, obstacleId = hit.ObstacleId,
             side = before.ObstacleMetadata[hit.ObstacleId].Placer, victimSide = piece.Side, victimClass = piece.Class, victimName = piece.HeroName };

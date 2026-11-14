@@ -15,25 +15,42 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
     private readonly TimeProvider _clock = time ?? TimeProvider.System;
     private readonly XiangqiRulesEngine _rules = new();
 
-    public object Forecast(GameState state, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups, CancellationToken ct)
+    public object Forecast(GameState state, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups,
+        CancellationToken ct, Side? viewer = null)
     {
+        ct.ThrowIfCancellationRequested();
+        state = MatchTurnRules.Prepare(state.Clone());
+        var observer = viewer ?? (state.SideToMove == Side.Red ? Side.Black : Side.Red);
+        state.RiverSnares.RemoveAll(trap => trap.Owner != observer);
+        if (!Supports(state)) throw new InvalidDataException("Forecast cannot analyse legacy hidden states.");
         var started = _clock.GetTimestamp();
+        var nodes = 0;
         var variation = new List<object>(3);
         object[] threats = [];
         for (var ply = 0; ply < 3 && state.Result is null && !OutOfTime(); ply++)
         {
             var actor = state.SideToMove;
             var ranked = new List<(JsonElement Action, GameState Next, int Score, bool Threat)>();
-            foreach (var action in Candidates(state, OrderedMoves(state), 6))
+            var moves = OrderedMoves(state);
+            if (OutOfTime()) break;
+            var threatened = _rules.GenerateLegalActions(state, actor == Side.Red ? Side.Black : Side.Red)
+                .Where(move => move.CapturedPieceId is not null).Select(move => move.CapturedPieceId!.Value).ToHashSet();
+            var quiet = moves.Where(move => move.CapturedPieceId is null && !move.InterceptedByStake)
+                .OrderByDescending(move => threatened.Contains(move.PieceId)).DistinctBy(move => move.PieceId).Take(2).ToArray();
+            var candidates = Candidates(state, quiet.Concat(moves.Except(quiet)).ToArray(), 6);
+            foreach (var action in candidates)
             {
                 ct.ThrowIfCancellationRequested();
                 if (OutOfTime() || ranked.Count == 6) break;
-                if (Simulate(state, action, rules, lineups) is not { } next) continue;
+                nodes++;
+                if (Simulate(state, action, rules, lineups, out var replies) is not { } next) continue;
+                var score = Evaluate(next, actor);
+                var loss = ExchangeLoss(next, replies, score, actor, rules, lineups, OutOfTime, ref nodes, ct);
                 var threat = next.Result == (actor == Side.Red ? "red_win" : "black_win") ||
                     _rules.IsInCheck(next, next.SideToMove) ||
                     next.Pieces.Count(p => p.Side != actor && p.Status == PieceStatus.Alive) <
                     state.Pieces.Count(p => p.Side != actor && p.Status == PieceStatus.Alive);
-                ranked.Add((action, next, Evaluate(next, actor), threat));
+                ranked.Add((action, next, score - loss, threat));
             }
             var ordered = ranked.OrderByDescending(option => option.Score).ToArray();
             if (ordered.Length == 0) break;
@@ -41,9 +58,10 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             variation.Add(Describe(ordered[0].Action, state));
             state = ordered[0].Next;
         }
+        ct.ThrowIfCancellationRequested();
         return new { variation, threats };
 
-        bool OutOfTime() => _clock.GetElapsedTime(started).TotalMilliseconds >= 50;
+        bool OutOfTime() => nodes >= 64 || _clock.GetElapsedTime(started).TotalMilliseconds >= 50;
 
         static object Describe(JsonElement action, GameState board)
         {
@@ -122,7 +140,7 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             if (next is not null)
             {
                 var score = Evaluate(next, actor);
-                var loss = scoreExchanges ? ExchangeLoss(next, replies, score) :
+                var loss = scoreExchanges ? ExchangeLoss(next, replies, score, actor, rules, lineups, Exhausted, ref nodes, ct) :
                     guardRecaptures ? ImmediateCaptureLoss(next, replies) : 0;
                 roots.Add((action, next, score, loss, replies));
             }
@@ -163,30 +181,31 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             if (worst > bestScore) { bestScore = worst; best = root.Action; }
         }
         return new(best, nodes, 2, false);
+    }
 
-        int ExchangeLoss(GameState position, IReadOnlyList<LegalMove> replies, int score)
+    private int ExchangeLoss(GameState position, IReadOnlyList<LegalMove> replies, int score, Side actor,
+        RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups, Func<bool> exhausted, ref int nodes, CancellationToken ct)
+    {
+        var captures = OrderMoves(position, replies.Where(m => m.CapturedPieceId is not null).ToArray());
+        // A clean defense wins over a small positional gain that relies on a countercapture.
+        var loss = captures.Count == 0 ? 0 : 5;
+        // ponytail: probe two captures per candidate, then use face value for the rest; widen only after measuring load.
+        for (var i = 0; i < captures.Count; i++)
         {
-            var captures = OrderMoves(position, replies.Where(m => m.CapturedPieceId is not null).ToArray());
-            // A clean defense wins over a small positional gain that relies on a countercapture.
-            var loss = captures.Count == 0 ? 0 : 5;
-            // ponytail: probe two captures per candidate, then use face value for the rest; widen only after measuring load.
-            for (var i = 0; i < captures.Count; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                var capture = captures[i];
-                if (i == 2 || Exhausted())
-                    return Math.Max(loss, position.Pieces.Single(p => p.PieceId == capture.CapturedPieceId).SetupPoints * 100);
+            ct.ThrowIfCancellationRequested();
+            var capture = captures[i];
+            if (i == 2 || exhausted())
+                return Math.Max(loss, position.Pieces.Single(p => p.PieceId == capture.CapturedPieceId).SetupPoints * 100);
 
-                nodes++;
-                var after = Simulate(position, Move(capture), rules, lineups, out var counters);
-                if (after is null) continue;
-                var replyScore = Evaluate(after, actor);
-                if (after.Result is null && counters.Any(m => m.CapturedPieceId == capture.PieceId))
-                    replyScore += after.Pieces.Single(p => p.PieceId == capture.PieceId).SetupPoints * 100;
-                loss = Math.Max(loss, score - replyScore);
-            }
-            return loss;
+            nodes++;
+            var after = Simulate(position, Move(capture), rules, lineups, out var counters);
+            if (after is null) continue;
+            var replyScore = Evaluate(after, actor);
+            if (after.Result is null && counters.Any(m => m.CapturedPieceId == capture.PieceId))
+                replyScore += after.Pieces.Single(p => p.PieceId == capture.PieceId).SetupPoints * 100;
+            loss = Math.Max(loss, score - replyScore);
         }
+        return loss;
     }
 
     public GameState? Simulate(GameState input, JsonElement action, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups) =>

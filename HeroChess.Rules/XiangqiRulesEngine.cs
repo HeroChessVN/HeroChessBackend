@@ -279,8 +279,23 @@ public sealed class XiangqiRulesEngine
     private ApplyMoveResult ResolveMove(GameState state, MoveAction action)
     {
         var moving = state.Pieces.Single(p => p.PieceId == action.PieceId);
-        var stake = FindPublicStake(state, moving, action.To);
-        if (stake is null) return CompleteMove(state, MoveUnchecked(state, action.PieceId, action.To, runHandler: true));
+        // Resolve hidden snares only after normal legality; legal destinations must not reveal traps.
+        var snare = state.RiverSnares.Count == 0 ? null : CrossedCells(moving.Class, moving.Position!.Value, action.To)
+            .Select(point => state.RiverSnares.FirstOrDefault(t => t.Owner != moving.Side && t.Position == point &&
+                t.ExpiresAt > state.TurnIndex && !RulesGeometry.IsBlocked(state, point)))
+            .FirstOrDefault(trap => trap is not null);
+        var destination = snare?.Position ?? action.To;
+        var stake = FindPublicStake(state, moving, destination);
+        if (stake is null)
+        {
+            var stopped = MoveUnchecked(state, action.PieceId, destination, runHandler: true);
+            if (snare is not null)
+            {
+                stopped.RiverSnares.Remove(snare);
+                stopped.Pieces.Single(p => p.PieceId == action.PieceId).Effects.Add(new EffectState(FactionSkillHandler.Rooted, null, 5));
+            }
+            return CompleteMove(state, stopped, snareHit: snare is not null);
+        }
 
         var next = state.Clone();
         var piece = next.Pieces.Single(p => p.PieceId == action.PieceId);
@@ -304,7 +319,7 @@ public sealed class XiangqiRulesEngine
         return null;
     }
 
-    private ApplyMoveResult CompleteMove(GameState state, GameState next, ObstacleState? stakeHit = null)
+    private ApplyMoveResult CompleteMove(GameState state, GameState next, ObstacleState? stakeHit = null, bool snareHit = false)
     {
         next.Version++;
         next.TurnIndex++;
@@ -313,10 +328,10 @@ public sealed class XiangqiRulesEngine
         next.SideToMove = Opposite(state.SideToMove);
 
         if (!next.Pieces.Any(p => p.Side == state.SideToMove && p.Class == PieceClass.General && IsAlive(p)) ||
-            (stakeHit is not null && IsInCheck(next, state.SideToMove)))
+            ((stakeHit is not null || snareHit) && IsInCheck(next, state.SideToMove)))
         {
             next.Result = state.SideToMove == Side.Red ? "black_win" : "red_win";
-            next.EndReason = "river_stake";
+            next.EndReason = snareHit ? "river_snare" : "river_stake";
         }
 
         return ApplyMoveResult.Success(next, stakeHit);
@@ -577,14 +592,6 @@ public sealed class XiangqiRulesEngine
 
         if (runHandler)
         {
-            foreach (var point in next.RiverSnares.Count == 0 ? Enumerable.Empty<BoardPoint>() : CrossedCells(piece.Class, from, to))
-            {
-                var trap = next.RiverSnares.FirstOrDefault(t => t.Owner != piece.Side && t.Position == point && t.ExpiresAt > next.TurnIndex);
-                if (trap is null) continue;
-                next.RiverSnares.Remove(trap);
-                piece.Effects.Add(new EffectState(FactionSkillHandler.Rooted, null, 5));
-                break;
-            }
             // Run the standard handler's AfterMove (e.g., WildElephant lastMoveDistance).
             // Use the already-resolved effectiveKey from above.
             if (_handlers.TryGet(effectiveKey, out var handler))

@@ -18,7 +18,7 @@ public sealed class PublicRiverStakeTests
         state.RiverSnares.Add(new(Side.Red, new(3, 4), 6));
         var applied = _engine.ApplyMove(state, new(horse.PieceId, new(3, 4)));
         Assert.True(applied.Accepted);
-        Assert.Equal(new BoardPoint(3, 4), applied.State.Pieces.Single(p => p.PieceId == horse.PieceId).Position);
+        Assert.Equal(new BoardPoint(2, 5), applied.State.Pieces.Single(p => p.PieceId == horse.PieceId).Position);
         Assert.Equal(new BoardPoint(3, 4), Assert.Single(applied.State.RiverSnares).Position);
         var next = TurnLifecycle.Apply(applied.State, Side.Red).State;
         Assert.Equal(4, Assert.Single(next.Pieces.Single(p => p.PieceId == horse.PieceId).Effects).RemainingTurns);
