@@ -51,12 +51,11 @@ public sealed class RaoHandler : ICommandSkillHandler
             return CommandSkillResult.Failure(ctx.State, "WRONG_HALF",
                 "Rào must be placed on the owner's half of the board.");
 
-        // --- Cell must not be occupied by a living piece ---
-        if (ctx.State.Pieces.Any(p => p.Status == PieceStatus.Alive && p.Position == pos))
+        // --- Cell must not be occupied by a living piece, an obstacle or a trap ---
+        // No stacking: a cell already holding a piece, Cọc, Thành, Rào or Bẫy is closed to both sides.
+        if (!SkillPlacement.IsCellFree(ctx.State, pos))
             return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED",
-                "Cannot place Rào on a cell occupied by a piece.");
-        if (ctx.State.Obstacles.Any(o => o.Position == pos && o.Kind != SkillKeys.ObstacleKindThDTuongCoc))
-            return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED", "Cannot place Rào on an occupied cell.");
+                "Cannot place Rào on an occupied cell.");
 
         // --- Build state changes ---
         var next = ctx.State.Clone();

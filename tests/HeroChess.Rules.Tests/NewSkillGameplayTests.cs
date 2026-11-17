@@ -87,7 +87,7 @@ public sealed class NewSkillGameplayTests
     }
 
     [Fact]
-    public void Shielded_piece_cannot_be_captured_and_hidden_stake_does_not_block_placement()
+    public void Shielded_piece_cannot_be_captured_and_a_coc_blocks_placement()
     {
         var soldier = Piece(PieceClass.Soldier, Side.Red, 4, 4);
         var rook = Piece(PieceClass.Rook, Side.Black, 4, 5);
@@ -104,7 +104,10 @@ public sealed class NewSkillGameplayTests
         state.ObstacleMetadata[stake] = new ObstacleMetadata { Placer = Side.Red };
         var target = JsonSerializer.SerializeToElement(new { position = new { x = 6, y = 5 } });
         var ctx = new CommandSkillContext(state, Side.Black, 1, Guid.NewGuid(), SkillKeys.Rao, 6, target);
-        Assert.True(new RaoHandler().Execute(ctx).Accepted);
+        // No stacking: the Cọc already holds the cell, so the Rào is rejected for both sides.
+        var result = new RaoHandler().Execute(ctx);
+        Assert.False(result.Accepted);
+        Assert.Equal("CELL_OCCUPIED", result.Error!.Code);
     }
 
     [Fact]

@@ -91,6 +91,49 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         Assert.Equal(1, accepted.SequenceNo);
     }
 
+    [Theory]
+    [InlineData("thanh")]
+    [InlineData("rao")]
+    public async Task Structure_stacked_on_another_structure_is_rejected_by_the_server(string implementationKey)
+    {
+        var human = await CreatePlayerWithLineup();
+        var catalog = (await human.Client.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
+        var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == implementationKey);
+        var other = catalog.TeamSkills.Single(x => (x.ImplementationKey is "thanh" or "rao") && x.ImplementationKey != implementationKey);
+        var third = human.Lineup.Skills.Single(x => x.SlotNo == 3);
+        var updated = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
+            new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
+                [new LineupSkillInput(1, skill.Id), new LineupSkillInput(2, other.Id), third], human.Lineup.Revision), HttpMethod.Put);
+        var ticket = await Post<MatchmakingTicketDto>(human.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("bot"));
+        var matchId = ticket.MatchId!.Value;
+        await Post<MatchSelectionDto>(human.Client, $"/api/v1/matches/{matchId}/selection", new SelectLineupRequest(updated.Id, updated.Revision), HttpMethod.Put);
+        await human.Client.PostAsync($"/api/v1/matches/{matchId}/confirm", null);
+
+        // Slot 1 places a structure on an empty cell; slot 2 then targets the very same cell.
+        var placed = await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands",
+            new MatchCommandRequest(Guid.NewGuid(), 0, JsonSerializer.SerializeToElement(
+                new { type = "team_skill", slot = 1, target = new { position = new { x = 4, y = 2 } } }, Json)));
+        Assert.Equal(1, placed.SequenceNo);
+
+        // The bot answers next, so wait until it is the human's turn again before sending the second command.
+        var state = (await human.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{matchId}/state", Json))!;
+        for (var i = 0; i < 200 && state.SideToMove != "red"; i++)
+        {
+            await Task.Delay(100);
+            state = (await human.Client.GetFromJsonAsync<MatchStateDto>($"/api/v1/matches/{matchId}/state", Json))!;
+        }
+        Assert.Equal("red", state.SideToMove);
+        Assert.Contains(state.State.GetProperty("obstacles").EnumerateArray(),
+            obstacle => obstacle.GetProperty("position").GetProperty("x").GetInt32() == 4 &&
+                        obstacle.GetProperty("position").GetProperty("y").GetInt32() == 2);
+
+        var stacked = new MatchCommandRequest(Guid.NewGuid(), state.Version, JsonSerializer.SerializeToElement(
+            new { type = "team_skill", slot = 2, target = new { position = new { x = 4, y = 2 } } }, Json));
+        using var rejected = await human.Client.PostAsJsonAsync($"/api/v1/matches/{matchId}/commands", stacked, Json);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        Assert.Equal("CELL_OCCUPIED", (await rejected.Content.ReadFromJsonAsync<ApiError>(Json))!.Code);
+    }
+
     [Fact]
     // Ranked_match_serializes_competing_commands_broadcasts_and_replays: Kiểm tra hai command cạnh tranh, phát socket, log và replay của ranked.
     public async Task Ranked_match_serializes_competing_commands_broadcasts_and_replays()

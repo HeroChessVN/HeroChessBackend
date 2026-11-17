@@ -39,8 +39,8 @@ public static class BachDangGiang
             px is < 0 or > 8 || py is not (4 or 5))
             return CommandSkillResult.Failure(state, "INVALID_TARGET", "Choose an empty river cell (y=4 or y=5).");
         var position = new BoardPoint(px, py);
-        if (state.Pieces.Any(p => p.Status == PieceStatus.Alive && p.Position == position) ||
-            state.Obstacles.Any(o => o.Position == position && (state.PublicRiverStakes || o.Kind != SkillKeys.ObstacleKindThDTuongCoc)))
+        // No stacking: a river cell already holding a piece, Cọc, Thành, Rào or Bẫy is closed to both sides.
+        if (!SkillPlacement.IsCellFree(state, position))
             return CommandSkillResult.Failure(state, "CELL_OCCUPIED", "Choose an empty river cell.");
 
         var next = state.Clone();

@@ -71,7 +71,8 @@ public static class MatchTurnRules
             side = before.ObstacleMetadata[hit.ObstacleId].Placer, victimSide = piece.Side, victimClass = piece.Class, victimName = piece.HeroName };
     }
 
-    public static IEnumerable<JsonElement> HeroCandidates(GameState state, XiangqiRulesEngine engine)
+    public static IEnumerable<JsonElement> HeroCandidates(GameState state, XiangqiRulesEngine engine,
+        IReadOnlyCollection<BoardPoint>? hiddenBlocked = null)
     {
         if (!state.PublicRiverStakes || state.Result is not null) yield break;
         foreach (var hero in state.Pieces.Where(p => p.Side == state.SideToMove && p.Status == PieceStatus.Alive && p.Position is not null))
@@ -89,7 +90,8 @@ public static class MatchTurnRules
                 foreach (var y in new[] { 4, 5 })
                 {
                     var point = new BoardPoint(x, y);
-                    if (!state.Pieces.Any(p => p.Status == PieceStatus.Alive && p.Position == point) && !state.Obstacles.Any(o => o.Position == point))
+                    // Same cell-blocking rule the server enforces: no stacking on Cọc, Thành, Rào, bẫy or a piece.
+                    if (SkillPlacement.IsCellFree(state, point, hiddenBlocked))
                         yield return Make(hero, new { position = point });
                 }
             }

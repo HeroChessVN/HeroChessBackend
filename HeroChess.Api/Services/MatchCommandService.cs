@@ -431,7 +431,9 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             IEnumerable<object> targets = skill.ImplementationKey switch
             {
                 SkillKeys.Thanh or SkillKeys.Rao => Enumerable.Range(0, 9).SelectMany(x => Enumerable.Range(0, 10)
-                    .Select(y => (object)new { position = new { x, y } })),
+                    .Select(y => new BoardPoint(x, y)))
+                    .Where(pos => SkillPlacement.IsCellFree(state, pos))
+                    .Select(pos => (object)new { position = new { x = pos.X, y = pos.Y } }),
                 SkillKeys.Khien => state.Pieces.Where(p => p.Side == side && p.Status == PieceStatus.Alive)
                     .Select(p => (object)new { pieceId = p.PieceId }),
                 SkillKeys.VanCocTranGiang or SkillKeys.BinhLamThuyHien => new object[] { new { paths = new[] { 4, 5, 6 } } },

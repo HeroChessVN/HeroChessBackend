@@ -32,7 +32,8 @@ public sealed class FactionSkillHandler(string key) : ICommandSkillHandler
                     col is < 0 or > 8 || row is not (4 or 5) || !points.Add(new BoardPoint(col, row)))
                     return Invalid();
             }
-            if (points.Any(p => !Available(next, p))) return Invalid();
+            if (points.Any(p => !Available(next, p)))
+                return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED", "Select three distinct empty river cells.");
             next.RiverSnares.AddRange(points.Select(p => new RiverSnare(ctx.ActorSide, p, next.TurnIndex + 6)));
         }
         else if (key == Rally)
@@ -45,14 +46,17 @@ public sealed class FactionSkillHandler(string key) : ICommandSkillHandler
         CommandSkillResult Invalid() => CommandSkillResult.Failure(ctx.State, "INVALID_TARGET", "Select three distinct empty river cells.");
     }
 
-    private static bool Available(GameState state, BoardPoint p) =>
-        !state.Pieces.Any(piece => piece.Status == PieceStatus.Alive && piece.Position == p) &&
-        !state.Obstacles.Any(o => o.Position == p);
+    private static bool Available(GameState state, BoardPoint p) => SkillPlacement.IsCellFree(state, p);
 
-    public static IEnumerable<object> Targets(GameState state)
+    /// <summary>
+    /// Targets: gợi ý ba ô sông trống cho bẫy. hiddenBlocked dùng cho bot: bẫy của địch bị ẩn khỏi
+    /// tìm kiếm bot nhưng ô đó vẫn chặn, nên bot không đề xuất nơi server sẽ từ chối.
+    /// </summary>
+    public static IEnumerable<object> Targets(GameState state, IReadOnlyCollection<BoardPoint>? hiddenBlocked = null)
     {
         var points = Enumerable.Range(0, 9).OrderBy(x => Math.Abs(x - 4))
-            .SelectMany(x => new[] { new BoardPoint(x, 4), new BoardPoint(x, 5) }).Where(p => Available(state, p)).Take(3).ToArray();
+            .SelectMany(x => new[] { new BoardPoint(x, 4), new BoardPoint(x, 5) })
+            .Where(p => Available(state, p) && (hiddenBlocked is null || !hiddenBlocked.Contains(p))).Take(3).ToArray();
         if (points.Length == 3) yield return new { positions = points };
     }
 }

@@ -204,7 +204,7 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
     if (pending || busy || !snapshot || snapshot.status !== 'active') return;
     if (action.type === 'team_skill' && pointSkills.has(activeInfo?.implementationKey)) {
       const { x, y } = action.target.position;
-      if (!canPlaceStructure(ownSide, x, y, pieces.find(piece => piece.position.x === x && piece.position.y === y), obstacles)) {
+      if (!canPlaceStructure(ownSide, x, y, pieces.find(piece => piece.position.x === x && piece.position.y === y), obstacles, snares)) {
         setTargetPoint(null);
         setActionError('Thành/Rào chỉ đặt được vào ô trống bên sông mình.');
         return;
@@ -260,6 +260,7 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   const replayEnd = replay?.at(-1)?.sequenceNo ?? 0;
   const pieces = (view?.pieces || []).filter(piece => piece.status === 'alive' && piece.position);
   const obstacles = view?.obstacles || [];
+  const snares = view?.riverSnares || [];
   const effects = (view?.effectInstances || []).filter(effect => effect.state !== 'ended');
   const sideSkills = ownSide ? view?.skillStates?.[ownSide] || [] : [];
   const enemySide = ownSide === 'red' ? 'black' : 'red';
@@ -285,17 +286,18 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   function clickCell(x, y, piece) {
     if (replay || snapshot?.status !== 'active') return;
     if (selectingTrap) {
-      if ((y === 4 || y === 5) && !piece && !obstacles.some(item => item.position?.x === x && item.position?.y === y))
+      if ((y === 4 || y === 5) && !piece && !obstacles.some(item => item.position?.x === x && item.position?.y === y) &&
+          !snares.some(item => item.position?.x === x && item.position?.y === y))
         setTrapTargets(previous => previous.some(p => p.x === x && p.y === y)
           ? previous.filter(p => p.x !== x || p.y !== y)
           : previous.length < 3 ? [...previous, { x, y }] : previous);
       return;
     }
-    if (heroTargetMode === 'stake') { if ((y === 4 || y === 5) && !piece && !obstacles.some(item => item.position?.x === x && item.position?.y === y)) setTargetPoint({ x, y }); return; }
+    if (heroTargetMode === 'stake') { if ((y === 4 || y === 5) && !piece && !obstacles.some(item => item.position?.x === x && item.position?.y === y) && !snares.some(item => item.position?.x === x && item.position?.y === y)) setTargetPoint({ x, y }); return; }
     if (heroTargetMode === 'quangtrung') { if (heroMoves.some(move => move.toX === x && move.toY === y)) setTargetPoint({ x, y }); return; }
     if (activeInfo?.implementationKey === 'khien') { setTargetPieceId(piece?.side === ownSide ? piece.pieceId : null); return; }
     if (activeInfo && pointSkills.has(activeInfo.implementationKey)) {
-      if (!canPlaceStructure(ownSide, x, y, piece, obstacles)) {
+      if (!canPlaceStructure(ownSide, x, y, piece, obstacles, snares)) {
         setTargetPoint(null);
         setActionError('Thành/Rào chỉ đặt được vào ô trống bên sông mình.');
         return;
@@ -327,9 +329,9 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
       const stakeOwner = stake && view?.obstacleMetadata?.[stake.obstacleId]?.placer;
       const legalMove = displayMoves.some(move => move.toX === x && move.toY === y);
       const inEffect = effects.some(effect => effect.targetPositions?.some(position => position.x === x && position.y === y));
-      const ownTrap = view?.riverSnares?.some(trap => trap.position.x === x && trap.position.y === y);
+      const ownTrap = snares.some(trap => trap.position?.x === x && trap.position?.y === y);
       const picked = (targetPoint?.x === x && targetPoint?.y === y) || trapTargets.some(p => p.x === x && p.y === y);
-      return <button type="button" role="gridcell" key={`${x}-${y}`} className={`cell ${legalMove ? 'legal' : ''} ${inEffect || ownTrap ? 'effect-cell' : ''} ${(selectingTrap || heroTargetMode === 'stake') && (y === 4 || y === 5) && !piece && !obstacle ? 'hero-target' : ''} ${picked ? 'target-cell' : ''}`} title={`(${x},${y})${piece ? ` · ${piece.side} ${piece.class}` : ''}${obstacle ? ` · ${obstacle.kind}` : ''}${ownTrap ? ' · Bẫy Bạch Đằng' : ''}`} onClick={() => clickCell(x, y, piece)}>
+      return <button type="button" role="gridcell" key={`${x}-${y}`} className={`cell ${legalMove ? 'legal' : ''} ${inEffect || ownTrap ? 'effect-cell' : ''} ${(selectingTrap || heroTargetMode === 'stake') && (y === 4 || y === 5) && !piece && !obstacle && !ownTrap ? 'hero-target' : ''} ${picked ? 'target-cell' : ''}`} title={`(${x},${y})${piece ? ` · ${piece.side} ${piece.class}` : ''}${obstacle ? ` · ${obstacle.kind}` : ''}${ownTrap ? ' · Bẫy Bạch Đằng' : ''}`} onClick={() => clickCell(x, y, piece)}>
         <span className="coord">{x},{y}</span>{obstacle && obstacle !== stake && <span className="obstacle" title={obstacle.kind}>▣</span>}{stake && <span className={`river-stake ${stakeOwner || ''}`} title={`Bạch Đằng Giang · ${sideLabel(stakeOwner)}`}>Cọc</span>}{piece && <span className={`piece ${piece.side} ${selectedPiece === piece.pieceId ? 'selected' : ''}`}><span>{classes[piece.class] || piece.class}{piece.effects?.some(effect => effect.code === 'shield') ? ' 🛡' : ''}</span><small>{piece.heroName || catalog?.heroes?.find(hero => hero.id === piece.heroId)?.name || ''}</small></span>}
         {legalMove && <span className="move-dot" />}</button>;
     }))}</div><p className="board-note">Chọn quân của bạn rồi chọn ô sáng. Viền vàng: ô có hiệu ứng; ▣: vật cản. Nước hợp lệ do API tính.</p>

@@ -227,8 +227,10 @@ Replay bắt đầu bằng action `start` ở `sequenceNo = 0`: đó là bàn c�
 Lỗi nghiệp vụ thường có dạng:
 
 ```json
-{ "code": "CELL_OCCUPIED", "message": "Cannot place Rào on a cell occupied by a piece.", "requestId": "...", "details": null }
+{ "code": "CELL_OCCUPIED", "message": "Cannot place Rào on an occupied cell.", "requestId": "...", "details": null }
 ```
+
+Ô đã có quân, Cọc, Thành, Rào hoặc Bẫy thì không skill nào đặt được lên đó: server trả `422 CELL_OCCUPIED` cho cả hai phe, không ngoại lệ Cọc. Client tô/nhận ô theo cùng luật nhưng server vẫn là nơi phán quyết — một client khác gửi lệnh đặt chồng vẫn bị từ chối.
 
 `400`: body/action sai; `401`: chưa đăng nhập/token hết hạn; `403`: sai quyền; `404`: không có tài nguyên hoặc không phải người trong trận; `409`: version/deadline/trạng thái đã đổi; `422`: nước/skill không hợp lệ; `500`: lỗi backend/DB, nên hiện thông báo và cho thử lại, không khóa bàn cờ vĩnh viễn. Nếu nhiều route cùng trả 500, kiểm tra `/health/ready` và log backend. Đừng gửi liên tục request 500 mỗi frame; polling nên giãn nhịp và báo lỗi rõ ràng.
 

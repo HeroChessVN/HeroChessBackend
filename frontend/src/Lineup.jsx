@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { api, lineupPayload } from './api.js';
+import React, { useEffect, useRef, useState } from 'react';
+import { api, defaultLineup, lineupPayload } from './api.js';
 
 export default function LineupEditor({ token, catalog, lineups, onChanged, onError }) {
   const [editing, setEditing] = useState('new');
@@ -8,13 +8,27 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
   const [skills, setSkills] = useState(['', '', '']);
   const [busy, setBusy] = useState(false);
   const current = lineups.find(item => item.id === editing);
+  const presetFor = useRef(null);
 
   useEffect(() => {
-    if (!current) { setName('Đội hình mới'); setHeroes({}); setSkills(['', '', '']); return; }
-    setName(current.name);
-    setHeroes(Object.fromEntries(current.entries.map(item => [item.slotNo, item.heroId])));
-    setSkills([1, 2, 3].map(slot => current.skills.find(item => item.slotNo === slot)?.skillId || ''));
-  }, [editing, lineups]);
+    if (current) {
+      presetFor.current = current.id;
+      setName(current.name);
+      setHeroes(Object.fromEntries(current.entries.map(item => [item.slotNo, item.heroId])));
+      setSkills([1, 2, 3].map(slot => current.skills.find(item => item.slotNo === slot)?.skillId || ''));
+      return;
+    }
+    // Đội hình mặc định: điền sẵn bộ quân hợp lệ để người chơi chỉ cần lưu.
+    // Chỉ điền một lần cho mỗi lần mở "Tạo mới" để không ghi đè chỉnh sửa của người chơi.
+    // Chờ catalog có dữ liệu rồi mới điền, nếu không sẽ điền rỗng.
+    if (presetFor.current === 'new') return;
+    if (!catalog?.slots?.length) return;
+    presetFor.current = 'new';
+    const preset = defaultLineup(catalog);
+    setName('Đội hình mới');
+    setHeroes(preset.heroes);
+    setSkills(preset.skills);
+  }, [editing, lineups, catalog]);
 
   const chosen = catalog.slots.map(slot => catalog.heroes.find(hero => hero.id === heroes[slot.slotNo]));
 
@@ -31,23 +45,20 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
     }
   };
 
-  // Lấy tên hero đã chọn theo class (tránh chọn 2 con cùng model trong cùng class)
-  const selectedNameByClass = {};
-  for (const hero of chosen) {
-    if (hero?.name) {
-      const classCode = hero.classCode;
-      if (!selectedNameByClass[classCode]) selectedNameByClass[classCode] = hero.name;
-    }
+  // Lấy danh sách hero đang dùng ở slot khác để không chọn trùng.
+  const heroIdBySlot = {};
+  for (const slot of catalog.slots) {
+    if (heroes[slot.slotNo]) heroIdBySlot[slot.slotNo] = heroes[slot.slotNo];
   }
 
-  const getAvailableHeroes = (slot) => {
-    return catalog.heroes.filter(hero => {
-      if (hero.classCode !== slot.classCode || !hero.isOwned) return false;
-      // Ẩn nếu class này đã chọn hero cùng tên
-      const usedName = selectedNameByClass[slot.classCode];
-      if (usedName && usedName === hero.name) return false;
-      return true;
-    });
+  const getAvailableHeroes = slot => {
+    // Tốt dùng chung một hero cho cả năm slot nên không loại hero đang chọn khỏi danh sách.
+    const peers = catalog.slots.filter(other =>
+      other.slotNo !== slot.slotNo && other.classCode === slot.classCode
+      && !(slot.classCode === 'SOLDIER' && other.classCode === 'SOLDIER'));
+    const usedElsewhere = new Set(peers.map(other => heroIdBySlot[other.slotNo]).filter(Boolean));
+    return catalog.heroes.filter(hero =>
+      hero.classCode === slot.classCode && hero.isOwned && !usedElsewhere.has(hero.id));
   };
 
   const sp = chosen.reduce((sum, hero) => sum + (hero?.setupPoints || 0), 0);
@@ -57,18 +68,19 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
     hero?.factionIds?.includes(factionId)).map(hero => hero.id)).size;
 
   function fillOwned() {
-    const usedHeroes = new Set(); const usedCharacters = new Set(); const next = {};
-    for (const slot of catalog.slots) {
-      const hero = catalog.heroes.find(item => item.isOwned && item.classCode === slot.classCode && !usedHeroes.has(item.id) && (!item.characterId || !usedCharacters.has(item.characterId)));
-      if (hero) { next[slot.slotNo] = hero.id; usedHeroes.add(hero.id); if (hero.characterId) usedCharacters.add(hero.characterId); }
-    }
-    setHeroes(next);
-    setSkills(catalog.teamSkills.filter(skill => !skill.factionId).slice(0, 3).map(skill => skill.id).concat(['', '', '']).slice(0, 3));
+    const preset = defaultLineup(catalog);
+    setHeroes(preset.heroes);
+    setSkills(preset.skills);
   }
 
   async function save() {
+    // Chặn trước khi gọi API những lỗi server đã biết: thiếu hero, skill trùng/thiếu,
+    // tên rỗng và nhân vật lịch sử bị lặp (server trả DUPLICATE_CHARACTER).
     if (missing || skills.some(value => !value) || new Set(skills).size !== 3 || !name.trim()) {
       onError(new Error('Cần đủ 16 hero, 3 skill khác nhau và tên đội hình.')); return;
+    }
+    if (repeated.length > 0) {
+      onError(new Error('Một nhân vật lịch sử không được xuất hiện hai lần trong đội hình.')); return;
     }
     setBusy(true); onError(null);
     try {
@@ -91,7 +103,7 @@ export default function LineupEditor({ token, catalog, lineups, onChanged, onErr
     <div className="budget"><strong>{sp} / {catalog.ruleset.setupBudget}</strong><span>Setup points</span></div></div>
     <div className="editor-layout"><aside className="card lineup-list"><h2>Đội hình đã lưu</h2><button className={editing === 'new' ? 'list-row active' : 'list-row'} onClick={() => setEditing('new')}>+ Tạo mới</button>
       {lineups.map(item => <button className={editing === item.id ? 'list-row active' : 'list-row'} key={item.id} onClick={() => setEditing(item.id)}><span>{item.name}</span><small>v{item.revision} · {item.totalSp}/{item.budget} SP</small></button>)}</aside>
-      <div className="editor-main"><section className="card"><div className="form-head"><label>Tên đội hình<input maxLength={80} value={name} onChange={event => setName(event.target.value)} /></label><button className="secondary" onClick={fillOwned}>Điền hero đang có</button></div>
+      <div className="editor-main"><section className="card"><div className="form-head"><label>Tên đội hình<input maxLength={80} value={name} onChange={event => setName(event.target.value)} /></label><button className="secondary" onClick={fillOwned}>Về đội hình mặc định</button></div>
         <div className="form-status">{catalog.slots.length - missing}/{catalog.slots.length} vị trí · {sp > catalog.ruleset.setupBudget ? 'Vượt ngân sách SP' : 'Trong ngân sách'}{repeated.length > 0 ? ' · Có nhân vật lịch sử bị lặp' : ''}</div>
         <div className="slot-grid">{[...catalog.slots].sort((a, b) => a.slotNo - b.slotNo).map(slot => {
           const selected = catalog.heroes.find(hero => hero.id === heroes[slot.slotNo]);
