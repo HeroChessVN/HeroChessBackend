@@ -5,17 +5,17 @@ SET LOCAL search_path = hero_chess, pg_catalog;
 
 -- Step 6: Thành Command Skill
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
- ('70000000-0000-4000-8000-000000000010','thanh','Thành','thanh',8,true,false,
-  'Tạo 1 Thành ở vị trí bất kỳ bên sông mình; tồn tại 6 lượt chung, hồi chiêu 8. Pháo phá Thành và tiến vào ô đó; Thành không làm ngòi.')
+ ('70000000-0000-4000-8000-000000000010','thanh','Thành','thanh',14,true,false,
+  'Tạo 1 Thành ở vị trí bất kỳ bên sông mình; tồn tại 6 lượt chung. Pháo phá Thành và tiến vào ô đó; Thành không làm ngòi.')
 ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
-  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled;
+  name=EXCLUDED.name,is_enabled=EXCLUDED.is_enabled;
 
 -- Step 6: Rào Command Skill
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
- ('70000000-0000-4000-8000-000000000011','rao','Rào','rao',6,true,false,
-  'Tạo 1 Rào ở vị trí bất kỳ bên sông mình; tồn tại 4 lượt chung, hồi chiêu 6. Pháo có thể dùng Rào làm ngòi.')
+ ('70000000-0000-4000-8000-000000000011','rao','Rào','rao',10,true,false,
+  'Tạo 1 Rào ở vị trí bất kỳ bên sông mình; tồn tại 4 lượt chung. Pháo có thể dùng Rào làm ngòi.')
 ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
-  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled;
+  name=EXCLUDED.name,is_enabled=EXCLUDED.is_enabled;
 
 -- Step 6: Trần Hưng Đạo — Tượng Hero Skill (team_skill slot for the hero's own skill)
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
@@ -27,10 +27,10 @@ ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,kind=EXCLUDED.kind,implementat
 UPDATE hero SET trait_id='30000000-0000-4000-8000-000000000009' WHERE code='tran-hung-dao-elephant';
 
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
- ('70000000-0000-4000-8000-000000000013','khien','Khiên','khien',8,true,false,
-  'Tạo 1 Khiên cho quân đồng minh bất kỳ trên bàn cờ; tồn tại 4 lượt chung, hồi chiêu 8. Quân có Khiên không thể bị ăn.')
+ ('70000000-0000-4000-8000-000000000013','khien','Khiên','khien',14,true,false,
+  'Tạo 1 Khiên cho quân đồng minh bất kỳ trên bàn cờ; tồn tại 4 lượt chung. Quân có Khiên không thể bị ăn.')
 ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,
-  cooldown_turns=EXCLUDED.cooldown_turns,name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled;
+  name=EXCLUDED.name,is_enabled=EXCLUDED.is_enabled;
 
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
  ('70000000-0000-4000-8000-000000000012','tran-hung-dao-tuong-coc','Trần Hưng Đạo — Tượng: Tạo Cọc','tran_hung_dao_tuong.coc',5,false,false,

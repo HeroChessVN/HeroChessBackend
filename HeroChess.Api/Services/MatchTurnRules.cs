@@ -35,11 +35,18 @@ public static class MatchTurnRules
         var target = action.GetProperty("target");
         var piece = state.Pieces.FirstOrDefault(p => p.PieceId == pieceId && p.Side == actor &&
             p.Status == PieceStatus.Alive && p.TraitImplementationKey == key);
-        if (!state.PublicRiverStakes || state.Result is not null || piece is null || key is not (SkillKeys.QuangTrungSpecialMove or SkillKeys.ThDTuongCoc))
+        if (!state.PublicRiverStakes || state.Result is not null || piece is null ||
+            key is not (SkillKeys.QuangTrungSpecialMove or SkillKeys.ThDTuongCoc) && !AdvisorHeroSkills.IsActive(key))
             return CommandSkillResult.Failure(state, "HERO_SKILL_NOT_AVAILABLE", "The selected hero skill is not available.");
 
         var activated = new { type = "hero_skill.activated", code = key, pieceId, side = actor,
-            skillName = piece.TraitName ?? (key == SkillKeys.ThDTuongCoc ? "Bạch Đằng Giang" : "Hành Quân Thần Tốc"),
+            skillName = piece.TraitName ?? key switch
+            {
+                SkillKeys.ThDTuongCoc => "Bạch Đằng Giang",
+                SkillKeys.LeLaiSwapGeneral => "Lê Lai cứu chúa",
+                SkillKeys.TranThuDoGeneralShield => "Trấn Quốc Hộ Quân",
+                _ => "Hành Quân Thần Tốc"
+            },
             heroName = piece.HeroName, pieceClass = piece.Class };
         if (key == SkillKeys.QuangTrungSpecialMove)
         {
@@ -54,12 +61,13 @@ public static class MatchTurnRules
                 CommandSkillResult.Failure(state, applied.Error!.Code, applied.Error.Message);
         }
 
-        var placed = BachDangGiang.Execute(state, actor, pieceId, target);
+        var advisor = AdvisorHeroSkills.IsActive(key);
+        var placed = advisor ? AdvisorHeroSkills.Execute(state, actor, pieceId, key!, target) : BachDangGiang.Execute(state, actor, pieceId, target);
         if (!placed.Accepted) return placed;
         if (engine.IsInCheck(placed.State, actor))
             return CommandSkillResult.Failure(state, "KING_IN_CHECK", "The skill must resolve check before ending the turn.");
         AdvanceSkill(placed.State, actor);
-        return CommandSkillResult.Success(placed.State, new object[] { activated });
+        return CommandSkillResult.Success(placed.State, new object[] { activated }.Concat(advisor ? placed.Events : Array.Empty<object>()).ToArray());
     }
 
     public static object MoveEvent(GameState before, MoveAction move, ApplyMoveResult applied)
@@ -77,7 +85,14 @@ public static class MatchTurnRules
         if (!state.PublicRiverStakes || state.Result is not null) yield break;
         foreach (var hero in state.Pieces.Where(p => p.Side == state.SideToMove && p.Status == PieceStatus.Alive && p.Position is not null))
         {
-            if (hero.TraitImplementationKey == SkillKeys.QuangTrungSpecialMove)
+            if (AdvisorHeroSkills.IsActive(hero.TraitImplementationKey) &&
+                hero.TraitState.GetValueOrDefault(SkillKeys.HeroCooldownRemainingKey) is not > 0)
+            {
+                var general = state.Pieces.FirstOrDefault(p => p.Side == state.SideToMove && p.Class == PieceClass.General &&
+                    p.Status == PieceStatus.Alive && p.Position is not null);
+                if (general is not null) yield return Make(hero, new { pieceId = general.PieceId });
+            }
+            else if (hero.TraitImplementationKey == SkillKeys.QuangTrungSpecialMove)
             {
                 foreach (var move in engine.GenerateQuangTrungSpecialMoves(state, hero.PieceId))
                     yield return Make(hero, new { to = move.To });

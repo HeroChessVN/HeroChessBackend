@@ -1,6 +1,6 @@
 // Step 6: Rào — Command Skill.
 // Creates a temporary barrier obstacle on the owning side's half of the board.
-// Duration: 4 shared board turns. Cooldown: 6 shared board turns.
+// Duration: 4 shared board turns. Cooldown comes from the frozen lineup.
 // Rào behaves like a Soldier for destruction interaction.
 // Rào blocks normal movement.
 using HeroChess.Rules.Effects;
@@ -18,7 +18,7 @@ namespace HeroChess.Rules.Skills;
 ///
 /// Rules:
 /// - Duration: 4 shared board turns.
-/// - Cooldown: 6 shared board turns.
+/// - Cooldown is configured in the catalogue and frozen per match.
 /// - Target: a single valid cell on the owner's half of the board.
 /// - Rào is a movement obstacle.
 /// - When a piece moves to/through the Rào cell, the Rào is removed (like being captured).

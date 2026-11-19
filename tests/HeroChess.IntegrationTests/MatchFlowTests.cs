@@ -57,7 +57,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         Assert.Equal(1, accepted.SequenceNo);
         Assert.Equal(1, accepted.Snapshot.CountedActions);
         Assert.Equal("black", accepted.Snapshot.SideToMove);
-        Assert.Equal(7, accepted.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
+        Assert.Equal(skill.CooldownTurns!.Value - 1, accepted.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
         Assert.True((await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", request)).Duplicate);
     }
 

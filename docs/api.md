@@ -41,6 +41,7 @@ Gọi login sau khi đăng ký. `/catalog` trả hero đang bật kèm `id`, `na
 - Ở màn xếp đội hình, đọc `heroes[].setupPoints` cho từng quân và `ruleset.setupBudget` cho giới hạn tổng SP. Sau khi lưu, dùng `totalSp`, `budget` và `validationErrors` từ phản hồi lineup. Trong trận và replay, dùng tên và SP từ snapshot của trận.
 - Ghép từng ID trong `heroes[].factionIds` với `factions[].id` để lấy `factions[].name`. Hiện có ba phe Trần, Hậu Lê và Tây Sơn. Mảng `factionIds` rỗng thì bỏ nhãn phe.
 - Nếu `heroes[].trait` là `null` thì ẩn phần trait của hero. Nếu có, hiển thị `trait.name` và `trait.description` khi có mô tả. Trong trận và replay, dùng metadata trait từ snapshot.
+- Đợt chuẩn hóa SP: Sĩ có trait 2; Tượng cơ bản 2, Tượng linh hoạt 3, Tượng mạnh 4; Lý Thường Kiệt Pháo 7. Budget vẫn 50. Luôn đọc giá thực tế từ catalog. Đội hình đã lưu có thể phát sinh `SP_BUDGET_EXCEEDED`; giữ đội hình để sửa, không tự thay quân. Hai biến thể cùng nhân vật không được chọn chung.
 - Có thể chọn tối đa một faction skill trong ba ô Command Skill. Để dùng một trong ba skill dưới đây, đội hình cần ít nhất 5 hero khác nhau cùng phe trong 11 ô ngoài Tốt. BE kiểm tra lúc lưu và xác nhận đội hình. Quyền dùng được chốt khi vào trận, quân bị ăn sau đó không khóa lại kỹ năng.
 
 ## 3. Đội hình
@@ -164,6 +165,42 @@ Hero Trait và ba faction skill mới mặc định tắt cho trận mới. Sau 
 Trong trận có `state.publicRiverStakes`, đọc trait trên `state.pieces`, hồi chiêu từ `traitState` và Cọc Bạch Đằng Giang từ `state.obstacles` với `kind: "thd_tuong_coc"`. Phe đặt là `state.obstacleMetadata[obstacleId].placer`. Khi `thdTuongCocStakes[pieceId]` còn tồn tại, nút đặt Cọc của quân đó cần khóa kể cả hồi chiêu bằng 0. Cả hai bên thấy Cọc. Nước dính Cọc có thể hợp lệ và tạo sự kiện `river_stake.hit` với `pieceId`, `position`, `side` của Cọc và `victimSide` của quân bị loại. Kết thúc do Cọc dùng `endReason: "river_stake"`.
 
 Command hợp lệ trả `MatchCommandResultDto`: `matchId`, `commandId`, `sequenceNo`, `duplicate`, `resolvedEvents`, `snapshot`. Render bàn cờ từ `snapshot` mới; bot có thể đi ngay sau đó nên phải nhận cập nhật tiếp. Retry **cùng một command** bằng đúng `commandId` và action cũ để tránh ghi hai lần. Khi `409 STALE_STATE`, lấy `/state` mới rồi cho người chơi chọn lại nước với `commandId` mới. Deadline dùng `deadlineAt` so với `serverNow`; server tự xử lý hết giờ, FE chỉ hiển thị đếm ngược.
+
+### Trait Sĩ
+
+| Hero | Tên trait | `implementationKey` | `kind` | SP | CD |
+|---|---|---|---|---:|---:|
+| Lê Lai — Sĩ | Lê Lai cứu chúa | `le_lai.swap_general` | `active` | 2 | 8 |
+| Trần Thủ Độ — Sĩ | Trấn Quốc Hộ Quân | `tran_thu_do.general_shield` | `active` | 2 | 6 |
+| Nguyễn Nhạc — Sĩ | Thái Đức Linh Bộ | `advisor.king_step` | `special_move` | 2 | — |
+| Nguyễn Lữ — Sĩ | Đông Định Linh Bộ | `advisor.king_step` | `special_move` | 2 | — |
+
+Hai active chỉ target Tướng đồng minh còn sống. Gửi trong command envelope hiện tại, giữ `commandId` khi retry:
+
+```json
+{
+  "commandId": "<uuid>",
+  "expectedVersion": 12,
+  "action": {
+    "type": "hero_active",
+    "pieceId": "<pieceId Sĩ trong trận>",
+    "skillCode": "le_lai.swap_general",
+    "target": { "pieceId": "<pieceId Tướng đồng minh trong trận>" }
+  }
+}
+```
+
+Lê Lai đổi hai vị trí trong cung nhà, không giới hạn khoảng cách hoặc yêu cầu đường trống. Lê Lai và Tướng phải còn sống, ở trong cung, không bị khóa chân; đổi xong Tướng phải an toàn theo luật trận. Thành công tiêu một lượt và phát `hero_skill.activated` cùng hai `piece.moved`. Luôn cập nhật cả hai quân từ snapshot; không xử lý như ăn quân.
+
+Trần Thủ Độ dùng shape trên với `skillCode="tran_thu_do.general_shield"`. Tướng được bảo vệ có thể đã rời cung. Trần Thủ Độ bị khóa chân vẫn dùng được vì đây không phải di chuyển. Khiên dùng chung `code="shield"`, có `sourcePieceId`; không được cộng dồn hoặc ghi đè Khiên còn hiệu lực của Command Skill. Nguồn bị ăn không kéo dài hoặc xóa sớm timer.
+
+Trấn Quốc Hộ Quân tồn tại **2 lượt chung, tính cả lượt kích hoạt**: sau ACK thường còn `remainingTurns=1`, hết khi lượt mình trở lại. CD cấu hình 6 thường còn 5 sau ACK; Lê Lai cấu hình 8 thường còn 7. Đọc `traitParameters` của quân và `traitState.heroCooldownRemaining` trong trận, không tự bù số. Command Khiên vẫn tồn tại 4 lượt, CD hiện tại 14; đây là hai kỹ năng khác nhau.
+
+Hai Sĩ Tây Sơn đi một ô theo tám hướng trong cung, dùng `/legal-actions` và action `move`; không có nút kích hoạt hoặc CD. Bản GENERAL của Nguyễn Nhạc/Nguyễn Lữ không nhận trait này. `classCode` ở catalog là `GENERAL`/`ADVISOR`, còn enum `class` trong snapshot là `general`/`advisor`.
+
+Sai JSON target trả 400 `INVALID_ACTION`; target sai phe/class/vị trí trả 422 `INVALID_TARGET`; đổi chỗ khi khóa chân trả `PIECE_ROOTED`; skill chưa sẵn sàng trả `SKILL_ON_COOLDOWN`; Tướng đã có Khiên trả `ALREADY_SHIELDED`; cấu hình sai trả `INVALID_HERO_SKILL_CONFIG`. Command version cũ vẫn 409. Đọc lỗi và giữ snapshot cũ khi bị từ chối; không tiêu lượt ở client trước ACK.
+
+Phát hành: deploy BE hỗ trợ key và tích hợp Unity trước, rồi mới chạy thủ công `19_hero_sp_and_advisor_traits.sql` trên DB đích. Deploy code không tự áp patch 19. Metadata/SP trong trận cũ giữ nguyên theo snapshot. Description Thành/Rào/Khiên không nhúng CD; UI lấy số từ `teamSkills[].cooldownTurns`, số đang hồi lấy từ `skillStates`.
 
 ### Trang phục bàn cờ
 

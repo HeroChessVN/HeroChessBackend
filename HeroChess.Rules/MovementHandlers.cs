@@ -30,6 +30,7 @@ public sealed class MovementHandlerRegistry
             ["elephant.alternating_distance"] = new WildElephantHandler(),
             ["elephant.river_crossing"] = new RiverCrossingDiagonalHandler(),
             ["general.king_move"] = new LeLoiHandler(),
+            [SkillKeys.AdvisorPalaceStep] = new LeLoiHandler(),
             ["general.orthogonal_range_3"] = new OrthogonalRangeHandler(1), // legacy Quang Trung snapshots
             ["general.orthogonal_range_1_no_palace"] = new TranHungDaoGeneralHandler(),
             ["rook.hoanh_soc"] = new HoanhSocHandler(),

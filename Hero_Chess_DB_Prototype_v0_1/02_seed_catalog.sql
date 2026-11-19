@@ -2,10 +2,8 @@
 -- STEP 2: Custom movement handlers wired (Le Loi, Trung Trac, Trung Nhi).
 -- Run after 01_schema.sql.
 -- May be re-run: existing rows use ON CONFLICT DO NOTHING / DO UPDATE.
--- Hero skill handlers are NOT in scope for this seed; trait_id = NULL for heroes
---   without a confirmed custom movement (Le Loi, Trung Trac, Trung Nhi, etc.).
+-- Hero behaviour is implemented in Rules; this file supplies catalogue metadata.
 -- CHECK constraint on hero(setup_points): non-GENERAL heroes require SP >= 1.
---   Tuong SP modifiers (-1d, -2d) deferred pending lineup validation design.
 BEGIN;
 SET LOCAL search_path = hero_chess, pg_catalog;
 
@@ -133,6 +131,21 @@ INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,descripti
  '{"maxSteps":1,"orthogonal":true,"diagonal":false,"palaceOnly":false,"riverCrossing":false}',
  'Đi 1 ô thẳng; được ra khỏi cung; không qua sông.') ON CONFLICT DO NOTHING;
 
+-- Independent trait definitions; existing catalogue configuration is preserved.
+INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description)
+SELECT md5('hero_chess.hero_trait:'||code)::uuid,code,name,kind,implementation_key,parameters::jsonb,description
+FROM (VALUES
+ ('le-lai-cuu-chua','Lê Lai cứu chúa','active','le_lai.swap_general','{"cooldownTurns":8}',
+  'Lê Lai hoán đổi vị trí với Tướng đồng minh còn trong cung để che chở chủ tướng. Không cần đường đi trống giữa hai quân.'),
+ ('tran-thu-do-tran-quoc-ho-quan','Trấn Quốc Hộ Quân','active','tran_thu_do.general_shield','{"durationTurns":2,"cooldownTurns":6}',
+  'Giữ vững quốc gia, Trần Thủ Độ dựng Khiên che chở chủ tướng trong thời gian ngắn. Chỉ có thể bảo vệ Tướng đồng minh.'),
+ ('nguyen-nhac-thai-duc-linh-bo','Thái Đức Linh Bộ','special_move','advisor.king_step','{"maxSteps":1,"palaceOnly":true,"orthogonal":true,"diagonal":true}',
+  'Nguyễn Nhạc linh hoạt xoay chuyển thế phòng ngự, có thể tiến thoái một ô theo tám hướng trong cung nhà.'),
+ ('nguyen-lu-dong-dinh-linh-bo','Đông Định Linh Bộ','special_move','advisor.king_step','{"maxSteps":1,"palaceOnly":true,"orthogonal":true,"diagonal":true}',
+  'Nguyễn Lữ uyển chuyển giữ thế trận, có thể di chuyển một ô theo tám hướng trong cung nhà.')
+) AS traits(code,name,kind,implementation_key,parameters,description)
+ON CONFLICT(code) DO NOTHING;
+
 -- D. hero: Full 44-entry roster (45 minus duplicate Nguyen Trai).
 --    trait_id:
 --      Tran Binh Trong  -> 30000000-0000-4000-8000-000000000001
@@ -141,9 +154,7 @@ INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,descripti
 --      all others       -> NULL
 --    is_enabled = false: not released. is_test_fixture = false. coin_price = 0.
 --    CLASS CODES: Tuong/Vua entries stored as GENERAL (no VUA class code).
---    SP: Tướng variants stored as 0 (baseline); note modifiers pending lineup validation.
---    Tran Hung Dao (Tuong variant): stored 0; design note -1d requires SP modifier design.
---    Tran Hung Dao (Tuong2/ELEPHANT): design note 3d stored as 0; CHECK requires SP>=1 for non-GENERAL.
+--    SP: General baseline 0, special Generals 1–2; Elephants 2–4; Advisors 1–2.
 --    Nguyen Trai: two character rows, two hero rows.
 --    Nguyen Nhac / Nguyen Lu: Si variant + Tuong variant preserved separately.
 --    Tran Hung Dao: Tuong variant + Tuong2 (ELEPHANT) variant preserved separately.
@@ -162,17 +173,17 @@ FROM (VALUES
  ('60000000-0000-4000-8000-000000000002','nguyen-trung-ngan-advisor','50000000-0000-4000-8000-000000000002','ADVISOR',NULL,'Nguyen Trung Ngan',1,false,false,0,'Si 1d; red-marked - no gameplay meaning assigned.'),
  ('60000000-0000-4000-8000-000000000003','nguyen-binh-khiem-advisor','50000000-0000-4000-8000-000000000003','ADVISOR',NULL,'Nguyen Binh Khiem',1,false,false,0,'Si 1d; base ADVISOR movement.'),
  ('60000000-0000-4000-8000-000000000004','mac-dinh-chi-advisor','50000000-0000-4000-8000-000000000004','ADVISOR',NULL,'Mac Dinh Chi',1,false,false,0,'Si 1d; base ADVISOR movement.'),
- ('60000000-0000-4000-8000-000000000005','tran-thu-do-advisor','50000000-0000-4000-8000-000000000005','ADVISOR',NULL,'Tran Thu Do',1,false,false,0,'Si 1d; base ADVISOR movement.'),
+ ('60000000-0000-4000-8000-000000000005','tran-thu-do-advisor','50000000-0000-4000-8000-000000000005','ADVISOR',(SELECT id::text FROM hero_trait WHERE code='tran-thu-do-tran-quoc-ho-quan'),'Tran Thu Do',2,false,false,0,'Sĩ có skill Trấn Quốc Hộ Quân.'),
  ('60000000-0000-4000-8000-000000000006','tran-nhat-duat-advisor','50000000-0000-4000-8000-000000000006','ADVISOR',NULL,'Tran Nhat Duat',1,false,false,0,'Si 1d; base ADVISOR movement.'),
- ('60000000-0000-4000-8000-000000000007','le-lai-advisor','50000000-0000-4000-8000-000000000007','ADVISOR',NULL,'Le Lai',1,false,false,0,'Si 1d; base ADVISOR movement.'),
- ('60000000-0000-4000-8000-000000000008','nguyen-nhac-advisor','50000000-0000-4000-8000-000000000009','ADVISOR',NULL,'Nguyen Nhac',1,false,false,0,'Si 1d; Nguyen Nhac also has Tuong variant (0d, GENERAL). No custom rule.'),
- ('60000000-0000-4000-8000-000000000010','nguyen-lu-advisor','50000000-0000-4000-8000-000000000010','ADVISOR',NULL,'Nguyen Lu',1,false,false,0,'Si 1d; Nguyen Lu also has Tuong variant (0d, GENERAL). No custom rule.'),
+ ('60000000-0000-4000-8000-000000000007','le-lai-advisor','50000000-0000-4000-8000-000000000007','ADVISOR',(SELECT id::text FROM hero_trait WHERE code='le-lai-cuu-chua'),'Le Lai',2,false,false,0,'Sĩ có skill Lê Lai cứu chúa.'),
+ ('60000000-0000-4000-8000-000000000008','nguyen-nhac-advisor','50000000-0000-4000-8000-000000000009','ADVISOR',(SELECT id::text FROM hero_trait WHERE code='nguyen-nhac-thai-duc-linh-bo'),'Nguyen Nhac',2,false,false,0,'Sĩ có trait Thái Đức Linh Bộ; bản Tướng giữ di chuyển cơ bản.'),
+ ('60000000-0000-4000-8000-000000000010','nguyen-lu-advisor','50000000-0000-4000-8000-000000000010','ADVISOR',(SELECT id::text FROM hero_trait WHERE code='nguyen-lu-dong-dinh-linh-bo'),'Nguyen Lu',2,false,false,0,'Sĩ có trait Đông Định Linh Bộ; bản Tướng giữ di chuyển cơ bản.'),
  -- === TUONG / VUA (GENERAL) ===
  -- Note: Tuong/Vua stored as GENERAL (no VUA class code exists).
- -- SP modifiers (-1d, -2d) stored as 0 pending lineup validation design.
- ('60000000-0000-4000-8000-000000000011','tran-hung-dao-general','50000000-0000-4000-8000-000000000011','GENERAL','30000000-0000-4000-8000-000000000006','Tran Hung Dao',0,false,false,0,'Tuong 0d; design note -1d modifier pending design. Movement: general.orthogonal_range_1_no_palace IMPLEMENTED.'),
- ('60000000-0000-4000-8000-000000000012','le-loi-general','50000000-0000-4000-8000-000000000012','GENERAL','30000000-0000-4000-8000-000000000004','Le Loi',0,false,false,0,'Tuong 0d; design note -1d modifier pending design. Movement: general.king_move IMPLEMENTED.'),
- ('60000000-0000-4000-8000-000000000013','quang-trung-general','50000000-0000-4000-8000-000000000013','GENERAL','30000000-0000-4000-8000-000000000005','Quang Trung',0,false,false,0,'Tướng đi thường 1 ô thẳng, được ra khỏi cung, không qua sông; skill đi thẳng 1–3 ô với CD 3.'),
+ -- Special General costs include their movement/skill premium.
+ ('60000000-0000-4000-8000-000000000011','tran-hung-dao-general','50000000-0000-4000-8000-000000000011','GENERAL','30000000-0000-4000-8000-000000000006','Tran Hung Dao',1,false,false,0,'Tuong 0d; design note -1d modifier pending design. Movement: general.orthogonal_range_1_no_palace IMPLEMENTED.'),
+ ('60000000-0000-4000-8000-000000000012','le-loi-general','50000000-0000-4000-8000-000000000012','GENERAL','30000000-0000-4000-8000-000000000004','Le Loi',1,false,false,0,'Tuong 0d; design note -1d modifier pending design. Movement: general.king_move IMPLEMENTED.'),
+ ('60000000-0000-4000-8000-000000000013','quang-trung-general','50000000-0000-4000-8000-000000000013','GENERAL','30000000-0000-4000-8000-000000000005','Quang Trung',2,false,false,0,'Tướng đi thường 1 ô thẳng, được ra khỏi cung, không qua sông; skill đi thẳng 1–3 ô với CD 3.'),
  ('60000000-0000-4000-8000-000000000014','nguyen-nhac-general','50000000-0000-4000-8000-000000000009','GENERAL',NULL,'Nguyen Nhac',0,false,false,0,'Tuong 0d; Nguyen Nhac also has Si variant (1d). No custom rule.'),
  ('60000000-0000-4000-8000-000000000015','nguyen-lu-general','50000000-0000-4000-8000-000000000010','GENERAL',NULL,'Nguyen Lu',0,false,false,0,'Tuong 0d; Nguyen Lu also has Si variant (1d). No custom rule.'),
  ('60000000-0000-4000-8000-000000000016','tran-thanh-tong-general','50000000-0000-4000-8000-000000000016','GENERAL',NULL,'Tran Thanh Tong',0,false,false,0,'Tuong 0d; no custom rule noted.'),
@@ -180,16 +191,16 @@ FROM (VALUES
  -- Da Tuong: trait elephant.alternating_distance (existing ID).
  -- Tran Binh Trong: trait elephant.diagonal_range (existing ID).
  -- Bui Thi Xuan: trait elephant.diagonal_range (existing BXU variant ID).
- -- Tran Hung Dao (ELEPHANT): design note 3d. SP >= 1 satisfied by value 3.
- ('60000000-0000-4000-8000-000000000017','tran-hung-dao-elephant','50000000-0000-4000-8000-000000000011','ELEPHANT',NULL,'Tran Hung Dao',3,false,false,0,'Tuong 3d; Bạch Đằng Giang active skill.'),
- ('60000000-0000-4000-8000-000000000018','da-tuong-elephant','50000000-0000-4000-8000-000000000018','ELEPHANT','30000000-0000-4000-8000-000000000002','Da Tuong',3,false,false,0,'Tuong 3d; movement: elephant.alternating_distance. COMPLETE.'),
- ('60000000-0000-4000-8000-000000000019','tran-binh-trong-elephant','50000000-0000-4000-8000-000000000019','ELEPHANT','30000000-0000-4000-8000-000000000001','Tran Binh Trong',2,false,false,0,'Tuong 2d; movement: elephant.diagonal_range. COMPLETE.'),
- ('60000000-0000-4000-8000-000000000020','le-khoi-elephant','50000000-0000-4000-8000-000000000020','ELEPHANT',NULL,'Le Khoi',1,false,false,0,'Tuong 1d; standard ELEPHANT movement. COMPLETE (base).'),
+ -- Trần Hưng Đạo (ELEPHANT): 4 SP includes the Bạch Đằng Giang premium.
+ ('60000000-0000-4000-8000-000000000017','tran-hung-dao-elephant','50000000-0000-4000-8000-000000000011','ELEPHANT',NULL,'Tran Hung Dao',4,false,false,0,'Tượng 4 SP; Bạch Đằng Giang active skill.'),
+ ('60000000-0000-4000-8000-000000000018','da-tuong-elephant','50000000-0000-4000-8000-000000000018','ELEPHANT','30000000-0000-4000-8000-000000000002','Da Tuong',4,false,false,0,'Tuong 4d; movement: elephant.alternating_distance. COMPLETE.'),
+ ('60000000-0000-4000-8000-000000000019','tran-binh-trong-elephant','50000000-0000-4000-8000-000000000019','ELEPHANT','30000000-0000-4000-8000-000000000001','Tran Binh Trong',3,false,false,0,'Tuong 3d; movement: elephant.diagonal_range. COMPLETE.'),
+ ('60000000-0000-4000-8000-000000000020','le-khoi-elephant','50000000-0000-4000-8000-000000000020','ELEPHANT',NULL,'Le Khoi',2,false,false,0,'Tuong 2d; standard ELEPHANT movement. COMPLETE (base).'),
  ('60000000-0000-4000-8000-000000000021','pham-van-xao-elephant','50000000-0000-4000-8000-000000000021','ELEPHANT',NULL,'Pham Van Xao',2,false,false,0,'Tuong 2d; no custom movement noted; base ELEPHANT movement.'),
- ('60000000-0000-4000-8000-000000000022','bui-thi-xuan-elephant','50000000-0000-4000-8000-000000000022','ELEPHANT','327e712d-26d2-5da4-5c9a-87a1ff74c1e1','Bui Thi Xuan',2,false,false,0,'Tuong 2d; movement: elephant.diagonal_range. COMPLETE.'),
- ('60000000-0000-4000-8000-000000000023','le-van-hung-elephant','50000000-0000-4000-8000-000000000023','ELEPHANT',NULL,'Le Van Hung',1,false,false,0,'Tuong 1d; standard ELEPHANT movement. COMPLETE (base).'),
- ('60000000-0000-4000-8000-000000000024','trung-trac-elephant','50000000-0000-4000-8000-000000000024','ELEPHANT','30000000-0000-4000-8000-000000000003','Trung Trac',3,false,false,0,'Tuong 3d; movement: elephant.river_crossing IMPLEMENTED.'),
- ('60000000-0000-4000-8000-000000000025','trung-nhi-elephant','50000000-0000-4000-8000-000000000025','ELEPHANT','30000000-0000-4000-8000-000000000010','Trung Nhi',3,false,false,0,'Tuong 3d; movement: elephant.river_crossing IMPLEMENTED.'),
+ ('60000000-0000-4000-8000-000000000022','bui-thi-xuan-elephant','50000000-0000-4000-8000-000000000022','ELEPHANT','327e712d-26d2-5da4-5c9a-87a1ff74c1e1','Bui Thi Xuan',3,false,false,0,'Tuong 3d; movement: elephant.diagonal_range. COMPLETE.'),
+ ('60000000-0000-4000-8000-000000000023','le-van-hung-elephant','50000000-0000-4000-8000-000000000023','ELEPHANT',NULL,'Le Van Hung',2,false,false,0,'Tuong 2d; standard ELEPHANT movement. COMPLETE (base).'),
+ ('60000000-0000-4000-8000-000000000024','trung-trac-elephant','50000000-0000-4000-8000-000000000024','ELEPHANT','30000000-0000-4000-8000-000000000003','Trung Trac',4,false,false,0,'Tuong 4d; movement: elephant.river_crossing IMPLEMENTED.'),
+ ('60000000-0000-4000-8000-000000000025','trung-nhi-elephant','50000000-0000-4000-8000-000000000025','ELEPHANT','30000000-0000-4000-8000-000000000010','Trung Nhi',4,false,false,0,'Tuong 4d; movement: elephant.river_crossing IMPLEMENTED.'),
  -- === XE (ROOK) ===
  ('60000000-0000-4000-8000-000000000026','pham-ngu-lao-rook','50000000-0000-4000-8000-000000000026','ROOK','30000000-0000-4000-8000-000000000011','Pham Ngu Lao',8,false,false,0,'Xe 8 SP. Hoành Sóc Giang Sơn: sau khi ăn một quân, nước đi tiếp theo có thể xuyên một quân đồng minh.'),
  ('60000000-0000-4000-8000-000000000027','tran-khanh-du-rook','50000000-0000-4000-8000-000000000027','ROOK',NULL,'Tran Khanh Du',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
@@ -201,7 +212,7 @@ FROM (VALUES
  -- === PHAO (CANNON) ===
  ('60000000-0000-4000-8000-000000000033','tran-khat-chan-cannon','50000000-0000-4000-8000-000000000033','CANNON',NULL,'Tran Khat Chan',6,false,false,0,'Phao 6d; red-marked - no gameplay meaning. Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000034','yet-kieu-cannon','50000000-0000-4000-8000-000000000034','CANNON',NULL,'Yet Kieu',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
- ('60000000-0000-4000-8000-000000000035','ly-thuong-kiet-cannon','50000000-0000-4000-8000-000000000028','CANNON',NULL,'Ly Thuong Kiet',6,false,false,0,'Pháo 6 SP; dùng Thành hoặc Rào làm ngòi, có thể vào ô Thành để phá.'),
+ ('60000000-0000-4000-8000-000000000035','ly-thuong-kiet-cannon','50000000-0000-4000-8000-000000000028','CANNON',NULL,'Ly Thuong Kiet',7,false,false,0,'Pháo 7 SP; dùng Thành hoặc Rào làm ngòi, có thể vào ô Thành để phá.'),
  ('60000000-0000-4000-8000-000000000036','dinh-le-cannon','50000000-0000-4000-8000-000000000036','CANNON',NULL,'Dinh Le',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000037','nguyen-xi-cannon','50000000-0000-4000-8000-000000000037','CANNON',NULL,'Nguyen Xi',6,false,false,0,'Phao 6d; base CANNON movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000038','nguyen-van-tuyet-cannon','50000000-0000-4000-8000-000000000038','CANNON',NULL,'Nguyen Van Tuyet',6,false,false,0,'Phao 6d; base CANNON movement. COMPLETE.'),
@@ -218,6 +229,6 @@ FROM (VALUES
  JOIN historical_character actual_character ON actual_character.code = expected_character.code
  WHERE true
  ON CONFLICT (code) DO UPDATE SET character_id = EXCLUDED.character_id, class_code = EXCLUDED.class_code,
-   trait_id = EXCLUDED.trait_id, name = EXCLUDED.name,
+   name = EXCLUDED.name,
    description = EXCLUDED.description, is_enabled = true;
 COMMIT;

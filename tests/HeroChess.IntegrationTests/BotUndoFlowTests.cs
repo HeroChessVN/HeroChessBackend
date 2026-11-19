@@ -42,7 +42,7 @@ public sealed class BotUndoFlowTests(HeroChessFactory factory) : IClassFixture<H
 
         var activated = await Send(Request(0, new { type = "team_skill", slot = 1, target = new { position = new { x = 4, y = 2 } } }));
         Assert.Equal(1, activated.SequenceNo);
-        Assert.Equal(7, activated.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
+        Assert.Equal(skill.CooldownTurns!.Value - 1, activated.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
         var afterSkillAndReply = (await Reply(await PrepareReply(1))).Snapshot;
         Assert.Equal(2, afterSkillAndReply.Version);
 

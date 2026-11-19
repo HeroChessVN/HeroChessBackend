@@ -58,7 +58,9 @@ Với EF Core, map default schema `hero_chess`, tên bảng/cột snake_case, kh
 
 Giữ Ranked và bot; không thêm Casual, season, ban/pick, đa tiền tệ hay microservices. Có một ví coin/player, rating Elo, hero sở hữu, skin hero tùy chọn, lineup, trạng thái trận, replay và audit quản trị.
 
-Ngân sách 50 SP; hai Sĩ và hai Tượng đều cơ bản 1 SP thì lineup 43 SP. Hai Tượng 2 SP và hai Sĩ 1 SP thì 45 SP. Lượt 90 giây; hết hạn mất lượt theo ruleset. Mốc 150 xét SP còn lại, bằng SP hòa. Chi tiết đếm giới hạn và một số hiệu ứng vẫn thuộc cấu hình/bộ luật được nhóm quyết định sau. Không gán thêm giá coin, reward, cooldown hoặc skill chưa được duyệt.
+Ngân sách 50 SP; đội cơ bản có Tướng 0, Sĩ 1, Tượng 2, Xe 7, Pháo 6, Mã 4 và Tốt 1, tổng 45 SP. Sĩ có trait 2 SP, Tượng linh hoạt 3 và Tượng mạnh 4; giá cụ thể đọc từ catalog. Fixture dev cũ vẫn có thể là 43 SP, không dùng giá fixture làm chuẩn cân bằng. Lượt 90 giây; hết hạn mất lượt theo ruleset. Mốc 150 xét SP frozen của quân còn sống, bằng SP hòa.
+
+Đợt cân bằng SP và bốn trait Sĩ dùng patch thủ công `HeroChess.Api/Data/Bootstrap/19_hero_sp_and_advisor_traits.sql` sau khi BE/client hỗ trợ. Không thêm patch này vào startup. Seed cài mới chứa dữ liệu tương ứng; seed lại không reset trait_id hoặc cooldown quản trị. API runtime chi tiết theo `docs/api.md`. Trận cũ giữ snapshot, đội hình đã lưu có thể cần sửa khi vượt 50 SP; không tự đổi quân cho người chơi.
 
 Ba hero lịch sử trong seed có giá SP và trait theo trao đổi; `is_enabled=false`, `is_starter=false`, giá coin mặc định 0 chỉ là trạng thái chưa cấu hình phát hành, không có nghĩa phải bán miễn phí hay bỏ khỏi roster cấp sẵn. Backend không cho mua/chọn hero bị tắt. Nhóm bật và cấu hình cấp sẵn khi nhập roster chính thức. Chưa gán faction lịch sử vì chưa chốt mapping nội dung.
 

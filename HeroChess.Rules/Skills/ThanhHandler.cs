@@ -1,6 +1,6 @@
 // Step 6: Thành — Command Skill.
 // Creates a temporary fortification obstacle on the owning side's half of the board.
-// Duration: 6 shared board turns. Cooldown: 8 shared board turns.
+// Duration: 6 shared board turns. Cooldown comes from the frozen lineup.
 // Only Cannon (Pháo) can destroy Thành.
 // Thành CANNOT act as a Cannon screen.
 // Thành blocks normal movement.
@@ -16,7 +16,7 @@ namespace HeroChess.Rules.Skills;
 ///
 /// Rules:
 /// - Duration: 6 shared board turns.
-/// - Cooldown: 8 shared board turns.
+/// - Cooldown is configured in the catalogue and frozen per match.
 /// - Target: a single valid cell on the owner's half of the board.
 /// - Only Cannon can destroy Thành (handled by MoveUnchecked).
 /// - Thành is NOT a valid Cannon screen.

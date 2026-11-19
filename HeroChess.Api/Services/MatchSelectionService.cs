@@ -121,6 +121,13 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
         if (heroes.Values.Any(x => x.Trait is { ImplementationKey: SkillKeys.ThDTuongCoc } trait &&
             !BachDangGiang.TryReadParameters(trait.Parameters.RootElement, out _, out _)))
             throw new ApiException(422, "INVALID_HERO_SKILL_CONFIG", "Bạch Đằng Giang requires positive integer cooldown and duration.");
+        if (heroes.Values.Any(x => x.Trait is { } trait && AdvisorHeroSkills.IsActive(trait.ImplementationKey) &&
+            (x.ClassCode != "ADVISOR" || trait.Kind != "active" ||
+             !AdvisorHeroSkills.TryReadParameters(trait.ImplementationKey, trait.Parameters.RootElement, out _, out _))))
+            throw new ApiException(422, "INVALID_HERO_SKILL_CONFIG", "The advisor skill configuration is invalid.");
+        if (heroes.Values.Any(x => x.Trait is { ImplementationKey: SkillKeys.AdvisorPalaceStep } trait &&
+            (x.ClassCode != "ADVISOR" || trait.Kind != "special_move")))
+            throw new ApiException(422, "INVALID_HERO_SKILL_CONFIG", "Palace-step traits require an Advisor with special movement.");
         var slots = await db.LineupSlots.AsNoTracking().ToDictionaryAsync(x => x.SlotNo, ct);
         var skillIds = lineup.Skills.Select(x => x.TeamSkillId).ToArray();
         var skills = await db.TeamSkills.AsNoTracking().Where(x => skillIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);

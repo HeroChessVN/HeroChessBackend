@@ -27,7 +27,7 @@ UPDATE hero SET description='Xe 8 SP; đi qua Thành/Rào hoặc vào ô đó đ
 
 UPDATE hero_trait SET description='Pháo có thể dùng cả Thành và Rào làm ngòi; cũng có thể vào ô Thành để phá.'
  WHERE id='30000000-0000-4000-8000-000000000008';
-UPDATE hero SET description='Pháo 6 SP; dùng Thành hoặc Rào làm ngòi, có thể vào ô Thành để phá.'
+UPDATE hero SET description='Pháo 7 SP; dùng Thành hoặc Rào làm ngòi, có thể vào ô Thành để phá.'
  WHERE code='ly-thuong-kiet-cannon';
 UPDATE hero SET description='Tướng đi thường 1 ô thẳng, được ra khỏi cung, không qua sông; skill đi thẳng 1–3 ô với CD 3.'
  WHERE code='quang-trung-general';

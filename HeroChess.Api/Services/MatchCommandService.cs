@@ -393,6 +393,9 @@ public sealed class MatchCommandService(AppDbContext db, MatchLockRegistry locks
             (!action.TryGetProperty("pieceId", out var heroPiece) || heroPiece.ValueKind != JsonValueKind.String || !heroPiece.TryGetGuid(out _) ||
              !action.TryGetProperty("skillCode", out var skillCode) || skillCode.ValueKind != JsonValueKind.String ||
              !action.TryGetProperty("target", out var heroTarget) || heroTarget.ValueKind != JsonValueKind.Object)) throw Invalid();
+        if (kind.GetString() == "hero_active" && AdvisorHeroSkills.IsActive(action.GetProperty("skillCode").GetString()) &&
+            (!action.GetProperty("target").TryGetProperty("pieceId", out var receiver) || receiver.ValueKind != JsonValueKind.String ||
+             !receiver.TryGetGuid(out _))) throw Invalid();
         if (kind.GetString() == "move")
         {
             if (!action.TryGetProperty("pieceId", out var piece) || piece.ValueKind != JsonValueKind.String || !piece.TryGetGuid(out _) ||
