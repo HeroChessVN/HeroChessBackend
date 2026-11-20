@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -35,8 +35,11 @@
     <Content Include="Data\Bootstrap\11_email_confirmation.sql" Link="Database\11_email_confirmation.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\12_custom_rooms.sql" Link="Database\12_custom_rooms.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\13_admin_module.sql" Link="Database\13_admin_module.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\13_hero_factions.sql" Link="Database\13_hero_factions.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\17_board_cosmetics.sql" Link="Database\17_board_cosmetics.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\18_faction_skill_requirements.sql" Link="Database\18_faction_skill_requirements.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\20_hero_catalog_and_starters.sql" Link="Database\20_hero_catalog_and_starters.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\21_piece_cosmetics.sql" Link="Database\21_piece_cosmetics.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\19_hero_sp_and_advisor_traits.sql" Link="Database\19_hero_sp_and_advisor_traits.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

@@ -24,7 +24,8 @@ public sealed class ShopService(AppDbContext db, TimeProvider clock)
             await transaction.CommitAsync(ct);
             return new(boardId, true, wallet.Balance.ToString(), Math.Abs(ledger?.Amount ?? 0).ToString());
         }
-        if (await db.PlayerHeroes.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
+        if (await db.PlayerPieceCosmetics.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
+            await db.PlayerHeroes.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
             await db.CoinTransactions.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct))
             throw KeyConflict();
         var board = await db.BoardCosmetics.FromSqlInterpolated($"SELECT * FROM hero_chess.board_cosmetic WHERE id={boardId} FOR SHARE")
@@ -47,6 +48,46 @@ public sealed class ShopService(AppDbContext db, TimeProvider clock)
         return new(boardId, true, wallet.Balance.ToString(), board.CoinPrice.ToString());
     }
 
+    public async Task<PurchasePieceCosmeticDto> PurchasePieceAsync(Guid playerId, Guid pieceId, string? idempotencyHeader, CancellationToken ct)
+    {
+        if (!Guid.TryParse(idempotencyHeader, out var keyId))
+            throw new ApiException(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a UUID.");
+        var key = keyId.ToString("D");
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var wallet = await db.Wallets.FromSqlInterpolated($"SELECT * FROM hero_chess.player_wallet WHERE player_id={playerId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct) ?? throw new ApiException(404, "PLAYER_NOT_FOUND", "The player wallet was not found.");
+        var previous = await db.PlayerPieceCosmetics.AsNoTracking().SingleOrDefaultAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct);
+        if (previous is not null)
+        {
+            if (previous.PieceCosmeticId != pieceId) throw KeyConflict();
+            var ledger = await db.CoinTransactions.AsNoTracking().SingleOrDefaultAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct);
+            await transaction.CommitAsync(ct);
+            return new(pieceId, true, wallet.Balance.ToString(), Math.Abs(ledger?.Amount ?? 0).ToString());
+        }
+        if (await db.PlayerBoardCosmetics.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
+            await db.PlayerHeroes.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
+            await db.CoinTransactions.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct))
+            throw KeyConflict();
+        var piece = await db.PieceCosmetics.FromSqlInterpolated($"SELECT * FROM hero_chess.piece_cosmetic WHERE id={pieceId} FOR SHARE")
+            .SingleOrDefaultAsync(ct) ?? throw new ApiException(404, "PIECE_NOT_FOUND", "The piece set was not found.");
+        if (piece.Code == PieceCosmeticService.DefaultCode ||
+            await db.PlayerPieceCosmetics.AnyAsync(x => x.PlayerId == playerId && x.PieceCosmeticId == pieceId, ct))
+            throw new ApiException(409, "PIECE_ALREADY_OWNED", "The piece set is already owned.");
+        if (!piece.IsEnabled) throw new ApiException(422, "PIECE_DISABLED", "The piece set is unavailable.");
+        if (wallet.Balance < piece.CoinPrice)
+            throw new ApiException(422, "INSUFFICIENT_COINS", "The wallet does not have enough coins.");
+        wallet.Balance -= piece.CoinPrice;
+        var now = clock.GetUtcNow();
+        db.PlayerPieceCosmetics.Add(new() { PlayerId = playerId, PieceCosmeticId = pieceId, AcquiredAt = now, IdempotencyKey = key });
+        if (piece.CoinPrice > 0)
+            db.CoinTransactions.Add(new() { Id = Guid.NewGuid(), PlayerId = playerId, IdempotencyKey = key,
+                Kind = "piece_cosmetic_purchase", PieceCosmeticId = pieceId, Amount = -piece.CoinPrice,
+                BalanceAfter = wallet.Balance, CreatedAt = now });
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return new(pieceId, true, wallet.Balance.ToString(), piece.CoinPrice.ToString());
+    }
+
     private static ApiException KeyConflict() => new(409, "IDEMPOTENCY_KEY_CONFLICT", "This key was already used for another purchase.");
     // PurchaseHeroAsync: Validate UUID key, dedup, kiểm tra hero/ownership/số dư; ghi ví + ownership + ledger trong transaction; mua miễn phí không tạo ledger amount 0.
     public async Task<PurchaseHeroDto> PurchaseHeroAsync(Guid playerId, Guid heroId, string? idempotencyHeader, CancellationToken ct)
@@ -65,7 +106,8 @@ public sealed class ShopService(AppDbContext db, TimeProvider clock)
             await transaction.CommitAsync(ct);
             return new(heroId, true, wallet.Balance.ToString(), Math.Abs(previousLedger?.Amount ?? 0).ToString());
         }
-        if (await db.PlayerBoardCosmetics.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
+        if (await db.PlayerPieceCosmetics.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
+            await db.PlayerBoardCosmetics.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct) ||
             await db.CoinTransactions.AnyAsync(x => x.PlayerId == playerId && x.IdempotencyKey == key, ct))
             throw KeyConflict();
         var hero = await db.Heroes.FromSqlInterpolated($"SELECT * FROM hero_chess.hero WHERE id={heroId} FOR SHARE").SingleOrDefaultAsync(ct)

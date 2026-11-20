@@ -11,7 +11,7 @@ using Xunit;
 
 namespace HeroChess.IntegrationTests;
 
-public sealed class ShopAdminTests : IClassFixture<HeroChessFactory>
+public sealed partial class ShopAdminTests : IClassFixture<HeroChessFactory>
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly HeroChessFactory _factory;

@@ -162,15 +162,38 @@ ON CONFLICT(code) DO NOTHING;
 --    Red-marked (Nguyen Trung Ngan, Dinh Liet, Tran Khat Chan, Luu Nhan Chu):
 --      no gameplay meaning assigned in this step.
 --    Pham Ngu Lao: note "8d( co the 9d)" stored as 8d; 9d ambiguity noted.
-INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,description)
+WITH release_prices(code,model_key,price,starter) AS (VALUES
+ ('tran-thanh-tong-general','tranthanhtong',0,true),('nguyen-nhac-general','nguyennhac',0,true),
+ ('mac-dinh-chi-advisor','macdinhchi',0,true),('nguyen-trai-1-advisor','nguyentrai',0,true),
+ ('nguyen-binh-khiem-advisor','nguyenbinhkhiem',0,true),('le-khoi-elephant','lekhoi',0,true),
+ ('le-van-hung-elephant','levanhung',0,true),('tran-khanh-du-rook','trankhanhdu',0,true),
+ ('tran-quang-dieu-rook','tranquangdieu',0,true),('tran-quoc-toan-horse','tranquoctoan',0,true),
+ ('le-sat-horse','lesat',0,true),('nguyen-xi-cannon','nguyenxi',0,true),
+ ('nguyen-van-tuyet-cannon','nguyenvantuyet',0,true),('linh-nha-tran-soldier','linhnhatran',0,true),
+ ('tran-nhat-duat-advisor','trannhatduat',100,false),('le-lai-advisor','lelai',200,false),
+ ('tran-thu-do-advisor','tranthudo',200,false),('nguyen-nhac-advisor','nguyennhac',200,false),
+ ('nguyen-lu-advisor','nguyenlu_rig',200,false),('dinh-le-cannon','dinhle',100,false),
+ ('ly-thuong-kiet-cannon','lythuongkiet',200,false),('yet-kieu-cannon','yetkeu',100,false),
+ ('nguyen-van-loc-cannon',NULL,100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
+ ('da-tuong-elephant','datuong',300,false),('pham-van-xao-elephant','phamvanxao',100,false),
+ ('tran-binh-trong-elephant','tranbinhtrong',200,false),('tran-hung-dao-elephant','tranhungdao',300,false),
+ ('trung-trac-elephant','trungtrac',300,false),('trung-nhi-elephant','trungnhi',300,false),
+ ('le-loi-general','leloi',200,false),('nguyen-lu-general','nguyenlu_rig',100,false),
+ ('quang-trung-general','quangtrung',300,false),('tran-hung-dao-general','tranhungdao',200,false),
+ ('ly-van-buu-horse','lyvanbuu',100,false),('tran-quang-khai-horse','tranquangkhai',100,false),
+ ('vo-dinh-tu-horse','vodinhtu',100,false),('ly-thuong-kiet-rook','lythuongkiet',200,false),
+ ('pham-ngu-lao-rook','phamngulao',200,false),('tran-nguyen-han-rook','trannguyenhan',100,false),
+ ('vo-van-dung-rook','vovandung',100,false),('linh-nha-le-soldier','linhnhale',100,false),
+ ('linh-nha-tay-son-soldier','linhnhatayson',100,false)
+)
+INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,is_starter,asset_key,description)
 SELECT CASE WHEN EXISTS (SELECT 1 FROM hero existing WHERE existing.id = seeded.id::uuid AND existing.code <> seeded.code)
             THEN gen_random_uuid() ELSE seeded.id::uuid END,
        seeded.code, actual_character.id, seeded.class_code, seeded.trait_id::uuid, seeded.name,
-       seeded.setup_points, true, seeded.is_test_fixture, seeded.coin_price, seeded.description
+       seeded.setup_points, true, seeded.is_test_fixture, release.price, release.starter, release.model_key, seeded.description
 FROM (VALUES
  -- === SI (ADVISOR) ===
  ('60000000-0000-4000-8000-000000000001','nguyen-trai-1-advisor','50000000-0000-4000-8000-000000000001','ADVISOR',NULL,'Nguyen Trai',1,false,false,0,'Si 1d; base ADVISOR movement. First Nguyen Trai entry from note.'),
- ('60000000-0000-4000-8000-000000000002','nguyen-trung-ngan-advisor','50000000-0000-4000-8000-000000000002','ADVISOR',NULL,'Nguyen Trung Ngan',1,false,false,0,'Si 1d; red-marked - no gameplay meaning assigned.'),
  ('60000000-0000-4000-8000-000000000003','nguyen-binh-khiem-advisor','50000000-0000-4000-8000-000000000003','ADVISOR',NULL,'Nguyen Binh Khiem',1,false,false,0,'Si 1d; base ADVISOR movement.'),
  ('60000000-0000-4000-8000-000000000004','mac-dinh-chi-advisor','50000000-0000-4000-8000-000000000004','ADVISOR',NULL,'Mac Dinh Chi',1,false,false,0,'Si 1d; base ADVISOR movement.'),
  ('60000000-0000-4000-8000-000000000005','tran-thu-do-advisor','50000000-0000-4000-8000-000000000005','ADVISOR',(SELECT id::text FROM hero_trait WHERE code='tran-thu-do-tran-quoc-ho-quan'),'Tran Thu Do',2,false,false,0,'Sĩ có skill Trấn Quốc Hộ Quân.'),
@@ -205,12 +228,10 @@ FROM (VALUES
  ('60000000-0000-4000-8000-000000000026','pham-ngu-lao-rook','50000000-0000-4000-8000-000000000026','ROOK','30000000-0000-4000-8000-000000000011','Pham Ngu Lao',8,false,false,0,'Xe 8 SP. Hoành Sóc Giang Sơn: sau khi ăn một quân, nước đi tiếp theo có thể xuyên một quân đồng minh.'),
  ('60000000-0000-4000-8000-000000000027','tran-khanh-du-rook','50000000-0000-4000-8000-000000000027','ROOK',NULL,'Tran Khanh Du',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000028','ly-thuong-kiet-rook','50000000-0000-4000-8000-000000000028','ROOK',NULL,'Ly Thuong Kiet',8,false,false,0,'Xe 8 SP; đi qua Thành/Rào hoặc vào ô đó để phá.'),
- ('60000000-0000-4000-8000-000000000029','dinh-liet-rook','50000000-0000-4000-8000-000000000029','ROOK',NULL,'Dinh Liet',7,false,false,0,'Xe 7d; red-marked - no gameplay meaning. Base ROOK movement.'),
  ('60000000-0000-4000-8000-000000000030','tran-nguyen-han-rook','50000000-0000-4000-8000-000000000030','ROOK',NULL,'Tran Nguyen Han',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000031','vo-van-dung-rook','50000000-0000-4000-8000-000000000031','ROOK',NULL,'Vo Van Dung',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000032','tran-quang-dieu-rook','50000000-0000-4000-8000-000000000032','ROOK',NULL,'Tran Quang Dieu',7,false,false,0,'Xe 7d; design note xe* (star meaning unclear). Assumed base ROOK movement.'),
  -- === PHAO (CANNON) ===
- ('60000000-0000-4000-8000-000000000033','tran-khat-chan-cannon','50000000-0000-4000-8000-000000000033','CANNON',NULL,'Tran Khat Chan',6,false,false,0,'Phao 6d; red-marked - no gameplay meaning. Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000034','yet-kieu-cannon','50000000-0000-4000-8000-000000000034','CANNON',NULL,'Yet Kieu',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000035','ly-thuong-kiet-cannon','50000000-0000-4000-8000-000000000028','CANNON',NULL,'Ly Thuong Kiet',7,false,false,0,'Pháo 7 SP; dùng Thành hoặc Rào làm ngòi, có thể vào ô Thành để phá.'),
  ('60000000-0000-4000-8000-000000000036','dinh-le-cannon','50000000-0000-4000-8000-000000000036','CANNON',NULL,'Dinh Le',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
@@ -220,15 +241,17 @@ FROM (VALUES
  -- === MA (HORSE) ===
  ('60000000-0000-4000-8000-000000000040','tran-quoc-toan-horse','50000000-0000-4000-8000-000000000040','HORSE',NULL,'Tran Quoc Toan',4,false,false,0,'Ma 4d; design note ma* (star meaning unclear). Base HORSE movement.'),
  ('60000000-0000-4000-8000-000000000041','tran-quang-khai-horse','50000000-0000-4000-8000-000000000041','HORSE',NULL,'Tran Quang Khai',4,false,false,0,'Ma 4d; design note ma* (star meaning unclear). Base HORSE movement.'),
- ('60000000-0000-4000-8000-000000000042','luu-nhan-chu-horse','50000000-0000-4000-8000-000000000042','HORSE',NULL,'Luu Nhan Chu',4,false,false,0,'Ma 4d; red-marked - no gameplay meaning. Base HORSE movement.'),
  ('60000000-0000-4000-8000-000000000043','le-sat-horse','50000000-0000-4000-8000-000000000043','HORSE',NULL,'Le Sat',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
- ('60000000-0000-4000-8000-000000000044','ly-van-bu-horse','50000000-0000-4000-8000-000000000044','HORSE',NULL,'Ly Van Bu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
+ ('60000000-0000-4000-8000-000000000044','ly-van-buu-horse','50000000-0000-4000-8000-000000000044','HORSE',NULL,'Ly Van Bu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000045','vo-dinh-tu-horse','50000000-0000-4000-8000-000000000045','HORSE',NULL,'Vo Dinh Tu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'))
  AS seeded(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,description)
  JOIN seed_characters expected_character ON expected_character.seed_id::uuid = seeded.character_id::uuid
  JOIN historical_character actual_character ON actual_character.code = expected_character.code
- WHERE true
- ON CONFLICT (code) DO UPDATE SET character_id = EXCLUDED.character_id, class_code = EXCLUDED.class_code,
-   name = EXCLUDED.name,
-   description = EXCLUDED.description, is_enabled = true;
+ JOIN release_prices release ON release.code=seeded.code
+ ON CONFLICT (code) DO NOTHING;
+INSERT INTO hero(code,class_code,name,setup_points,coin_price,is_starter,is_enabled,asset_key)
+VALUES ('linh-nha-tran-soldier','SOLDIER','Lính nhà Trần',1,0,true,true,'linhnhatran'),
+ ('linh-nha-le-soldier','SOLDIER','Lính nhà Lê',1,100,false,true,'linhnhale'),
+ ('linh-nha-tay-son-soldier','SOLDIER','Lính nhà Tây Sơn',1,100,false,true,'linhnhatayson')
+ON CONFLICT(code) DO NOTHING;
 COMMIT;

@@ -35,7 +35,8 @@ public sealed class UserStore(AppDbContext db, IHostEnvironment environment, IOp
         // Admin không có hồ sơ kinh tế/gameplay. Dữ liệu legacy nếu có được migration giữ để bảo toàn lịch sử.
         if (account is Player)
         {
-            var startingCoins = environment.IsDevelopment() ? Math.Max(0, options.Value.DevelopmentStartingCoins) : 0;
+            var startingCoins = Math.Max(0, environment.IsDevelopment()
+                ? options.Value.DevelopmentStartingCoins ?? options.Value.StartingCoins : options.Value.StartingCoins);
             db.Wallets.Add(new PlayerWallet { PlayerId = user.Id, Balance = startingCoins });
             db.Ratings.Add(new PlayerRating { PlayerId = user.Id, Elo = options.Value.StartingElo });
     
@@ -45,7 +46,7 @@ public sealed class UserStore(AppDbContext db, IHostEnvironment environment, IOp
             foreach (var heroId in heroIds)
                 db.PlayerHeroes.Add(new PlayerHero { PlayerId = user.Id, HeroId = heroId, AcquiredVia = environment.IsDevelopment() ? "test" : "starter", AcquiredAt = now });
             if (startingCoins > 0)
-                db.CoinTransactions.Add(new CoinTransaction { Id = Guid.NewGuid(), PlayerId = user.Id, IdempotencyKey = "onboarding:development-starter",
+                db.CoinTransactions.Add(new CoinTransaction { Id = Guid.NewGuid(), PlayerId = user.Id, IdempotencyKey = "onboarding:starter",
                     Kind = "starter", Amount = startingCoins, BalanceAfter = startingCoins, CreatedAt = now });
     
         }

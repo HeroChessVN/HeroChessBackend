@@ -33,6 +33,8 @@ BEGIN
 END $$;
 
 ALTER TABLE hero_chess.coin_transaction ADD COLUMN IF NOT EXISTS board_cosmetic_id uuid REFERENCES hero_chess.board_cosmetic(id);
+-- Keep the ledger constraint compatible when this older bootstrap runs again.
+ALTER TABLE hero_chess.coin_transaction ADD COLUMN IF NOT EXISTS piece_cosmetic_id uuid;
 DO $$
 DECLARE c record;
 BEGIN
@@ -44,6 +46,9 @@ BEGIN
  END LOOP;
 END $$;
 ALTER TABLE hero_chess.coin_transaction ADD CONSTRAINT ck_coin_transaction_kind_payload CHECK (
+ (kind='piece_cosmetic_purchase' AND piece_cosmetic_id IS NOT NULL AND board_cosmetic_id IS NULL AND amount<0
+   AND hero_id IS NULL AND cosmetic_id IS NULL AND match_id IS NULL AND match_side IS NULL)
+ OR (piece_cosmetic_id IS NULL AND (
  (kind='board_cosmetic_purchase' AND board_cosmetic_id IS NOT NULL AND amount<0
    AND hero_id IS NULL AND cosmetic_id IS NULL AND match_id IS NULL AND match_side IS NULL)
  OR (board_cosmetic_id IS NULL AND (
@@ -52,7 +57,7 @@ ALTER TABLE hero_chess.coin_transaction ADD CONSTRAINT ck_coin_transaction_kind_
   OR (kind='cosmetic_purchase' AND cosmetic_id IS NOT NULL AND hero_id IS NULL AND amount<0 AND match_id IS NULL AND match_side IS NULL)
   OR (kind IN ('starter','admin_adjustment') AND match_id IS NULL AND match_side IS NULL AND hero_id IS NULL AND cosmetic_id IS NULL
       AND (kind<>'starter' OR amount>0))
- ))
+ ))))
 );
 
 INSERT INTO hero_chess.board_cosmetic(code,name,coin_price,asset_key,preview_key)

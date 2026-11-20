@@ -1,5 +1,7 @@
 # HERO CHESS — Bộ DB prototype v0.1
 
+> Cập nhật danh mục 20/11/2026: bộ cài mới tổng có 43 hero, 14 starter, giá 0/100/200/300 và bốn bộ quân (mặc định miễn phí, ba mẫu 200). Onboarding BE cấp 2000 vàng cho Player mới; SQL không cộng lại ví người cũ. DB đang chạy cần backup rồi áp patch thủ công `20_hero_catalog_and_starters.sql` sau API tương thích. Trước deploy phải chạy schema `17_board_cosmetics.sql` bản mới và `21_piece_cosmetics.sql`. Xem hợp đồng và thứ tự rollout trong [api.md](../docs/api.md). Không dùng installer/seed để reset production.
+
 > Schema mới ngày 24/09: chạy migration 06_user_inheritance.sql sau baseline 01/04/05 và trước seed 03. Bảng player + identity.app_user được hợp nhất thành user_account; auth_identity.user_id và admin_audit_log.actor_user_id thay tên cũ. Sơ đồ/dictionary dưới đây là baseline lịch sử. Xem [mô hình hiện tại](/D:/Code/Github/HeroChessBackend/docs/User_Player_Admin_Refactor.md).
 
 Ngày: 21/09/2026. Nền tảng: PostgreSQL 16+; mục tiêu PostgreSQL 18 hoặc PostgreSQL do Supabase cung cấp. Đây là schema khởi tạo và hợp đồng tích hợp đề xuất; chưa phải backend hoặc bộ luật chạy được.

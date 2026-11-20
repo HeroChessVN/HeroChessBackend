@@ -225,13 +225,45 @@ Unity nối như sau.
 4. Cache phải tách theo userId. Logout hoặc đổi tài khoản nạp lại lựa chọn. PlayerPrefs cũ chỉ là lựa chọn local và không cấp quyền sở hữu.
 5. XiangqiBoardDirector chốt code lúc tạo bàn, tải Resources và giữ model trong phiên xem trận. Code lạ hoặc thiếu model thì dùng mặc định. Hai người có thể thấy hai mẫu khác nhau.
 
-Giữ skin hero và `entries[].cosmeticId` cũ để đọc đội hình và replay đã lưu. Bàn mới dùng endpoint riêng. Team Unity có thể ẩn tab Bộ quân khi thu hẹp giao diện về cosmetic bàn.
+Giữ skin hero và `entries[].cosmeticId` cũ để đọc đội hình và replay đã lưu. Bàn cờ và bộ quân dùng endpoint riêng, không truyền chúng trong `entries[].cosmeticId`.
 
 Triển khai production theo thứ tự sau.
 
 1. Chạy `HeroChess.Api/Data/Bootstrap/17_board_cosmetics.sql` trên Supabase trước khi deploy BE mới. SQL tạo bảng, mở rộng ledger và seed bốn mẫu. Chạy lại giữ giá và dữ liệu đã có.
 2. Deploy backend, kiểm tra `/health/ready`. Thiếu bảng board hoặc cột ledger mới sẽ trả 503 để workflow dừng nhận bản schema chưa đủ.
 3. Nối Unity bằng bốn route trên. Bản backend mặc định tắt bootstrap nên deploy riêng sẽ không tự cài SQL production.
+
+### Bộ quân cờ
+
+`GET /piece-cosmetics` trả `items, selectedCode`, item có cùng shape với bàn cờ: `id, code, name, coinPrice, assetKey, previewKey, isOwned`.
+
+| Method và route | Request và response |
+|---|---|
+| POST /shop/piece-cosmetics/{id}/purchase | Header `Idempotency-Key: <UUID>`. Trả `pieceCosmeticId, acquired, coinBalance, charged` |
+| PUT /me/piece-cosmetic | Body `{"code":"son-son"}`. Trả item đã trang bị |
+
+Bốn code là `mac-dinh`, `son-mai`, `son-son`, `su-thanh`; mặc định được sở hữu sẵn, ba mẫu còn lại khởi tạo 200 vàng/mẫu. Model key tương ứng là `Board/XiangqiPieces`, `Board/XiangqiPiecesSkinSonMai`, `Board/XiangqiPiecesSkinSonSon`, `Board/XiangqiPiecesSkinSuThanh`; preview key là `UI/Cosmetics/PiecesMacDinh`, `PiecesSonMai`, `PiecesSonSon`, `PiecesSuThanh` dưới cùng thư mục. Đây là ngoại hình đế/quân cờ, không thay model hero hoặc luật đi.
+
+Chỉ Player truy cập được. Mua và trang bị là hai thao tác riêng. Lỗi gồm `PIECE_NOT_FOUND`, `PIECE_DISABLED`, `PIECE_ALREADY_OWNED`, `PIECE_NOT_OWNED`, `INVALID_PIECE_CODE` cùng lỗi thiếu tiền/key của shop. Key mua phải giữ nguyên khi retry; không dùng lại giữa hero, bàn cờ và bộ quân, kể cả món có giá 0.
+
+Unity dùng `isOwned` và `selectedCode` từ BE; không nhận `PlayerPrefs` cũ làm bằng chứng mua. Đăng xuất/đổi tài khoản xóa trạng thái và tải lại. Phản hồi của phiên cũ bị bỏ qua. Mỗi người nhìn bộ quân theo lựa chọn của tài khoản mình; thiếu model hoặc lựa chọn bị tắt thì dùng mặc định. Không tự trang bị sau khi mua.
+
+### Starter, giá hero và rollout danh mục
+
+Sau patch 20, tài khoản mới nhận 14 hero: Trần Thánh Tông, Nguyễn Nhạc (Tướng); Mạc Đĩnh Chi, Nguyễn Trãi, Nguyễn Bỉnh Khiêm (Sĩ); Lê Khôi, Lê Văn Hưng (Tượng); Trần Khánh Dư, Trần Quang Diệu (Xe); Trần Quốc Toản, Lê Sát (Mã); Nguyễn Xí, Nguyễn Văn Tuyết (Pháo); Lính nhà Trần (Tốt). Một hero Tốt dùng được ở năm slot. Đội cơ bản 45 SP; mỗi phe có tối đa bốn hero ngoài Tốt trong bộ starter nên cần mua thêm để đạt ngưỡng năm.
+
+`Onboarding:StartingCoins` mặc định 2000; `DevelopmentStartingCoins` chỉ ghi đè trong Development. Tiền và hero được cấp trong transaction tạo Player, có ledger `starter`; Admin không được cấp và tài khoản cũ không được cộng lại. `hero.is_starter` là nguồn đọc của onboarding. Bảng `starter_hero_config` legacy nếu tồn tại được patch 20 đồng bộ; lịch sử cũ được giữ nguyên.
+
+Giá ngoài starter theo catalog: quân thường 100, trait vừa 200, trait mạnh 300. Giá/SP phải đọc từ API, không tính giá vàng từ SP trong client. Nguyễn Văn Lộc giữ lại nhưng chưa bán/cấp starter vì chưa có model. Đinh Liệt, Lưu Nhân Chú, Trần Khát Chân và Nguyễn Trung Ngạn được loại khỏi catalog; đội hình có tham chiếu được thay quân cơ bản cùng class, ưu tiên cùng phe, không tăng SP và không lặp nhân vật. Cấp bù khi cần, tăng revision đội hình bị đổi; snapshot trận cũ không bị viết lại.
+
+Rollout production:
+
+1. Backup hero/config starter/ownership/đội hình bị ảnh hưởng. Chạy bản cập nhật `17_board_cosmetics.sql` rồi `21_piece_cosmetics.sql` trước khi deploy BE; đây là schema cộng thêm tương thích với API cũ. Giá và quyền sở hữu bàn cờ đang có được giữ nguyên.
+2. Deploy API tương thích. `/health/ready` kiểm tra đủ ba bảng bộ quân và cột ledger mới; thiếu schema trả 503 để deployment rollback.
+3. Khi không còn trận/lượt chọn đang dở, chạy **toàn bộ** `20_hero_catalog_and_starters.sql`. Script một transaction, không chạy lại mỗi startup. Tham chiếu mua bằng tiền/quà/cosmetic hoặc việc thay quân làm mất điều kiện phe sẽ dừng và rollback để xử lý rõ ràng.
+4. Kiểm tra 43 hero còn lại, 14 starter, 28 hero đang bán, 42 model key và bốn bộ quân. Unity mới tải lại catalog/ownership; người chơi sửa các đội hình cũ khác đang vượt SP hoặc chứa dev-slot đã tắt.
+
+BE chỉ áp patch 20 tự động khi chính nó vừa tạo schema mới; DB đã có dữ liệu phải rollout thủ công. Bộ SQL cài mới tổng đã đồng bộ cùng danh mục. Không chạy installer cài mới vào production và không dùng seed để reset ví/quyền sở hữu.
 
 ## 6. Đồng bộ thời gian thực
 

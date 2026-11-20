@@ -663,15 +663,38 @@ ON CONFLICT(code) DO NOTHING;
 --    Red-marked (Nguyen Trung Ngan, Dinh Liet, Tran Khat Chan, Luu Nhan Chu):
 --      no gameplay meaning assigned in this step.
 --    Pham Ngu Lao: note "8d( co the 9d)" stored as 8d; 9d ambiguity noted.
-INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,description)
+WITH release_prices(code,model_key,price,starter) AS (VALUES
+ ('tran-thanh-tong-general','tranthanhtong',0,true),('nguyen-nhac-general','nguyennhac',0,true),
+ ('mac-dinh-chi-advisor','macdinhchi',0,true),('nguyen-trai-1-advisor','nguyentrai',0,true),
+ ('nguyen-binh-khiem-advisor','nguyenbinhkhiem',0,true),('le-khoi-elephant','lekhoi',0,true),
+ ('le-van-hung-elephant','levanhung',0,true),('tran-khanh-du-rook','trankhanhdu',0,true),
+ ('tran-quang-dieu-rook','tranquangdieu',0,true),('tran-quoc-toan-horse','tranquoctoan',0,true),
+ ('le-sat-horse','lesat',0,true),('nguyen-xi-cannon','nguyenxi',0,true),
+ ('nguyen-van-tuyet-cannon','nguyenvantuyet',0,true),('linh-nha-tran-soldier','linhnhatran',0,true),
+ ('tran-nhat-duat-advisor','trannhatduat',100,false),('le-lai-advisor','lelai',200,false),
+ ('tran-thu-do-advisor','tranthudo',200,false),('nguyen-nhac-advisor','nguyennhac',200,false),
+ ('nguyen-lu-advisor','nguyenlu_rig',200,false),('dinh-le-cannon','dinhle',100,false),
+ ('ly-thuong-kiet-cannon','lythuongkiet',200,false),('yet-kieu-cannon','yetkeu',100,false),
+ ('nguyen-van-loc-cannon',NULL,100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
+ ('da-tuong-elephant','datuong',300,false),('pham-van-xao-elephant','phamvanxao',100,false),
+ ('tran-binh-trong-elephant','tranbinhtrong',200,false),('tran-hung-dao-elephant','tranhungdao',300,false),
+ ('trung-trac-elephant','trungtrac',300,false),('trung-nhi-elephant','trungnhi',300,false),
+ ('le-loi-general','leloi',200,false),('nguyen-lu-general','nguyenlu_rig',100,false),
+ ('quang-trung-general','quangtrung',300,false),('tran-hung-dao-general','tranhungdao',200,false),
+ ('ly-van-buu-horse','lyvanbuu',100,false),('tran-quang-khai-horse','tranquangkhai',100,false),
+ ('vo-dinh-tu-horse','vodinhtu',100,false),('ly-thuong-kiet-rook','lythuongkiet',200,false),
+ ('pham-ngu-lao-rook','phamngulao',200,false),('tran-nguyen-han-rook','trannguyenhan',100,false),
+ ('vo-van-dung-rook','vovandung',100,false),('linh-nha-le-soldier','linhnhale',100,false),
+ ('linh-nha-tay-son-soldier','linhnhatayson',100,false)
+)
+INSERT INTO hero(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,is_starter,asset_key,description)
 SELECT CASE WHEN EXISTS (SELECT 1 FROM hero existing WHERE existing.id = seeded.id::uuid AND existing.code <> seeded.code)
             THEN gen_random_uuid() ELSE seeded.id::uuid END,
        seeded.code, actual_character.id, seeded.class_code, seeded.trait_id::uuid, seeded.name,
-       seeded.setup_points, true, seeded.is_test_fixture, seeded.coin_price, seeded.description
+       seeded.setup_points, true, seeded.is_test_fixture, release.price, release.starter, release.model_key, seeded.description
 FROM (VALUES
  -- === SI (ADVISOR) ===
  ('60000000-0000-4000-8000-000000000001','nguyen-trai-1-advisor','50000000-0000-4000-8000-000000000001','ADVISOR',NULL,'Nguyen Trai',1,false,false,0,'Si 1d; base ADVISOR movement. First Nguyen Trai entry from note.'),
- ('60000000-0000-4000-8000-000000000002','nguyen-trung-ngan-advisor','50000000-0000-4000-8000-000000000002','ADVISOR',NULL,'Nguyen Trung Ngan',1,false,false,0,'Si 1d; red-marked - no gameplay meaning assigned.'),
  ('60000000-0000-4000-8000-000000000003','nguyen-binh-khiem-advisor','50000000-0000-4000-8000-000000000003','ADVISOR',NULL,'Nguyen Binh Khiem',1,false,false,0,'Si 1d; base ADVISOR movement.'),
  ('60000000-0000-4000-8000-000000000004','mac-dinh-chi-advisor','50000000-0000-4000-8000-000000000004','ADVISOR',NULL,'Mac Dinh Chi',1,false,false,0,'Si 1d; base ADVISOR movement.'),
  ('60000000-0000-4000-8000-000000000005','tran-thu-do-advisor','50000000-0000-4000-8000-000000000005','ADVISOR',(SELECT id::text FROM hero_trait WHERE code='tran-thu-do-tran-quoc-ho-quan'),'Tran Thu Do',2,false,false,0,'Sĩ có skill Trấn Quốc Hộ Quân.'),
@@ -706,12 +729,10 @@ FROM (VALUES
  ('60000000-0000-4000-8000-000000000026','pham-ngu-lao-rook','50000000-0000-4000-8000-000000000026','ROOK','30000000-0000-4000-8000-000000000011','Pham Ngu Lao',8,false,false,0,'Xe 8 SP. Hoành Sóc Giang Sơn: sau khi ăn một quân, nước đi tiếp theo có thể xuyên một quân đồng minh.'),
  ('60000000-0000-4000-8000-000000000027','tran-khanh-du-rook','50000000-0000-4000-8000-000000000027','ROOK',NULL,'Tran Khanh Du',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000028','ly-thuong-kiet-rook','50000000-0000-4000-8000-000000000028','ROOK',NULL,'Ly Thuong Kiet',8,false,false,0,'Xe 8 SP; đi qua Thành/Rào hoặc vào ô đó để phá.'),
- ('60000000-0000-4000-8000-000000000029','dinh-liet-rook','50000000-0000-4000-8000-000000000029','ROOK',NULL,'Dinh Liet',7,false,false,0,'Xe 7d; red-marked - no gameplay meaning. Base ROOK movement.'),
  ('60000000-0000-4000-8000-000000000030','tran-nguyen-han-rook','50000000-0000-4000-8000-000000000030','ROOK',NULL,'Tran Nguyen Han',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000031','vo-van-dung-rook','50000000-0000-4000-8000-000000000031','ROOK',NULL,'Vo Van Dung',7,false,false,0,'Xe 7d; base ROOK movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000032','tran-quang-dieu-rook','50000000-0000-4000-8000-000000000032','ROOK',NULL,'Tran Quang Dieu',7,false,false,0,'Xe 7d; design note xe* (star meaning unclear). Assumed base ROOK movement.'),
  -- === PHAO (CANNON) ===
- ('60000000-0000-4000-8000-000000000033','tran-khat-chan-cannon','50000000-0000-4000-8000-000000000033','CANNON',NULL,'Tran Khat Chan',6,false,false,0,'Phao 6d; red-marked - no gameplay meaning. Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000034','yet-kieu-cannon','50000000-0000-4000-8000-000000000034','CANNON',NULL,'Yet Kieu',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
  ('60000000-0000-4000-8000-000000000035','ly-thuong-kiet-cannon','50000000-0000-4000-8000-000000000028','CANNON',NULL,'Ly Thuong Kiet',7,false,false,0,'Pháo 7 SP; dùng Thành hoặc Rào làm ngòi, có thể vào ô Thành để phá.'),
  ('60000000-0000-4000-8000-000000000036','dinh-le-cannon','50000000-0000-4000-8000-000000000036','CANNON',NULL,'Dinh Le',6,false,false,0,'Phao 6d; design note phao* (star meaning unclear). Base CANNON movement.'),
@@ -721,17 +742,19 @@ FROM (VALUES
  -- === MA (HORSE) ===
  ('60000000-0000-4000-8000-000000000040','tran-quoc-toan-horse','50000000-0000-4000-8000-000000000040','HORSE',NULL,'Tran Quoc Toan',4,false,false,0,'Ma 4d; design note ma* (star meaning unclear). Base HORSE movement.'),
  ('60000000-0000-4000-8000-000000000041','tran-quang-khai-horse','50000000-0000-4000-8000-000000000041','HORSE',NULL,'Tran Quang Khai',4,false,false,0,'Ma 4d; design note ma* (star meaning unclear). Base HORSE movement.'),
- ('60000000-0000-4000-8000-000000000042','luu-nhan-chu-horse','50000000-0000-4000-8000-000000000042','HORSE',NULL,'Luu Nhan Chu',4,false,false,0,'Ma 4d; red-marked - no gameplay meaning. Base HORSE movement.'),
  ('60000000-0000-4000-8000-000000000043','le-sat-horse','50000000-0000-4000-8000-000000000043','HORSE',NULL,'Le Sat',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
- ('60000000-0000-4000-8000-000000000044','ly-van-bu-horse','50000000-0000-4000-8000-000000000044','HORSE',NULL,'Ly Van Bu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
+ ('60000000-0000-4000-8000-000000000044','ly-van-buu-horse','50000000-0000-4000-8000-000000000044','HORSE',NULL,'Ly Van Bu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'),
  ('60000000-0000-4000-8000-000000000045','vo-dinh-tu-horse','50000000-0000-4000-8000-000000000045','HORSE',NULL,'Vo Dinh Tu',4,false,false,0,'Ma 4d; base HORSE movement. COMPLETE.'))
  AS seeded(id,code,character_id,class_code,trait_id,name,setup_points,is_enabled,is_test_fixture,coin_price,description)
  JOIN seed_characters expected_character ON expected_character.seed_id::uuid = seeded.character_id::uuid
  JOIN historical_character actual_character ON actual_character.code = expected_character.code
- WHERE true
- ON CONFLICT (code) DO UPDATE SET character_id = EXCLUDED.character_id, class_code = EXCLUDED.class_code,
-   name = EXCLUDED.name,
-   description = EXCLUDED.description, is_enabled = true;
+ JOIN release_prices release ON release.code=seeded.code
+ ON CONFLICT (code) DO NOTHING;
+INSERT INTO hero(code,class_code,name,setup_points,coin_price,is_starter,is_enabled,asset_key)
+VALUES ('linh-nha-tran-soldier','SOLDIER','Lính nhà Trần',1,0,true,true,'linhnhatran'),
+ ('linh-nha-le-soldier','SOLDIER','Lính nhà Lê',1,100,false,true,'linhnhale'),
+ ('linh-nha-tay-son-soldier','SOLDIER','Lính nhà Tây Sơn',1,100,false,true,'linhnhatayson')
+ON CONFLICT(code) DO NOTHING;
 COMMIT;
 -- ===== END 02_seed_catalog.sql =====
 
@@ -837,3 +860,403 @@ UPDATE hero SET description='Tướng đi thường 1 ô thẳng, được ra kh
  WHERE code='quang-trung-general';
 COMMIT;
 -- ===== END 09_hero_movement_fixes.sql =====
+
+-- ===== BEGIN 13_admin_module.sql =====
+-- Vai trò file: Mở rộng schema cho module Admin (quyền fine-grained, gift code, hero trong shop).
+-- Chỉ ADD bảng/cột/index; không DROP, không đổi dữ liệu lịch sử. Chạy lại được (idempotent).
+BEGIN;
+SET LOCAL search_path = hero_chess, pg_catalog;
+SELECT pg_advisory_xact_lock(hashtext('hero_chess_admin_module_v1'));
+
+-- Quyền fine-grained cho admin. Không có dòng = admin toàn quyền (tương thích ngược với admin cũ).
+CREATE TABLE IF NOT EXISTS hero_chess.admin_permission (
+    admin_user_id uuid PRIMARY KEY REFERENCES hero_chess.user_account(id) ON DELETE CASCADE,
+    permissions text[] NOT NULL DEFAULT ARRAY[]::text[],
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    updated_by uuid REFERENCES hero_chess.user_account(id)
+);
+
+-- Gift code: mã quy tặng admin tạo, quy đổi một lần/lần theo giới hạn.
+CREATE TABLE IF NOT EXISTS hero_chess.gift_code (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    code varchar(64) NOT NULL,
+    reward_kind varchar(16) NOT NULL CHECK (reward_kind IN ('coin', 'hero', 'cosmetic')),
+    reward_quantity integer NOT NULL CHECK (reward_quantity > 0),
+    reward_hero_id uuid REFERENCES hero_chess.hero(id),
+    reward_cosmetic_id uuid REFERENCES hero_chess.cosmetic(id),
+    starts_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz,
+    max_redemptions integer NOT NULL CHECK (max_redemptions > 0),
+    max_per_player integer NOT NULL DEFAULT 1 CHECK (max_per_player > 0),
+    is_active boolean NOT NULL DEFAULT true,
+    created_by uuid NOT NULL REFERENCES hero_chess.user_account(id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_gift_code_code UNIQUE (code),
+    CONSTRAINT ck_gift_code_reward CHECK (
+        (reward_kind = 'coin' AND reward_hero_id IS NULL AND reward_cosmetic_id IS NULL)
+        OR (reward_kind = 'hero' AND reward_hero_id IS NOT NULL AND reward_cosmetic_id IS NULL)
+        OR (reward_kind = 'cosmetic' AND reward_cosmetic_id IS NOT NULL AND reward_hero_id IS NULL))
+);
+
+-- Lịch sử quy đổi; redemption_no cho phép giới hạn nhiều lần/người chơi mà vẫn chống quy đổi trùng.
+CREATE TABLE IF NOT EXISTS hero_chess.gift_code_redemption (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    gift_code_id uuid NOT NULL REFERENCES hero_chess.gift_code(id) ON DELETE CASCADE,
+    player_id uuid NOT NULL REFERENCES hero_chess.user_account(id),
+    redemption_no integer NOT NULL CHECK (redemption_no > 0),
+    reward_kind varchar(16) NOT NULL,
+    reward_quantity integer NOT NULL CHECK (reward_quantity > 0),
+    coin_balance_after bigint,
+    redeemed_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_gift_code_redemption UNIQUE (gift_code_id, player_id, redemption_no)
+);
+
+CREATE INDEX IF NOT EXISTS ix_gift_code_code ON hero_chess.gift_code(code);
+CREATE INDEX IF NOT EXISTS ix_gift_code_redemption_code ON hero_chess.gift_code_redemption(gift_code_id, redeemed_at DESC);
+CREATE INDEX IF NOT EXISTS ix_gift_code_redemption_player ON hero_chess.gift_code_redemption(player_id, redeemed_at DESC);
+
+-- Hero có mặt trong cửa hàng: tách khỏi is_enabled (được bật để chơi) để admin tắt bán mà không ảnh hưởng gameplay.
+ALTER TABLE hero_chess.hero ADD COLUMN IF NOT EXISTS is_in_shop boolean NOT NULL DEFAULT true;
+UPDATE hero_chess.hero SET is_in_shop = true WHERE is_in_shop IS NULL;
+
+REVOKE ALL ON hero_chess.admin_permission, hero_chess.gift_code, hero_chess.gift_code_redemption FROM PUBLIC;
+DO $$ DECLARE role_name text;
+BEGIN
+    FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+            EXECUTE format('REVOKE ALL ON hero_chess.admin_permission, hero_chess.gift_code, hero_chess.gift_code_redemption FROM %I', role_name);
+        END IF;
+    END LOOP;
+END $$;
+COMMIT;
+-- ===== END 13_admin_module.sql =====
+
+-- ===== BEGIN 13_hero_factions.sql =====
+-- Re-running inserts no duplicate factions or links.
+BEGIN;
+
+INSERT INTO hero_chess.faction (code, name)
+VALUES ('tran', 'Trần'), ('hau-le', 'Hậu Lê'), ('tay-son', 'Tây Sơn')
+ON CONFLICT (code) DO NOTHING;
+
+WITH roster(hero_code, faction_key) AS (
+    VALUES
+        ('tran-hung-dao-general', 'tran'),
+        ('tran-thanh-tong-general', 'tran'),
+        ('tran-thu-do-advisor', 'tran'),
+        ('tran-nhat-duat-advisor', 'tran'),
+        ('mac-dinh-chi-advisor', 'tran'),
+        ('tran-hung-dao-elephant', 'tran'),
+        ('da-tuong-elephant', 'tran'),
+        ('tran-binh-trong-elephant', 'tran'),
+        ('pham-ngu-lao-rook', 'tran'),
+        ('tran-khanh-du-rook', 'tran'),
+        ('yet-kieu-cannon', 'tran'),
+        ('tran-quoc-toan-horse', 'tran'),
+        ('tran-quang-khai-horse', 'tran'),
+        ('le-loi-general', 'haule'),
+        ('nguyen-trai-1-advisor', 'haule'),
+        ('le-lai-advisor', 'haule'),
+        ('le-khoi-elephant', 'haule'),
+        ('pham-van-xao-elephant', 'haule'),
+        ('tran-nguyen-han-rook', 'haule'),
+        ('dinh-le-cannon', 'haule'),
+        ('nguyen-xi-cannon', 'haule'),
+        ('le-sat-horse', 'haule'),
+        ('quang-trung-general', 'tayson'),
+        ('nguyen-nhac-general', 'tayson'),
+        ('nguyen-lu-general', 'tayson'),
+        ('nguyen-nhac-advisor', 'tayson'),
+        ('nguyen-lu-advisor', 'tayson'),
+        ('bui-thi-xuan-elephant', 'tayson'),
+        ('le-van-hung-elephant', 'tayson'),
+        ('vo-van-dung-rook', 'tayson'),
+        ('tran-quang-dieu-rook', 'tayson'),
+        ('nguyen-van-tuyet-cannon', 'tayson'),
+        ('nguyen-van-loc-cannon', 'tayson'),
+        ('ly-van-buu-horse', 'tayson'),
+        ('vo-dinh-tu-horse', 'tayson')
+), faction_keys AS (
+    SELECT id, regexp_replace(translate(lower(code), 'ầậâêơà', 'aaaeoa'), '[^a-z]', '', 'g') AS code_key,
+        regexp_replace(translate(lower(name), 'ầậâêơà', 'aaaeoa'), '[^a-z]', '', 'g') AS name_key
+    FROM hero_chess.faction
+), resolved AS (
+    SELECT DISTINCT r.hero_code, f.id
+    FROM roster r
+    JOIN faction_keys f ON f.code_key IN (r.faction_key, 'nha' || r.faction_key)
+        OR f.name_key IN (r.faction_key, 'nha' || r.faction_key)
+), unambiguous AS (
+    SELECT hero_code FROM resolved GROUP BY hero_code HAVING count(*) = 1
+)
+INSERT INTO hero_chess.hero_faction (hero_id, faction_id)
+SELECT h.id, r.id
+FROM resolved r
+JOIN unambiguous u USING (hero_code)
+JOIN hero_chess.hero h ON h.code = r.hero_code
+ON CONFLICT (hero_id, faction_id) DO NOTHING;
+
+COMMIT;
+
+SELECT f.code, f.name, count(hf.hero_id) AS hero_count
+FROM hero_chess.faction f
+LEFT JOIN hero_chess.hero_faction hf ON hf.faction_id = f.id
+WHERE f.code IN ('tran', 'hau-le', 'tay-son')
+GROUP BY f.id, f.code, f.name
+ORDER BY f.code;
+-- ===== END 13_hero_factions.sql =====
+
+-- ===== BEGIN 17_board_cosmetics.sql =====
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtext('hero_chess_board_cosmetics'));
+
+CREATE TABLE IF NOT EXISTS hero_chess.board_cosmetic (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ code varchar(60) NOT NULL UNIQUE,
+ name varchar(120) NOT NULL,
+ coin_price bigint NOT NULL CHECK (coin_price >= 0),
+ asset_key varchar(160) NOT NULL,
+ preview_key varchar(160) NOT NULL,
+ is_enabled boolean NOT NULL DEFAULT true
+);
+CREATE TABLE IF NOT EXISTS hero_chess.player_board_cosmetic (
+ player_id uuid NOT NULL REFERENCES hero_chess.user_account(id),
+ board_cosmetic_id uuid NOT NULL REFERENCES hero_chess.board_cosmetic(id),
+ acquired_at timestamptz NOT NULL DEFAULT now(),
+ idempotency_key varchar(160) NOT NULL,
+ PRIMARY KEY (player_id, board_cosmetic_id),
+ UNIQUE (player_id, idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS hero_chess.player_board_loadout (
+ player_id uuid PRIMARY KEY REFERENCES hero_chess.user_account(id),
+ board_cosmetic_id uuid NOT NULL REFERENCES hero_chess.board_cosmetic(id)
+);
+DO $$
+DECLARE t text;
+BEGIN
+ FOREACH t IN ARRAY ARRAY['player_board_cosmetic','player_board_loadout'] LOOP
+  IF NOT EXISTS (SELECT FROM pg_trigger WHERE tgrelid=format('hero_chess.%I',t)::regclass AND tgname='require_player_owner') THEN
+   EXECUTE format('CREATE TRIGGER require_player_owner BEFORE INSERT OR UPDATE OF player_id ON hero_chess.%I FOR EACH ROW EXECUTE FUNCTION hero_chess.require_player_owner()',t);
+  END IF;
+ END LOOP;
+END $$;
+
+ALTER TABLE hero_chess.coin_transaction ADD COLUMN IF NOT EXISTS board_cosmetic_id uuid REFERENCES hero_chess.board_cosmetic(id);
+-- Keep the ledger constraint compatible when this older bootstrap runs again.
+ALTER TABLE hero_chess.coin_transaction ADD COLUMN IF NOT EXISTS piece_cosmetic_id uuid;
+DO $$
+DECLARE c record;
+BEGIN
+ FOR c IN SELECT conname FROM pg_constraint
+  WHERE conrelid='hero_chess.coin_transaction'::regclass AND contype='c'
+   AND pg_get_constraintdef(oid) LIKE '%kind%'
+ LOOP
+  EXECUTE format('ALTER TABLE hero_chess.coin_transaction DROP CONSTRAINT %I', c.conname);
+ END LOOP;
+END $$;
+ALTER TABLE hero_chess.coin_transaction ADD CONSTRAINT ck_coin_transaction_kind_payload CHECK (
+ (kind='piece_cosmetic_purchase' AND piece_cosmetic_id IS NOT NULL AND board_cosmetic_id IS NULL AND amount<0
+   AND hero_id IS NULL AND cosmetic_id IS NULL AND match_id IS NULL AND match_side IS NULL)
+ OR (piece_cosmetic_id IS NULL AND (
+ (kind='board_cosmetic_purchase' AND board_cosmetic_id IS NOT NULL AND amount<0
+   AND hero_id IS NULL AND cosmetic_id IS NULL AND match_id IS NULL AND match_side IS NULL)
+ OR (board_cosmetic_id IS NULL AND (
+  (kind='match_reward' AND match_id IS NOT NULL AND match_side IS NOT NULL AND amount>0 AND hero_id IS NULL AND cosmetic_id IS NULL)
+  OR (kind='hero_purchase' AND hero_id IS NOT NULL AND cosmetic_id IS NULL AND amount<0 AND match_id IS NULL AND match_side IS NULL)
+  OR (kind='cosmetic_purchase' AND cosmetic_id IS NOT NULL AND hero_id IS NULL AND amount<0 AND match_id IS NULL AND match_side IS NULL)
+  OR (kind IN ('starter','admin_adjustment') AND match_id IS NULL AND match_side IS NULL AND hero_id IS NULL AND cosmetic_id IS NULL
+      AND (kind<>'starter' OR amount>0))
+ ))))
+);
+
+INSERT INTO hero_chess.board_cosmetic(code,name,coin_price,asset_key,preview_key)
+VALUES
+ ('mac-dinh','Bàn cờ mặc định',0,'Board/XiangqiBoardHalves','UI/Cosmetics/BoardMacDinh'),
+ ('son-mai','Sơn mai',200,'Board/XiangqiBoardSkinSonMai','UI/Cosmetics/BoardSonMai'),
+ ('son-son','Sơn son',200,'Board/XiangqiBoardSkinSonSon','UI/Cosmetics/BoardSonSon'),
+ ('su-thanh','Sứ thanh',200,'Board/XiangqiBoardSkinSuThanh','UI/Cosmetics/BoardSuThanh')
+ON CONFLICT (code) DO NOTHING;
+
+ALTER TABLE hero_chess.board_cosmetic ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hero_chess.player_board_cosmetic ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hero_chess.player_board_loadout ENABLE ROW LEVEL SECURITY;
+COMMIT;
+-- ===== END 17_board_cosmetics.sql =====
+
+-- ===== BEGIN 21_piece_cosmetics.sql =====
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtext('hero_chess_piece_cosmetics'));
+
+CREATE TABLE IF NOT EXISTS hero_chess.piece_cosmetic (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ code varchar(60) NOT NULL UNIQUE,
+ name varchar(120) NOT NULL,
+ coin_price bigint NOT NULL CHECK (coin_price >= 0),
+ asset_key varchar(160) NOT NULL,
+ preview_key varchar(160) NOT NULL,
+ is_enabled boolean NOT NULL DEFAULT true
+);
+CREATE TABLE IF NOT EXISTS hero_chess.player_piece_cosmetic (
+ player_id uuid NOT NULL REFERENCES hero_chess.user_account(id),
+ piece_cosmetic_id uuid NOT NULL REFERENCES hero_chess.piece_cosmetic(id),
+ acquired_at timestamptz NOT NULL DEFAULT now(),
+ idempotency_key varchar(160) NOT NULL,
+ PRIMARY KEY (player_id, piece_cosmetic_id),
+ UNIQUE (player_id, idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS hero_chess.player_piece_loadout (
+ player_id uuid PRIMARY KEY REFERENCES hero_chess.user_account(id),
+ piece_cosmetic_id uuid NOT NULL REFERENCES hero_chess.piece_cosmetic(id)
+);
+ALTER TABLE hero_chess.coin_transaction ADD COLUMN IF NOT EXISTS piece_cosmetic_id uuid;
+DO $$
+DECLARE t text;
+BEGIN
+ IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='hero_chess.coin_transaction'::regclass AND conname='coin_transaction_piece_cosmetic_id_fkey') THEN
+  ALTER TABLE hero_chess.coin_transaction ADD CONSTRAINT coin_transaction_piece_cosmetic_id_fkey
+   FOREIGN KEY (piece_cosmetic_id) REFERENCES hero_chess.piece_cosmetic(id);
+ END IF;
+ FOREACH t IN ARRAY ARRAY['player_piece_cosmetic','player_piece_loadout'] LOOP
+  IF NOT EXISTS (SELECT FROM pg_trigger WHERE tgrelid=format('hero_chess.%I',t)::regclass AND tgname='require_player_owner') THEN
+   EXECUTE format('CREATE TRIGGER require_player_owner BEFORE INSERT OR UPDATE OF player_id ON hero_chess.%I FOR EACH ROW EXECUTE FUNCTION hero_chess.require_player_owner()',t);
+  END IF;
+ END LOOP;
+END $$;
+
+INSERT INTO hero_chess.piece_cosmetic(code,name,coin_price,asset_key,preview_key)
+VALUES
+ ('mac-dinh','Bộ quân cờ mặc định',0,'Board/XiangqiPieces','UI/Cosmetics/PiecesMacDinh'),
+ ('son-mai','Sơn mai',200,'Board/XiangqiPiecesSkinSonMai','UI/Cosmetics/PiecesSonMai'),
+ ('son-son','Sơn son',200,'Board/XiangqiPiecesSkinSonSon','UI/Cosmetics/PiecesSonSon'),
+ ('su-thanh','Sứ thanh',200,'Board/XiangqiPiecesSkinSuThanh','UI/Cosmetics/PiecesSuThanh')
+ON CONFLICT (code) DO NOTHING;
+
+ALTER TABLE hero_chess.piece_cosmetic ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hero_chess.player_piece_cosmetic ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hero_chess.player_piece_loadout ENABLE ROW LEVEL SECURITY;
+COMMIT;
+-- ===== END 21_piece_cosmetics.sql =====
+
+-- ===== BEGIN 20_hero_catalog_and_starters.sql =====
+-- One-time data rollout, after deploying the compatible API. Back up affected rows first.
+-- Existing accounts keep other heroes and coins; 2000 starting coins are granted by onboarding only.
+DO $catalog_rollout$
+DECLARE entry record; replacement uuid;
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtext('hero_chess_catalog_starters_v1'));
+ LOCK TABLE hero_chess.game_match, hero_chess.hero, hero_chess.lineup, hero_chess.lineup_entry, hero_chess.player_hero IN SHARE ROW EXCLUSIVE MODE;
+ IF EXISTS (SELECT FROM hero_chess.game_match WHERE status NOT IN ('completed','cancelled')) THEN
+  RAISE EXCEPTION 'Finish ongoing matches and selections before changing the catalogue.';
+ END IF;
+
+ CREATE TEMP TABLE rollout_catalog ON COMMIT DROP AS
+ SELECT * FROM (VALUES
+ ('tran-thanh-tong-general','tranthanhtong',0,true),('nguyen-nhac-general','nguyennhac',0,true),
+ ('mac-dinh-chi-advisor','macdinhchi',0,true),('nguyen-trai-1-advisor','nguyentrai',0,true),
+ ('nguyen-binh-khiem-advisor','nguyenbinhkhiem',0,true),('le-khoi-elephant','lekhoi',0,true),
+ ('le-van-hung-elephant','levanhung',0,true),('tran-khanh-du-rook','trankhanhdu',0,true),
+ ('tran-quang-dieu-rook','tranquangdieu',0,true),('tran-quoc-toan-horse','tranquoctoan',0,true),
+ ('le-sat-horse','lesat',0,true),('nguyen-xi-cannon','nguyenxi',0,true),
+ ('nguyen-van-tuyet-cannon','nguyenvantuyet',0,true),('linh-nha-tran-soldier','linhnhatran',0,true),
+ ('tran-nhat-duat-advisor','trannhatduat',100,false),('le-lai-advisor','lelai',200,false),
+ ('tran-thu-do-advisor','tranthudo',200,false),('nguyen-nhac-advisor','nguyennhac',200,false),
+ ('nguyen-lu-advisor','nguyenlu_rig',200,false),('dinh-le-cannon','dinhle',100,false),
+ ('ly-thuong-kiet-cannon','lythuongkiet',200,false),('yet-kieu-cannon','yetkeu',100,false),
+ ('nguyen-van-loc-cannon',NULL,100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
+ ('da-tuong-elephant','datuong',300,false),('pham-van-xao-elephant','phamvanxao',100,false),
+ ('tran-binh-trong-elephant','tranbinhtrong',200,false),('tran-hung-dao-elephant','tranhungdao',300,false),
+ ('trung-trac-elephant','trungtrac',300,false),('trung-nhi-elephant','trungnhi',300,false),
+ ('le-loi-general','leloi',200,false),('nguyen-lu-general','nguyenlu_rig',100,false),
+ ('quang-trung-general','quangtrung',300,false),('tran-hung-dao-general','tranhungdao',200,false),
+ ('ly-van-buu-horse','lyvanbuu',100,false),('tran-quang-khai-horse','tranquangkhai',100,false),
+ ('vo-dinh-tu-horse','vodinhtu',100,false),('ly-thuong-kiet-rook','lythuongkiet',200,false),
+ ('pham-ngu-lao-rook','phamngulao',200,false),('tran-nguyen-han-rook','trannguyenhan',100,false),
+ ('vo-van-dung-rook','vovandung',100,false),('linh-nha-le-soldier','linhnhale',100,false),
+ ('linh-nha-tay-son-soldier','linhnhatayson',100,false)
+ ) AS catalogue(code,model_key,price,starter);
+ IF (SELECT count(*) FROM pg_temp.rollout_catalog c JOIN hero_chess.hero h USING(code))<>43 THEN
+  RAISE EXCEPTION 'Expected 43 retained heroes; no catalogue changes applied.';
+ END IF;
+
+ CREATE TEMP TABLE rollout_removed ON COMMIT DROP AS SELECT * FROM hero_chess.hero
+ WHERE code IN ('dinh-liet-rook','luu-nhan-chu-horse','tran-khat-chan-cannon','nguyen-trung-ngan-advisor');
+ IF EXISTS (SELECT FROM hero_chess.coin_transaction t JOIN pg_temp.rollout_removed r ON r.id=t.hero_id)
+ OR EXISTS (SELECT FROM hero_chess.gift_code g JOIN pg_temp.rollout_removed r ON r.id=g.reward_hero_id)
+ OR EXISTS (SELECT FROM hero_chess.cosmetic c JOIN pg_temp.rollout_removed r ON r.id=c.hero_id) THEN
+  RAISE EXCEPTION 'Removed heroes have purchase, gift or cosmetic references; review them before deletion.';
+ END IF;
+
+ CREATE TEMP TABLE rollout_lineups ON COMMIT DROP AS
+ SELECT DISTINCT e.lineup_id FROM hero_chess.lineup_entry e JOIN pg_temp.rollout_removed r ON r.id=e.hero_id;
+ FOR entry IN
+  SELECT e.lineup_id,e.slot_no,e.hero_id,l.player_id,h.class_code,h.setup_points
+  FROM hero_chess.lineup_entry e JOIN pg_temp.rollout_removed h ON h.id=e.hero_id
+  JOIN hero_chess.lineup l ON l.id=e.lineup_id ORDER BY e.lineup_id,e.slot_no
+ LOOP
+  SELECT h.id INTO replacement FROM hero_chess.hero h JOIN pg_temp.rollout_catalog c ON c.code=h.code
+  WHERE h.is_enabled AND c.model_key IS NOT NULL AND h.class_code=entry.class_code
+   AND h.setup_points<=entry.setup_points AND h.trait_id IS NULL
+   AND NOT EXISTS (SELECT FROM hero_chess.lineup_entry e JOIN hero_chess.hero other ON other.id=e.hero_id
+     WHERE e.lineup_id=entry.lineup_id AND e.slot_no<>entry.slot_no
+      AND (other.id=h.id OR other.character_id=h.character_id))
+  ORDER BY EXISTS(SELECT FROM hero_chess.hero_faction old_f JOIN hero_chess.hero_faction new_f ON new_f.faction_id=old_f.faction_id
+    WHERE old_f.hero_id=entry.hero_id AND new_f.hero_id=h.id) DESC,
+   EXISTS(SELECT FROM hero_chess.player_hero p WHERE p.player_id=entry.player_id AND p.hero_id=h.id) DESC,h.code
+  LIMIT 1;
+  IF replacement IS NULL THEN RAISE EXCEPTION 'No safe replacement for hero % in lineup %',entry.hero_id,entry.lineup_id; END IF;
+  INSERT INTO hero_chess.player_hero(player_id,hero_id,acquired_via)
+  VALUES(entry.player_id,replacement,'admin') ON CONFLICT(player_id,hero_id) DO NOTHING;
+  UPDATE hero_chess.lineup_entry SET hero_id=replacement WHERE lineup_id=entry.lineup_id AND slot_no=entry.slot_no;
+ END LOOP;
+ UPDATE hero_chess.lineup l SET revision=revision+1
+ WHERE EXISTS(SELECT FROM pg_temp.rollout_lineups x WHERE x.lineup_id=l.id);
+ -- Saved faction choices must still be eligible after replacements; never silently change a skill.
+ IF EXISTS (
+  SELECT FROM pg_temp.rollout_lineups x JOIN hero_chess.lineup_skill ls ON ls.lineup_id=x.lineup_id
+  JOIN hero_chess.team_skill s ON s.id=ls.team_skill_id WHERE s.faction_id IS NOT NULL
+  AND (SELECT count(DISTINCT h.id) FROM hero_chess.lineup_entry e JOIN hero_chess.hero h ON h.id=e.hero_id
+   JOIN hero_chess.hero_faction f ON f.hero_id=h.id AND f.faction_id=s.faction_id
+   WHERE e.lineup_id=x.lineup_id AND h.class_code<>'SOLDIER') < (s.eligibility->>'minNonSoldierFactionHeroes')::int
+ ) THEN RAISE EXCEPTION 'Replacement would invalidate a saved faction skill; review affected lineups.'; END IF;
+
+ -- Also protect owners who have not saved a lineup yet from losing their last playable class.
+ FOR entry IN SELECT DISTINCT p.player_id,r.class_code
+  FROM hero_chess.player_hero p JOIN pg_temp.rollout_removed r ON r.id=p.hero_id
+ LOOP
+  WHILE (SELECT count(*) FROM hero_chess.player_hero p JOIN hero_chess.hero h ON h.id=p.hero_id
+    JOIN pg_temp.rollout_catalog c ON c.code=h.code
+    WHERE p.player_id=entry.player_id AND h.class_code=entry.class_code AND h.is_enabled AND c.model_key IS NOT NULL)
+   < (SELECT required_count FROM hero_chess.chess_class WHERE code=entry.class_code)
+  LOOP
+   SELECT h.id INTO replacement FROM hero_chess.hero h JOIN pg_temp.rollout_catalog c ON c.code=h.code
+   WHERE h.is_enabled AND h.class_code=entry.class_code AND h.trait_id IS NULL AND c.model_key IS NOT NULL
+    AND NOT EXISTS(SELECT FROM hero_chess.player_hero p WHERE p.player_id=entry.player_id AND p.hero_id=h.id)
+   ORDER BY c.starter DESC,h.code LIMIT 1;
+   IF replacement IS NULL THEN RAISE EXCEPTION 'Cannot preserve class % for player %',entry.class_code,entry.player_id; END IF;
+   INSERT INTO hero_chess.player_hero(player_id,hero_id,acquired_via) VALUES(entry.player_id,replacement,'admin');
+  END LOOP;
+ END LOOP;
+
+ IF to_regclass('hero_chess.starter_hero_config') IS NOT NULL THEN
+  EXECUTE 'DELETE FROM hero_chess.starter_hero_config';
+ END IF;
+ DELETE FROM hero_chess.player_hero p USING pg_temp.rollout_removed r WHERE p.hero_id=r.id;
+ DELETE FROM hero_chess.hero_faction f USING pg_temp.rollout_removed r WHERE f.hero_id=r.id;
+ DELETE FROM hero_chess.hero h USING pg_temp.rollout_removed r WHERE h.id=r.id;
+
+ UPDATE hero_chess.hero SET is_starter=false WHERE is_starter;
+ UPDATE hero_chess.hero h SET coin_price=c.price,is_starter=c.starter,
+  is_in_shop=NOT c.starter AND c.model_key IS NOT NULL,asset_key=c.model_key
+ FROM pg_temp.rollout_catalog c WHERE h.code=c.code;
+ IF to_regclass('hero_chess.starter_hero_config') IS NOT NULL THEN
+  EXECUTE 'INSERT INTO hero_chess.starter_hero_config(hero_id,position)
+   SELECT id,row_number() OVER(ORDER BY code)::int FROM hero_chess.hero WHERE is_starter';
+ END IF;
+ DROP TABLE pg_temp.rollout_lineups,pg_temp.rollout_removed,pg_temp.rollout_catalog;
+END
+$catalog_rollout$;
+
+-- Independent read-only postflight; can be run again without reapplying prices.
+SELECT code,class_code,setup_points,coin_price,is_starter,is_in_shop,asset_key
+FROM hero_chess.hero WHERE is_enabled AND NOT is_test_fixture ORDER BY class_code,code;
+-- ===== END 20_hero_catalog_and_starters.sql =====

@@ -33,12 +33,16 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
                 "Development fixtures are disabled: the current database is marked as production. " +
                 "Use a local or test PostgreSQL database for development fixture bootstrapping.");
         }
+        var createdDatabase = false;
         await using (var check = connection.CreateCommand())
         {
             check.CommandText = "SELECT to_regnamespace('hero_chess') IS NOT NULL";
             var exists = (bool)(await check.ExecuteScalarAsync(cancellationToken) ?? false);
             if (!exists)
+            {
                 await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "01_schema.sql"), cancellationToken);
+                createdDatabase = true;
+            }
             else
             {
                 check.CommandText = """
@@ -83,6 +87,13 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "12_custom_rooms.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "13_admin_module.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "17_board_cosmetics.sql"), cancellationToken);
+        await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "21_piece_cosmetics.sql"), cancellationToken);
+        // Existing catalogues require an explicit rollout, never a startup reprice/delete.
+        if (createdDatabase)
+        {
+            await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "13_hero_factions.sql"), cancellationToken);
+            await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "20_hero_catalog_and_starters.sql"), cancellationToken);
+        }
         // 18 is a one-time manual patch; startup must preserve DB-configured faction thresholds.
         if (environment.IsDevelopment() && options.Value.SeedDevelopmentFixtures)
             await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "03_seed_dev_only.sql"), cancellationToken);

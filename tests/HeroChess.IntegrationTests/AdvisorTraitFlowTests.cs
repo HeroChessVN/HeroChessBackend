@@ -17,6 +17,34 @@ namespace HeroChess.IntegrationTests;
 public sealed partial class UserMigrationTests
 {
     [Fact]
+    public async Task Advisor_patch_is_self_contained_and_verification_works_on_another_connection()
+    {
+        await WithLegacyDatabase(async (connection, connectionString) =>
+        {
+            await SqlFile(connection, "02_seed_catalog.sql");
+            var sql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Database", "19_hero_sp_and_advisor_traits.sql"));
+            var boundary = sql.IndexOf("-- Read-only verification:", StringComparison.Ordinal);
+            Assert.True(boundary > 0);
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await using var patch = new NpgsqlCommand(sql[..boundary], connection, transaction);
+                await patch.ExecuteNonQueryAsync();
+                await patch.ExecuteNonQueryAsync();
+                await using var noTemp = new NpgsqlCommand("SELECT to_regclass('pg_temp.advisor_roster') IS NULL AND to_regclass('pg_temp.balanced_hero_sp') IS NULL", connection, transaction);
+                Assert.Equal(true, await noTemp.ExecuteScalarAsync());
+                await transaction.CommitAsync();
+            }
+            await using var other = new NpgsqlConnection(connectionString);
+            await other.OpenAsync();
+            await using var verify = new NpgsqlCommand(sql[boundary..], other);
+            await using var rows = await verify.ExecuteReaderAsync();
+            var count = 0;
+            while (await rows.ReadAsync()) count++;
+            Assert.Equal(14, count);
+        });
+    }
+
+    [Fact]
     public async Task Advisor_patch_is_repeatable_and_bootstrap_preserves_live_trait_and_cooldown_settings()
     {
         await WithLegacyDatabase(async (connection, _) =>
@@ -47,10 +75,10 @@ public sealed partial class UserMigrationTests
             var armies = new[]
             {
                 new[] { "tran-thanh-tong-general", "tran-thu-do-advisor", "tran-nhat-duat-advisor", "tran-binh-trong-elephant", "tran-hung-dao-elephant",
-                    "tran-quang-khai-horse", "tran-quoc-toan-horse", "pham-ngu-lao-rook", "tran-khanh-du-rook", "tran-khat-chan-cannon", "yet-kieu-cannon" },
-                new[] { "le-loi-general", "le-lai-advisor", "nguyen-trai-1-advisor", "le-khoi-elephant", "trung-trac-elephant", "le-sat-horse", "luu-nhan-chu-horse",
+                    "tran-quang-khai-horse", "tran-quoc-toan-horse", "pham-ngu-lao-rook", "tran-khanh-du-rook", "dinh-le-cannon", "yet-kieu-cannon" },
+                new[] { "le-loi-general", "le-lai-advisor", "nguyen-trai-1-advisor", "le-khoi-elephant", "trung-trac-elephant", "le-sat-horse", "tran-quoc-toan-horse",
                     "ly-thuong-kiet-rook", "tran-nguyen-han-rook", "dinh-le-cannon", "nguyen-xi-cannon" },
-                new[] { "quang-trung-general", "nguyen-nhac-advisor", "nguyen-lu-advisor", "le-van-hung-elephant", "bui-thi-xuan-elephant", "ly-van-bu-horse",
+                new[] { "quang-trung-general", "nguyen-nhac-advisor", "nguyen-lu-advisor", "le-van-hung-elephant", "bui-thi-xuan-elephant", "ly-van-buu-horse",
                     "vo-dinh-tu-horse", "tran-quang-dieu-rook", "vo-van-dung-rook", "nguyen-van-tuyet-cannon", "nguyen-van-loc-cannon" }
             };
             foreach (var army in armies)

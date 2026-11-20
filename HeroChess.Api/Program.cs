@@ -100,6 +100,7 @@ builder.Services.AddScoped<MatchHistoryService>();
 builder.Services.AddScoped<RankingService>();
 builder.Services.AddScoped<ShopService>();
 builder.Services.AddScoped<BoardCosmeticService>();
+builder.Services.AddScoped<PieceCosmeticService>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddScoped<AdminAuditWriter>();
 builder.Services.AddScoped<AdminCatalogService>();
@@ -136,7 +137,7 @@ app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSecond
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// Readiness kiểm tra schema phòng riêng và bàn cờ trước khi nhận traffic.
+// Readiness checks required gameplay and cosmetic schema before accepting traffic.
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
 app.MapGet("/health/ready", async (AppDbContext db, CancellationToken cancellationToken) =>
 {
@@ -149,6 +150,11 @@ app.MapGet("/health/ready", async (AppDbContext db, CancellationToken cancellati
                 AND to_regclass('hero_chess.board_cosmetic') IS NOT NULL
                 AND to_regclass('hero_chess.player_board_cosmetic') IS NOT NULL
                 AND to_regclass('hero_chess.player_board_loadout') IS NOT NULL
+                AND to_regclass('hero_chess.piece_cosmetic') IS NOT NULL
+                AND to_regclass('hero_chess.player_piece_cosmetic') IS NOT NULL
+                AND to_regclass('hero_chess.player_piece_loadout') IS NOT NULL
+                AND EXISTS (SELECT FROM information_schema.columns
+                    WHERE table_schema='hero_chess' AND table_name='coin_transaction' AND column_name='piece_cosmetic_id')
                 AND EXISTS (SELECT FROM information_schema.columns
                     WHERE table_schema='hero_chess' AND table_name='coin_transaction' AND column_name='board_cosmetic_id')) AS "Value"
             """).SingleAsync(cancellationToken);
