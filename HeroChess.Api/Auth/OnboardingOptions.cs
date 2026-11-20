@@ -5,7 +5,7 @@ public sealed class OnboardingOptions
 {
     public bool GrantDevelopmentFixtureHeroes { get; set; }
     public int StartingElo { get; set; } = 1000;
-    public long StartingCoins { get; set; } = 2000;
+    public long StartingCoins { get; set; } = 1000;
     public long? DevelopmentStartingCoins { get; set; }
     public string[] DevelopmentAdminEmails { get; set; } = Array.Empty<string>();
 }

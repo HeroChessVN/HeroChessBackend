@@ -129,7 +129,7 @@ public sealed partial class UserMigrationTests
 public sealed class ReleaseOnboardingTests
 {
     [Fact]
-    public async Task Production_onboarding_grants_2000_coins_and_only_the_14_starter_heroes()
+    public async Task Production_onboarding_grants_1000_coins_and_only_the_14_starter_heroes()
     {
         await using var baseFactory = new HeroChessFactory();
         await using var factory = baseFactory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
@@ -139,10 +139,10 @@ public sealed class ReleaseOnboardingTests
         var email = $"release-{Guid.NewGuid():N}@hero.local";
         var user = new Player { Id = Guid.NewGuid(), Email = email, UserName = email };
         Assert.True((await manager.CreateAsync(user, $"A1!{Guid.NewGuid():N}")).Succeeded);
-        Assert.Equal(2000, (await db.Wallets.SingleAsync(x => x.PlayerId == user.Id)).Balance);
+        Assert.Equal(1000, (await db.Wallets.SingleAsync(x => x.PlayerId == user.Id)).Balance);
         var grant = await db.CoinTransactions.SingleAsync(x => x.PlayerId == user.Id && x.Kind == "starter");
-        Assert.Equal(2000, grant.Amount);
-        Assert.Equal(2000, grant.BalanceAfter);
+        Assert.Equal(1000, grant.Amount);
+        Assert.Equal(1000, grant.BalanceAfter);
         var owned = await db.PlayerHeroes.Where(x => x.PlayerId == user.Id).Join(db.Heroes, x => x.HeroId, h => h.Id, (_, h) => h).ToArrayAsync();
         Assert.Equal(14, owned.Length);
         Assert.All(owned, h => Assert.True(h.IsStarter && h.IsEnabled));
