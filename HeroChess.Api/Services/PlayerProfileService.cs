@@ -67,6 +67,12 @@ public sealed class PlayerProfileService(AppDbContext db, IHttpContextAccessor h
         }
         if (request.AvatarName is not null) player.AvatarName = Asset(request.AvatarName, "INVALID_AVATAR_NAME", "The avatar name must be a non-empty token without spaces or slashes.");
         if (request.FrameName is not null) player.FrameName = Asset(request.FrameName, "INVALID_FRAME_NAME", "The frame name must be a non-empty token without spaces or slashes.");
+        if (request.Description is not null)
+        {
+            var description = request.Description.Trim();
+            if (description.Length > 300) throw new ApiException(422, "INVALID_DESCRIPTION", "The description must be 300 characters or fewer.");
+            player.Description = description;
+        }
         player.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
         return await MeAsync(player, ct);
@@ -115,7 +121,7 @@ public sealed class PlayerProfileService(AppDbContext db, IHttpContextAccessor h
         var elo = await db.Ratings.AsNoTracking().Where(x => x.PlayerId == player.Id)
             .Select(x => (int?)x.Elo).SingleOrDefaultAsync(ct) ?? 0;
         return new MeDto(player.Id, player.DisplayName, player.Role, player.Status, player.Id, player.IsGuest,
-            wallet.ToString(), elo, player.AvatarName, player.FrameName, AvatarUrl(player.AvatarPath));
+            wallet.ToString(), elo, player.AvatarName, player.FrameName, AvatarUrl(player.AvatarPath), player.Description);
     }
 
     // Build: Dựng DTO hồ sơ công khai từ entity player.

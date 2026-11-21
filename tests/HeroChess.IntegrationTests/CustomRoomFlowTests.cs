@@ -20,6 +20,7 @@ public sealed partial class MatchFlowTests
         var path = $"{rooms}/{room.RoomId}";
         Assert.Equal(("waiting", 1, 2, true), (room.Status, room.MemberCount, room.Capacity, room.IsOwner));
         Assert.Equal(8, room.Code.Length);
+        Assert.Equal(HttpStatusCode.Conflict, (await owner.Client.PostAsync($"{path}/start", null)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await outsider.Client.GetAsync(path)).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await owner.Client.PostAsJsonAsync("/api/v1/matchmaking/tickets",
             new CreateMatchmakingTicketRequest("bot"), Json)).StatusCode);
@@ -29,7 +30,14 @@ public sealed partial class MatchFlowTests
         var winner = Assert.Single(joins, x => x.Response.StatusCode == HttpStatusCode.OK);
         Assert.Single(joins, x => x.Response.StatusCode == HttpStatusCode.Conflict);
         var joined = (await winner.Response.Content.ReadFromJsonAsync<CustomRoomDto>(Json))!;
-        Assert.Equal(("selecting", 2), (joined.Status, joined.MemberCount));
+        Assert.Equal(("ready", 2), (joined.Status, joined.MemberCount));
+        Assert.Null(joined.MatchId);
+        Assert.Equal(HttpStatusCode.Forbidden, (await winner.Client.PostAsync($"{path}/start", null)).StatusCode);
+        var started = await Post<CustomRoomDto>(owner.Client, $"{path}/start", new { });
+        Assert.Equal("selecting", started.Status);
+        Assert.NotNull(started.MatchId);
+        Assert.Equal(started.MatchId, (await Post<CustomRoomDto>(owner.Client, $"{path}/start", new { })).MatchId);
+        joined = (await winner.Client.GetFromJsonAsync<CustomRoomDto>(path, Json))!;
         Assert.Equal(joined.MatchId, (await Post<CustomRoomDto>(winner.Client, $"{rooms}/join", new JoinCustomRoomRequest(room.Code))).MatchId);
         Assert.Equal(HttpStatusCode.NoContent, (await winner.Client.PostAsJsonAsync($"{path}/leave",
             new LeaveCustomRoomRequest("leave_room"), Json)).StatusCode);
@@ -59,7 +67,9 @@ public sealed partial class MatchFlowTests
         var ratingBefore = (await host.Client.GetFromJsonAsync<MyRankingDto>("/api/v1/ranking/me", Json))!;
         var room = await Post<CustomRoomDto>(host.Client, rooms, new { });
         var joined = await Post<CustomRoomDto>(guest.Client, $"{rooms}/join", new JoinCustomRoomRequest(room.Code));
-        var matchId = joined.MatchId!.Value;
+        Assert.Null(joined.MatchId);
+        var started = await Post<CustomRoomDto>(host.Client, $"{rooms}/{room.RoomId}/start", new { });
+        var matchId = started.MatchId!.Value;
         foreach (var player in new[] { host, guest })
         {
             await Post<MatchSelectionDto>(player.Client, $"/api/v1/matches/{matchId}/selection",

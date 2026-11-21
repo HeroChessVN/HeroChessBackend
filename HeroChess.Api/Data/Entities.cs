@@ -23,6 +23,7 @@ public class User
     public string? AvatarName { get; set; }
     public string? FrameName { get; set; }
     public string? AvatarPath { get; set; }
+    public string? Description { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

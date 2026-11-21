@@ -47,6 +47,10 @@ public sealed class CustomRoomController(MatchmakingService service, ICurrentUse
         return NoContent();
     }
 
+    [HttpPost("{roomId:guid}/start")]
+    public async Task<ActionResult<CustomRoomDto>> Start(Guid roomId, CancellationToken ct) =>
+        Ok(await service.StartRoomAsync(current.UserId, roomId, ct));
+
     [HttpPost("{roomId:guid}/rematch")]
     public async Task<ActionResult<CustomRoomDto>> Rematch(Guid roomId, RematchCustomRoomRequest request, CancellationToken ct) =>
         Ok(await service.RematchRoomAsync(current.UserId, roomId, request.PreviousMatchId, request.RequestId, ct));

@@ -13,6 +13,19 @@ public sealed class PlayerProfileTests : IClassFixture<HeroChessFactory>
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly HeroChessFactory _factory;
+    [Fact]
+    public async Task Description_round_trips_preserves_omitted_value_and_can_be_cleared()
+    {
+        var client = await CreatePlayer();
+        Assert.Equal("Xin chào kỳ thủ!", (await Patch(client, new UpdateProfileRequest(Description: "  Xin chào kỳ thủ!  "))).Description);
+        await Patch(client, new UpdateProfileRequest(DisplayName: "Kỳ thủ"));
+        Assert.Equal("Xin chào kỳ thủ!", (await client.GetFromJsonAsync<MeDto>("/api/v1/me", Json))!.Description);
+        using var invalid = await client.PatchAsJsonAsync("/api/v1/me", new UpdateProfileRequest(Description: new string('a', 301)), Json);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+        await Patch(client, new UpdateProfileRequest(Description: ""));
+        Assert.Equal("", (await client.GetFromJsonAsync<MeDto>("/api/v1/me", Json))!.Description);
+    }
+
     public PlayerProfileTests(HeroChessFactory factory) => _factory = factory;
 
     [Fact]

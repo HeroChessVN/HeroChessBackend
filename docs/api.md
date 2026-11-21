@@ -24,8 +24,8 @@ Mọi REST route bên dưới bắt đầu bằng `/api/v1`. Ví dụ `GET /me` 
 | `POST` | `/auth/register` | `{ "email": "...", "password": "..." }`; tạo tài khoản Player. |
 | `POST` | `/auth/login?useCookies=false` | Cùng body; nhận `accessToken`, `refreshToken`, `expiresIn`, `tokenType`. |
 | `POST` | `/auth/refresh` | `{ "refreshToken": "..." }`; nhận cặp token mới. |
-| `GET` | `/me` | `userId`, `displayName`, `role`, `status`, `playerId`, `coinBalance`, `elo`, `avatarName`, `frameName`, `avatarUrl`. |
-| `PATCH` | `/me` | Sửa `displayName`, `avatarName`, `frameName`; trả lại hồ sơ đã cập nhật. |
+| `GET` | `/me` | `userId`, `displayName`, `role`, `status`, `playerId`, `coinBalance`, `elo`, `avatarName`, `frameName`, `avatarUrl`, `description`. |
+| `PATCH` | `/me` | Sửa `displayName`, `avatarName`, `frameName`, `description`; trả lại hồ sơ đã cập nhật. `description` tối đa 300 ký tự, chuỗi rỗng để xóa, null/bỏ qua để giữ nguyên. |
 | `POST` | `/me/avatar` | Upload ảnh từ máy (multipart, field `file`); trả lại hồ sơ kèm `avatarUrl`. |
 | `GET` | `/catalog` | `ruleset`, `classes`, `slots`, `heroes`, `traits`, `factions`, `teamSkills`. |
 | `GET` | `/me/heroes` | Mảng UUID hero đang sở hữu. Trong `/catalog`, mỗi hero cũng có `isOwned`. |

@@ -9,10 +9,10 @@ public sealed record ApiError(string Code, string Message, string? RequestId = n
 
 // MeDto: userId/role/status chung; chỉ Player có playerId/isGuest/coinBalance/elo, Admin trả các trường game null.
 public sealed record MeDto(Guid UserId, string DisplayName, string Role, string Status, Guid? PlayerId = null, bool? IsGuest = null, string? CoinBalance = null, int? Elo = null,
-    string? AvatarName = null, string? FrameName = null, string? AvatarUrl = null);
+    string? AvatarName = null, string? FrameName = null, string? AvatarUrl = null, string? Description = null);
 
 // UpdateProfileRequest: Sửa hồ sơ hiển thị; field null nghĩa là giữ nguyên giá trị đang lưu.
-public sealed record UpdateProfileRequest(string? DisplayName = null, string? AvatarName = null, string? FrameName = null);
+public sealed record UpdateProfileRequest(string? DisplayName = null, string? AvatarName = null, string? FrameName = null, string? Description = null);
 
 // PlayerProfileDto: Hồ sơ công khai của một tài khoản trong trận; không chứa email hay dữ liệu riêng tư.
 public sealed record PlayerProfileDto(Guid PlayerId, string DisplayName, int Elo, string? AvatarName, string? FrameName, string? AvatarUrl);
