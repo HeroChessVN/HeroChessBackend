@@ -6,6 +6,9 @@ public sealed class KhienHandler : ICommandSkillHandler
 
     public CommandSkillResult Execute(CommandSkillContext ctx)
     {
+        var duration = SkillTiming.Duration(ctx, 4);
+        if (!SkillTiming.FitsTurn(ctx.State.TurnIndex, duration))
+            return CommandSkillResult.Failure(ctx.State, "INVALID_SKILL_CONFIG", "Khiên requires a positive durationTurns.");
         if (ctx.Target.ValueKind != System.Text.Json.JsonValueKind.Object ||
             !ctx.Target.TryGetProperty("pieceId", out var id) || id.ValueKind != System.Text.Json.JsonValueKind.String ||
             !id.TryGetGuid(out var pieceId))
@@ -19,7 +22,7 @@ public sealed class KhienHandler : ICommandSkillHandler
             return CommandSkillResult.Failure(ctx.State, "ALREADY_SHIELDED", "The piece already has Khiên.");
 
         var next = ctx.State.Clone();
-        next.Pieces.Single(p => p.PieceId == pieceId).Effects.Add(new EffectState(SkillKeys.ShieldEffect, null, 4));
+        next.Pieces.Single(p => p.PieceId == pieceId).Effects.Add(new EffectState(SkillKeys.ShieldEffect, null, duration, ctx.State.TurnIndex));
         return CommandSkillResult.Success(next, new object[] { new { type = "shield.applied", pieceId } });
     }
 }

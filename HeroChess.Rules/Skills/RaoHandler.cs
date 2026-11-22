@@ -31,6 +31,9 @@ public sealed class RaoHandler : ICommandSkillHandler
 
     public CommandSkillResult Execute(CommandSkillContext ctx)
     {
+        var duration = SkillTiming.Duration(ctx, 4);
+        if (!SkillTiming.FitsTurn(ctx.State.TurnIndex, duration))
+            return CommandSkillResult.Failure(ctx.State, "INVALID_SKILL_CONFIG", "Rào requires a positive durationTurns.");
         // --- Parse target: { "position": { "x": 0, "y": 0 } } ---
         if (ctx.Target.ValueKind != System.Text.Json.JsonValueKind.Object ||
             !ctx.Target.TryGetProperty("position", out var posProp) || posProp.ValueKind != System.Text.Json.JsonValueKind.Object ||
@@ -51,19 +54,16 @@ public sealed class RaoHandler : ICommandSkillHandler
             return CommandSkillResult.Failure(ctx.State, "WRONG_HALF",
                 "Rào must be placed on the owner's half of the board.");
 
-        // --- Cell must not be occupied by a living piece, an obstacle or a trap ---
-        // No stacking: a cell already holding a piece, Cọc, Thành, Rào or Bẫy is closed to both sides.
-        if (!SkillPlacement.IsCellFree(ctx.State, pos))
+        if (!SkillPlacement.IsCellFree(ctx.State, pos, ctx.ActorSide))
             return CommandSkillResult.Failure(ctx.State, "CELL_OCCUPIED",
                 "Cannot place Rào on an occupied cell.");
 
         // --- Build state changes ---
         var next = ctx.State.Clone();
         var obstacleId = Guid.NewGuid();
-        // The turn that creates Rào counts as the first of four turns.
         next.Obstacles.Add(new ObstacleState(obstacleId, pos, SkillKeys.ObstacleKindRao)
         {
-            RemainingLifetime = 4
+            RemainingLifetime = duration, CreatedAtTurn = ctx.State.TurnIndex
         });
         // Track placer for TurnLifecycle lifetime decrement.
         next.ObstacleMetadata[obstacleId] = new ObstacleMetadata { Placer = ctx.ActorSide };

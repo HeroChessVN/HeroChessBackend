@@ -40,6 +40,9 @@
     <Content Include="Data\Bootstrap\18_faction_skill_requirements.sql" Link="Database\18_faction_skill_requirements.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\20_hero_catalog_and_starters.sql" Link="Database\20_hero_catalog_and_starters.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\21_piece_cosmetics.sql" Link="Database\21_piece_cosmetics.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\22_forecast_review.sql" Link="Database\22_forecast_review.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\16_faction_skills.sql" Link="Database\16_faction_skills.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Data\Bootstrap\23_skill_timers.sql" Link="Database\23_skill_timers.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Data\Bootstrap\19_hero_sp_and_advisor_traits.sql" Link="Database\19_hero_sp_and_advisor_traits.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

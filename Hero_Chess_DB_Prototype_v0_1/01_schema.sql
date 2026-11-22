@@ -245,7 +245,7 @@ CREATE TABLE match_action (
  sequence_no integer NOT NULL CHECK (sequence_no >= 0),
  command_id uuid NOT NULL,
  actor_side varchar(5),
- kind varchar(24) NOT NULL CHECK (kind IN ('start','move','hero_active','team_skill','timeout','resign','undo','cancel')),
+ kind varchar(24) NOT NULL CHECK (kind IN ('start','move','hero_active','team_skill','timeout','resign','undo','cancel','end_turn')),
  request_payload jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(request_payload) = 'object'),
  resolved_events jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(resolved_events) = 'array'),
  state_after jsonb NOT NULL CHECK (jsonb_typeof(state_after) = 'object'),

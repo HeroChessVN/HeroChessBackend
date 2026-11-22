@@ -50,7 +50,7 @@ public sealed class ApiFlowTests : IClassFixture<HeroChessFactory>
             .ToDictionary(x => x.Key, x => new Queue<HeroDto>(x.OrderBy(hero => !hero.Code.StartsWith("dev-slot-", StringComparison.Ordinal)).ThenBy(hero => hero.Code)));
         var entries = catalog.Slots.OrderBy(x => x.SlotNo)
             .Select(slot => new LineupEntryInput(slot.SlotNo, heroesByClass[slot.ClassCode].Dequeue().Id, null)).ToArray();
-        var skills = catalog.TeamSkills.Take(3).Select((x, index) => new LineupSkillInput(index + 1, x.Id)).ToArray();
+        var skills = catalog.TeamSkills.Where(s => s.FactionId is null && s.CooldownTurns > 0).Take(3).Select((x, index) => new LineupSkillInput(index + 1, x.Id)).ToArray();
         var createRequest = new SaveLineupRequest("Integration lineup", catalog.Ruleset.Id, entries, skills);
         var create = await _client.PostAsJsonAsync("/api/v1/lineups", createRequest, Json);
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);

@@ -31,7 +31,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         Assert.Contains(catalog.Heroes, hero => hero.Trait?.ImplementationKey == "quang_trung.special_move");
         var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == "thanh");
         Assert.False(string.IsNullOrWhiteSpace(skill.Description));
-        var otherSkills = human.Lineup.Skills.Skip(1).ToArray();
+        var otherSkills = human.Lineup.Skills.Where(s => s.SkillId != skill.Id).Select((s, i) => new LineupSkillInput(i + 2, s.SkillId)).ToArray();
         var updated = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
             new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
                 [new LineupSkillInput(1, skill.Id), .. otherSkills], human.Lineup.Revision), HttpMethod.Put);
@@ -57,7 +57,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         Assert.Equal(1, accepted.SequenceNo);
         Assert.Equal(1, accepted.Snapshot.CountedActions);
         Assert.Equal("black", accepted.Snapshot.SideToMove);
-        Assert.Equal(skill.CooldownTurns!.Value - 1, accepted.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
+        Assert.Equal(skill.CooldownTurns!.Value, accepted.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
         Assert.True((await Post<MatchCommandResultDto>(human.Client, $"/api/v1/matches/{matchId}/commands", request)).Duplicate);
     }
 
@@ -71,7 +71,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == implementationKey);
         var updated = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
             new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
-                [new LineupSkillInput(1, skill.Id), .. human.Lineup.Skills.Skip(1)], human.Lineup.Revision), HttpMethod.Put);
+                [new LineupSkillInput(1, skill.Id), .. human.Lineup.Skills.Where(s => s.SkillId != skill.Id).Select((s, i) => new LineupSkillInput(i + 2, s.SkillId))], human.Lineup.Revision), HttpMethod.Put);
         var ticket = await Post<MatchmakingTicketDto>(human.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("bot"));
         var matchId = ticket.MatchId!.Value;
         await Post<MatchSelectionDto>(human.Client, $"/api/v1/matches/{matchId}/selection", new SelectLineupRequest(updated.Id, updated.Revision), HttpMethod.Put);
@@ -100,7 +100,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
         var catalog = (await human.Client.GetFromJsonAsync<CatalogDto>("/api/v1/catalog", Json))!;
         var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == implementationKey);
         var other = catalog.TeamSkills.Single(x => (x.ImplementationKey is "thanh" or "rao") && x.ImplementationKey != implementationKey);
-        var third = human.Lineup.Skills.Single(x => x.SlotNo == 3);
+        var third = new LineupSkillInput(3, catalog.TeamSkills.Single(x => x.ImplementationKey == "khien").Id);
         var updated = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
             new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
                 [new LineupSkillInput(1, skill.Id), new LineupSkillInput(2, other.Id), third], human.Lineup.Revision), HttpMethod.Put);
@@ -364,7 +364,7 @@ public sealed partial class MatchFlowTests : IClassFixture<HeroChessFactory>
                 ? !new[] { "tran-binh-trong-elephant", "bui-thi-xuan-elephant", "da-tuong-elephant" }.Contains(h.Code)
                 : !h.Code.StartsWith("dev-slot-", StringComparison.Ordinal)).ThenBy(h => h.Code)));
         var entries = catalog.Slots.OrderBy(x => x.SlotNo).Select(x => new LineupEntryInput(x.SlotNo, byClass[x.ClassCode].Dequeue().Id, null)).ToArray();
-        var skills = catalog.TeamSkills.Take(3).Select((x, i) => new LineupSkillInput(i + 1, x.Id)).ToArray();
+        var skills = catalog.TeamSkills.Where(s => s.FactionId is null && s.CooldownTurns > 0).Take(3).Select((x, i) => new LineupSkillInput(i + 1, x.Id)).ToArray();
         var lineup = await Post<LineupDto>(client, "/api/v1/lineups", new SaveLineupRequest("Match fixture", catalog.Ruleset.Id, entries, skills));
         return (client, lineup);
     }

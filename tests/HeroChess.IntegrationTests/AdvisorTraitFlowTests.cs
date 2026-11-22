@@ -116,8 +116,8 @@ public sealed partial class UserMigrationTests
 public sealed partial class MatchFlowTests
 {
     [Theory]
-    [InlineData("le-lai-advisor", SkillKeys.LeLaiSwapGeneral, 8)]
-    [InlineData("tran-thu-do-advisor", SkillKeys.TranThuDoGeneralShield, 6)]
+    [InlineData("le-lai-advisor", SkillKeys.LeLaiSwapGeneral, 7)]
+    [InlineData("tran-thu-do-advisor", SkillKeys.TranThuDoGeneralShield, 5)]
     public async Task Advisor_command_uses_frozen_parameters_retries_once_and_replays_both_piece_states(string code, string key, int cooldown)
     {
         var (id, red, black) = await Ranked(false);
@@ -156,7 +156,7 @@ public sealed partial class MatchFlowTests
             Assert.Equal(1, played.SequenceNo);
             Assert.Equal(1, after.CountedActions);
             Assert.Equal(Side.Black, after.SideToMove);
-            Assert.Equal(cooldown - 1, after.Pieces.Single(p => p.PieceId == source.PieceId).TraitState[SkillKeys.HeroCooldownRemainingKey]);
+            Assert.Equal(cooldown, after.Pieces.Single(p => p.PieceId == source.PieceId).TraitState[SkillKeys.HeroCooldownRemainingKey]);
             Assert.True((await Post<MatchCommandResultDto>(red.Client, path + "/commands", request)).Duplicate);
             Assert.Equal(key, played.ResolvedEvents[0].GetProperty("code").GetString());
             if (key == SkillKeys.LeLaiSwapGeneral)
@@ -165,10 +165,12 @@ public sealed partial class MatchFlowTests
                 Assert.Equal(general.Position, after.Pieces.Single(p => p.PieceId == source.PieceId).Position);
                 Assert.Equal(2, played.ResolvedEvents.EnumerateArray().Count(e => e.GetProperty("type").GetString() == "piece.moved"));
             }
-            else Assert.Equal(1, Assert.Single(after.Pieces.Single(p => p.PieceId == general.PieceId).Effects).RemainingTurns);
+            else Assert.Equal(2, Assert.Single(after.Pieces.Single(p => p.PieceId == general.PieceId).Effects).RemainingTurns);
             var move = (await black.Client.GetFromJsonAsync<LegalMoveDto[]>(path + "/legal-actions", Json))!.First();
             var reply = await Post<MatchCommandResultDto>(black.Client, path + "/commands", Command(1, move));
-            Assert.Empty(reply.Snapshot.State.Deserialize<GameState>(GameJson.Options)!.Pieces.Single(p => p.PieceId == general.PieceId).Effects);
+            var remainingEffects = reply.Snapshot.State.Deserialize<GameState>(GameJson.Options)!.Pieces.Single(p => p.PieceId == general.PieceId).Effects;
+            if (key == SkillKeys.TranThuDoGeneralShield) Assert.Equal(1, Assert.Single(remainingEffects).RemainingTurns);
+            else Assert.Empty(remainingEffects);
             var replay = (await black.Client.GetFromJsonAsync<ReplayPageDto>(path + "/replay?afterSequence=0", Json))!;
             var recorded = replay.Entries.First(e => e.SequenceNo == 1).StateAfter.Deserialize<GameState>(GameJson.Options)!;
             Assert.Equal(cooldown, recorded.Pieces.Single(p => p.PieceId == source.PieceId).TraitParameters!.Value.GetProperty("cooldownTurns").GetInt32());

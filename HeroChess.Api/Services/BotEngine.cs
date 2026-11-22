@@ -21,12 +21,10 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         ct.ThrowIfCancellationRequested();
         state = MatchTurnRules.Prepare(state.Clone());
         var observer = viewer ?? (state.SideToMove == Side.Red ? Side.Black : Side.Red);
-        // Traps of other sides stay hidden from the forecast, but their cells are closed to placement.
-        var hiddenBlocked = state.RiverSnares
-            .Where(trap => trap.Owner != observer && trap.ExpiresAt > state.TurnIndex)
-            .Select(trap => trap.Position).ToHashSet();
+        // Placement must not use concealed enemy information either.
         state.RiverSnares.RemoveAll(trap => trap.Owner != observer);
         if (!Supports(state)) throw new InvalidDataException("Forecast cannot analyse legacy hidden states.");
+        var initialBoard = Board(state);
         var started = _clock.GetTimestamp();
         var nodes = 0;
         var variation = new List<object>(3);
@@ -41,7 +39,7 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
                 .Where(move => move.CapturedPieceId is not null).Select(move => move.CapturedPieceId!.Value).ToHashSet();
             var quiet = moves.Where(move => move.CapturedPieceId is null && !move.InterceptedByStake)
                 .OrderByDescending(move => threatened.Contains(move.PieceId)).DistinctBy(move => move.PieceId).Take(2).ToArray();
-            var candidates = Candidates(state, quiet.Concat(moves.Except(quiet)).ToArray(), 6, hiddenBlocked);
+            var candidates = Candidates(state, quiet.Concat(moves.Except(quiet)).ToArray(), 6);
             foreach (var action in candidates)
             {
                 ct.ThrowIfCancellationRequested();
@@ -58,22 +56,25 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             }
             var ordered = ranked.OrderByDescending(option => option.Score).ToArray();
             if (ordered.Length == 0) break;
-            if (ply == 0) threats = ordered.Where(option => option.Threat).Take(2).Select(option => Describe(option.Action, state)).ToArray();
-            variation.Add(Describe(ordered[0].Action, state));
+            if (ply == 0) threats = ordered.Where(option => option.Threat).Take(2).Select(option => Describe(option.Action, state, option.Next)).ToArray();
+            variation.Add(Describe(ordered[0].Action, state, ordered[0].Next));
             state = ordered[0].Next;
         }
         ct.ThrowIfCancellationRequested();
-        return new { variation, threats };
+        return new { initialBoard, variation, threats };
 
         bool OutOfTime() => nodes >= 64 || _clock.GetElapsedTime(started).TotalMilliseconds >= 50;
 
-        static object Describe(JsonElement action, GameState board)
+        JsonElement Board(GameState board) => MatchStateProjection.State(GameJson.Element(board), observer);
+
+        object Describe(JsonElement action, GameState board, GameState after)
         {
             var piece = action.TryGetProperty("pieceId", out var id) ? board.Pieces.FirstOrDefault(p => p.PieceId == id.GetGuid()) : null;
             var skill = action.TryGetProperty("slot", out var slot)
                 ? board.SkillStates[board.SideToMove].FirstOrDefault(s => s.SlotNo == slot.GetInt32()) : null;
             return new { side = board.SideToMove, action, from = piece?.Position, pieceClass = piece?.Class,
-                pieceName = piece?.HeroName, skillName = skill?.Name ?? (action.GetProperty("type").GetString() == "hero_active" ? piece?.TraitName : null) };
+                pieceName = piece?.HeroName, skillName = skill?.Name ?? (action.GetProperty("type").GetString() == "hero_active" ? piece?.TraitName : null),
+                boardAfter = Board(after) };
         }
     }
 
@@ -89,10 +90,6 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         if (!Supports(original))
             throw new InvalidDataException("Tactical bot cannot search legacy hidden or trait states.");
         var state = MatchTurnRules.Prepare(original.Clone());
-        // Enemy traps are hidden from the bot's search, but their cells are still closed to placement.
-        var hiddenBlocked = state.RiverSnares
-            .Where(trap => trap.Owner != state.SideToMove && trap.ExpiresAt > state.TurnIndex)
-            .Select(trap => trap.Position).ToHashSet();
         state.RiverSnares.RemoveAll(trap => trap.Owner != state.SideToMove);
         var limits = config.Limits;
         var scoreExchanges = config.StrategyVersion == BotConfiguration.ExchangeStrategy;
@@ -107,7 +104,7 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         if (limits.Depth == 0)
         {
             var actions = moves.Where(move => !move.InterceptedByStake).Select(Move).ToList();
-            foreach (var action in ActionSkillCandidates(state, hiddenBlocked).Take(16))
+            foreach (var action in ActionSkillCandidates(state).Take(16))
             {
                 ct.ThrowIfCancellationRequested();
                 if (Exhausted()) break;
@@ -135,7 +132,7 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
 
         var roots = new List<(JsonElement Action, GameState State, int Score, int CaptureLoss, IReadOnlyList<LegalMove> Replies)>();
         var rootAttempts = 0;
-        foreach (var action in Candidates(state, moves, limits.Width, hiddenBlocked))
+        foreach (var action in Candidates(state, moves, limits.Width))
         {
             ct.ThrowIfCancellationRequested();
             // Allow a bounded fallback check even if move generation used up the soft budget.
@@ -271,19 +268,18 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
             .ThenBy(m => m.From.X).ThenBy(m => m.From.Y).ThenBy(m => m.To.X).ThenBy(m => m.To.Y).ToArray();
     }
 
-    private IEnumerable<JsonElement> Candidates(GameState state, IReadOnlyList<LegalMove> moves, int width,
-        IReadOnlyCollection<BoardPoint>? hiddenBlocked = null)
+    private IEnumerable<JsonElement> Candidates(GameState state, IReadOnlyList<LegalMove> moves, int width)
     {
         // shortcut: bounded beam, not exhaustive minimax; increase width only after measured server capacity.
         foreach (var move in moves.Take(4)) yield return Move(move);
-        foreach (var action in ActionSkillCandidates(state, hiddenBlocked).Take(8)) yield return action;
+        foreach (var action in ActionSkillCandidates(state).Take(8)) yield return action;
         foreach (var move in moves.Skip(4).Take(Math.Max(0, width - 4))) yield return Move(move);
     }
 
-    private IEnumerable<JsonElement> ActionSkillCandidates(GameState state, IReadOnlyCollection<BoardPoint>? hiddenBlocked = null)
+    private IEnumerable<JsonElement> ActionSkillCandidates(GameState state)
     {
-        using var heroes = MatchTurnRules.HeroCandidates(state, _rules, hiddenBlocked).GetEnumerator();
-        using var team = SkillCandidates(state, hiddenBlocked).GetEnumerator();
+        using var heroes = MatchTurnRules.HeroCandidates(state, _rules).GetEnumerator();
+        using var team = SkillCandidates(state).GetEnumerator();
         while (true)
         {
             var hasHero = heroes.MoveNext();
@@ -294,7 +290,7 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         }
     }
 
-    public static IEnumerable<JsonElement> SkillCandidates(GameState state, IReadOnlyCollection<BoardPoint>? hiddenBlocked = null)
+    public static IEnumerable<JsonElement> SkillCandidates(GameState state)
     {
         // Round-robin slots: a structure's 90 targets must not hide later ready skills.
         var streams = state.SkillStates[state.SideToMove]
@@ -319,11 +315,11 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
                 SkillKeys.Khien => state.Pieces.Where(p => p.Side == state.SideToMove && p.Status == PieceStatus.Alive)
                     .OrderByDescending(p => p.SetupPoints).ThenBy(p => p.Position?.X).ThenBy(p => p.Position?.Y).Select(p => (object)new { pieceId = p.PieceId }),
                 SkillKeys.Thanh or SkillKeys.Rao => Enumerable.Range(0, 9).SelectMany(x => Enumerable.Range(0, 10).Select(y => new BoardPoint(x, y)))
-                    .Where(pos => SkillPlacement.IsCellFree(state, pos, hiddenBlocked))
+                    .Where(pos => SkillPlacement.IsCellFree(state, pos, state.SideToMove))
                     .OrderBy(pos => Math.Abs(pos.Y - (state.SideToMove == Side.Red ? 2 : 7))).ThenBy(pos => Math.Abs(pos.X - 4))
                     .Select(pos => (object)new { position = new { x = pos.X, y = pos.Y } }),
                 SkillKeys.VanCocTranGiang or SkillKeys.BinhLamThuyHien => new object[] { new { paths = new[] { 4, 5, 6 } } },
-                FactionSkillHandler.Trap => FactionSkillHandler.Targets(state, hiddenBlocked),
+                FactionSkillHandler.Trap => FactionSkillHandler.Targets(state),
                 FactionSkillHandler.Rally => new object[] { new { } },
                 SkillKeys.PhanKyDoatThe or SkillKeys.PhaTranDoatPhong => state.EffectInstances.OrderBy(e => e.CreationOrder).Select(e => (object)new { effectId = e.EffectId }),
                 _ => []

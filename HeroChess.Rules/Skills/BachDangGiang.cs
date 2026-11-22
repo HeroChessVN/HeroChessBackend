@@ -30,7 +30,9 @@ public static class BachDangGiang
             return CommandSkillResult.Failure(state, "SKILL_ON_COOLDOWN", "Bạch Đằng Giang is on cooldown.");
         if (state.ThdTuongCocStakes.TryGetValue(pieceId, out var existing) && state.Obstacles.Any(o => o.ObstacleId == existing))
             return CommandSkillResult.Failure(state, "STAKE_ALREADY_ACTIVE", "Wait until the current stake expires.");
-        if (!TryReadParameters(hero.TraitParameters, out var cooldown, out var duration))
+        if (!TryReadParameters(hero.TraitParameters, out var cooldown, out var duration) ||
+            state.SkillTimingVersion >= 2 && (!SkillTiming.ValidHero(SkillKeys.ThDTuongCoc, hero.TraitParameters) ||
+                !SkillTiming.FitsTurn(state.TurnIndex, cooldown) || !SkillTiming.FitsTurn(state.TurnIndex, duration)))
             return CommandSkillResult.Failure(state, "INVALID_HERO_SKILL_CONFIG", "Bạch Đằng Giang requires positive integer cooldown and duration.");
         if (target.ValueKind != JsonValueKind.Object || !target.TryGetProperty("position", out var point) ||
             point.ValueKind != JsonValueKind.Object ||
@@ -39,16 +41,16 @@ public static class BachDangGiang
             px is < 0 or > 8 || py is not (4 or 5))
             return CommandSkillResult.Failure(state, "INVALID_TARGET", "Choose an empty river cell (y=4 or y=5).");
         var position = new BoardPoint(px, py);
-        // No stacking: a river cell already holding a piece, Cọc, Thành, Rào or Bẫy is closed to both sides.
-        if (!SkillPlacement.IsCellFree(state, position))
+        if (!SkillPlacement.IsCellFree(state, position, actor))
             return CommandSkillResult.Failure(state, "CELL_OCCUPIED", "Choose an empty river cell.");
 
         var next = state.Clone();
         var stakeId = Guid.NewGuid();
-        next.Obstacles.Add(new ObstacleState(stakeId, position, SkillKeys.ObstacleKindThDTuongCoc, duration));
+        next.Obstacles.Add(new ObstacleState(stakeId, position, SkillKeys.ObstacleKindThDTuongCoc, duration, state.TurnIndex));
         next.ObstacleMetadata[stakeId] = new ObstacleMetadata { Placer = actor };
         next.ThdTuongCocStakes[pieceId] = stakeId;
         next.Pieces.Single(p => p.PieceId == pieceId).TraitState[SkillKeys.HeroCooldownRemainingKey] = cooldown;
+        next.Pieces.Single(p => p.PieceId == pieceId).TraitState[SkillKeys.HeroCooldownStartedAtTurnKey] = state.TurnIndex;
         return CommandSkillResult.Success(next, new object[] { new { type = "hero_skill.activated", code = SkillKeys.ThDTuongCoc, pieceId } });
     }
 }

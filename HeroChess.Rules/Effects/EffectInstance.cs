@@ -68,6 +68,7 @@ public sealed class EffectInstance
     /// Set at creation per Skill rules. Immutable — never changes.
     /// </summary>
     public int Duration { get; init; }
+    public int? CreatedAtTurn { get; init; }
 
     /// <summary>
     /// Remaining shared duration of this Effect.
@@ -118,6 +119,7 @@ public sealed class EffectInstance
             CreationOrder = CreationOrder,
             State = State,
             Duration = Duration,
+            CreatedAtTurn = CreatedAtTurn,
             RemainingDuration = RemainingDuration,
             TargetPositions = new List<BoardPoint>(TargetPositions),
             Payload = new Dictionary<string, object?>(Payload, StringComparer.Ordinal),

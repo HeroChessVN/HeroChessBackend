@@ -245,7 +245,7 @@ CREATE TABLE match_action (
  sequence_no integer NOT NULL CHECK (sequence_no >= 0),
  command_id uuid NOT NULL,
  actor_side varchar(5),
- kind varchar(24) NOT NULL CHECK (kind IN ('start','move','hero_active','team_skill','timeout','resign','undo','cancel')),
+ kind varchar(24) NOT NULL CHECK (kind IN ('start','move','hero_active','team_skill','timeout','resign','undo','cancel','end_turn')),
  request_payload jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(request_payload) = 'object'),
  resolved_events jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(resolved_events) = 'array'),
  state_after jsonb NOT NULL CHECK (jsonb_typeof(state_after) = 'object'),
@@ -675,7 +675,7 @@ WITH release_prices(code,model_key,price,starter) AS (VALUES
  ('tran-thu-do-advisor','tranthudo',200,false),('nguyen-nhac-advisor','nguyennhac',200,false),
  ('nguyen-lu-advisor','nguyenlu_rig',200,false),('dinh-le-cannon','dinhle',100,false),
  ('ly-thuong-kiet-cannon','lythuongkiet',200,false),('yet-kieu-cannon','yetkeu',100,false),
- ('nguyen-van-loc-cannon',NULL,100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
+ ('nguyen-van-loc-cannon','nguyenvanloc',100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
  ('da-tuong-elephant','datuong',300,false),('pham-van-xao-elephant','phamvanxao',100,false),
  ('tran-binh-trong-elephant','tranbinhtrong',200,false),('tran-hung-dao-elephant','tranhungdao',300,false),
  ('trung-trac-elephant','trungtrac',300,false),('trung-nhi-elephant','trungnhi',300,false),
@@ -763,6 +763,9 @@ COMMIT;
 -- These skills are wired to handler implementations in HeroChess.Rules.
 BEGIN;
 SET LOCAL search_path = hero_chess, pg_catalog;
+DO $legacy_catalog$
+BEGIN
+ IF EXISTS (SELECT 1 FROM ruleset WHERE is_active AND config->>'skillTimingVersion'='2') THEN RETURN; END IF;
 
 -- Step 6: Thành Command Skill
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
@@ -821,6 +824,8 @@ ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,de
 UPDATE hero SET trait_id='30000000-0000-4000-8000-000000000008'
  WHERE code='ly-thuong-kiet-cannon';
 
+END
+$legacy_catalog$;
 COMMIT;
 -- ===== END 08_step6_skills.sql =====
 
@@ -829,6 +834,9 @@ COMMIT;
 -- Intentionally leaves setup_points and existing hero IDs/ownership untouched.
 BEGIN;
 SET LOCAL search_path = hero_chess, pg_catalog;
+DO $legacy_catalog$
+BEGIN
+ IF EXISTS (SELECT 1 FROM ruleset WHERE is_active AND config->>'skillTimingVersion'='2') THEN RETURN; END IF;
 
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
  ('30000000-0000-4000-8000-000000000005','quang-trung-orthogonal-3','Quang Trung — hành quân thần tốc','active','quang_trung.special_move',
@@ -858,6 +866,8 @@ UPDATE hero SET description='Pháo 7 SP; dùng Thành hoặc Rào làm ngòi, c�
  WHERE code='ly-thuong-kiet-cannon';
 UPDATE hero SET description='Tướng đi thường 1 ô thẳng, được ra khỏi cung, không qua sông; skill đi thẳng 1–3 ô với CD 3.'
  WHERE code='quang-trung-general';
+END
+$legacy_catalog$;
 COMMIT;
 -- ===== END 09_hero_movement_fixes.sql =====
 
@@ -1162,7 +1172,7 @@ BEGIN
  ('tran-thu-do-advisor','tranthudo',200,false),('nguyen-nhac-advisor','nguyennhac',200,false),
  ('nguyen-lu-advisor','nguyenlu_rig',200,false),('dinh-le-cannon','dinhle',100,false),
  ('ly-thuong-kiet-cannon','lythuongkiet',200,false),('yet-kieu-cannon','yetkeu',100,false),
- ('nguyen-van-loc-cannon',NULL,100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
+ ('nguyen-van-loc-cannon','nguyenvanloc',100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
  ('da-tuong-elephant','datuong',300,false),('pham-van-xao-elephant','phamvanxao',100,false),
  ('tran-binh-trong-elephant','tranbinhtrong',200,false),('tran-hung-dao-elephant','tranhungdao',300,false),
  ('trung-trac-elephant','trungtrac',300,false),('trung-nhi-elephant','trungnhi',300,false),
@@ -1260,3 +1270,101 @@ $catalog_rollout$;
 SELECT code,class_code,setup_points,coin_price,is_starter,is_in_shop,asset_key
 FROM hero_chess.hero WHERE is_enabled AND NOT is_test_fixture ORDER BY class_code,code;
 -- ===== END 20_hero_catalog_and_starters.sql =====
+
+-- ===== BEGIN 16_faction_skills.sql =====
+-- Run after 13_hero_factions.sql and deploy a backend with the three handlers first.
+BEGIN;
+
+DO $$
+BEGIN
+    IF (SELECT count(*) FROM hero_chess.faction WHERE code IN ('tran', 'hau-le', 'tay-son')) <> 3 THEN
+        RAISE EXCEPTION 'Run 13_hero_factions.sql before inserting faction skills.';
+    END IF;
+END $$;
+
+INSERT INTO hero_chess.team_skill
+    (code, name, faction_id, implementation_key, cooldown_turns, is_enabled, eligibility, description)
+SELECT skill.code, skill.name, faction.id, skill.code, skill.cooldown, true, '{"minNonSoldierFactionHeroes":5}'::jsonb, skill.description
+FROM (VALUES
+    ('tran', 'bach_dang_tran_phap', 'Bạch Đằng Trận Pháp', 8,
+        'Đặt ba bẫy ẩn trên sông trong 6 lượt. Quân địch đi qua bị khóa chân 4 lượt. Mỗi bẫy dùng một lần.'),
+    ('hau-le', 'lam_son_quan_luoc', 'Lam Sơn Quân Lược', 16,
+        'Xem riêng tối đa ba hành động dự đoán và hai phương án nguy hiểm của địch ở lượt kế tiếp.'),
+    ('tay-son', 'hich_xuat_quan', 'Hịch Xuất Quân', 12,
+        'Trong 6 lượt, Tốt phe mình có thể đi thêm một ô theo hướng hợp lệ nếu ô trung gian trống.')
+) AS skill(faction_code, code, name, cooldown, description)
+JOIN hero_chess.faction faction ON faction.code = skill.faction_code
+ON CONFLICT (code) DO UPDATE SET
+    name = EXCLUDED.name, faction_id = EXCLUDED.faction_id,
+    implementation_key = EXCLUDED.implementation_key, cooldown_turns = EXCLUDED.cooldown_turns,
+    eligibility = EXCLUDED.eligibility, description = EXCLUDED.description
+WHERE NOT EXISTS (SELECT 1 FROM hero_chess.ruleset WHERE is_active AND config->>'skillTimingVersion'='2');
+
+COMMIT;
+-- ===== END 16_faction_skills.sql =====
+
+-- ===== BEGIN 23_skill_timers.sql =====
+-- Run manually on an existing DB after the API and clients support skillTimingVersion 2.
+-- One-time balance operation; startup only executes it for a newly created database.
+DO $skill_timers$
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtext('hero_chess_skill_timers_v2'));
+ PERFORM set_config('lock_timeout','5s',true);
+ LOCK TABLE hero_chess.team_skill,hero_chess.hero_trait,hero_chess.ruleset IN SHARE ROW EXCLUSIVE MODE;
+ IF (SELECT count(*) FROM hero_chess.ruleset WHERE is_active) <> 1 THEN
+  RAISE EXCEPTION 'Expected exactly one active ruleset. No timers were changed.';
+ END IF;
+ IF EXISTS(SELECT 1 FROM hero_chess.ruleset WHERE is_active AND config->>'skillTimingVersion'='2') THEN
+  RETURN; -- Preserve deliberate tuning after this rollout, including non-default timer values.
+ END IF;
+ IF EXISTS(SELECT 1 FROM hero_chess.ruleset WHERE is_active AND
+    config ? 'skillTimingVersion' AND config->>'skillTimingVersion' IS DISTINCT FROM '1') THEN
+  RAISE EXCEPTION 'The ruleset has an unexpected skill timing version.';
+ END IF;
+
+ CREATE TEMP TABLE timer_team ON COMMIT DROP AS SELECT * FROM (VALUES
+  ('thanh',14,13,6,NULL::integer),('rao',10,9,4,NULL::integer),('khien',14,13,4,NULL::integer),
+  ('bach_dang_tran_phap',8,7,6,4),('lam_son_quan_luoc',16,15,NULL::integer,NULL::integer),
+  ('hich_xuat_quan',12,11,6,NULL::integer)
+ ) AS config(key,old_cd,new_cd,duration,root_duration);
+ CREATE TEMP TABLE timer_hero ON COMMIT DROP AS SELECT * FROM (VALUES
+  ('quang_trung.special_move',3,7,NULL::integer),('tran_hung_dao_tuong.coc',5,5,3),
+  ('le_lai.swap_general',8,7,NULL::integer),('tran_thu_do.general_shield',6,5,2)
+ ) AS config(key,old_cd,new_cd,duration);
+ IF (SELECT count(*) FROM hero_chess.team_skill s JOIN timer_team t ON t.key=s.implementation_key WHERE s.is_enabled) <> 6 OR
+    (SELECT count(*) FROM hero_chess.hero_trait h JOIN timer_hero t ON t.key=h.implementation_key) <> 4 THEN
+  RAISE EXCEPTION 'Expected six enabled team skills and four active hero traits. Run prerequisite catalog migrations first.';
+ END IF;
+ IF EXISTS(SELECT 1 FROM hero_chess.team_skill s JOIN timer_team t ON t.key=s.implementation_key
+    WHERE jsonb_typeof(s.parameters) <> 'object' OR s.cooldown_turns IS NULL OR s.cooldown_turns NOT IN(t.old_cd,t.new_cd) OR
+      (t.duration IS NOT NULL AND s.parameters ? 'durationTurns' AND s.parameters->'durationTurns' IS DISTINCT FROM to_jsonb(t.duration)) OR
+      (t.root_duration IS NOT NULL AND s.parameters ? 'rootDurationTurns' AND s.parameters->'rootDurationTurns' IS DISTINCT FROM to_jsonb(t.root_duration))) OR
+    EXISTS(SELECT 1 FROM hero_chess.hero_trait h JOIN timer_hero t ON t.key=h.implementation_key
+    WHERE jsonb_typeof(h.parameters) <> 'object' OR h.parameters->'cooldownTurns' IS NULL OR
+      h.parameters->'cooldownTurns' NOT IN(to_jsonb(t.old_cd),to_jsonb(t.new_cd)) OR
+      (t.duration IS NOT NULL AND h.parameters ? 'durationTurns' AND h.parameters->'durationTurns' IS DISTINCT FROM to_jsonb(t.duration))) THEN
+  RAISE EXCEPTION 'Timers differ from the reviewed old/new values. Review the catalogue before applying this balance patch.';
+ END IF;
+
+ UPDATE hero_chess.team_skill s SET cooldown_turns=t.new_cd,
+  parameters=s.parameters || CASE WHEN t.duration IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('durationTurns',t.duration) END ||
+    CASE WHEN t.root_duration IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('rootDurationTurns',t.root_duration) END,
+  description=regexp_replace(regexp_replace(regexp_replace(regexp_replace(s.description,
+    '; tồn tại [0-9]+ lượt chung','','gi'),
+    'Trong [0-9]+ lượt,','Trong thời gian hiệu lực,','g'),
+    'trên sông trong [0-9]+ lượt','trên sông có thời hạn','g'),
+    'khóa chân [0-9]+ lượt','khóa chân tạm thời','g')
+ FROM timer_team t WHERE s.implementation_key=t.key;
+ UPDATE hero_chess.hero_trait h SET parameters=h.parameters || jsonb_build_object('cooldownTurns',t.new_cd) ||
+    CASE WHEN t.duration IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('durationTurns',t.duration) END,
+  description=btrim(regexp_replace(regexp_replace(h.description,
+    'Tồn tại [0-9]+ lượt chung, hồi chiêu [0-9]+;?','','gi'),
+    '; hồi chiêu [0-9]+ lượt chung','','gi'))
+ FROM timer_hero t WHERE h.implementation_key=t.key;
+ UPDATE hero_chess.ruleset SET config=config || '{"skillTimingVersion":2}'::jsonb WHERE is_active;
+ DROP TABLE pg_temp.timer_team,pg_temp.timer_hero;
+END
+$skill_timers$;
+
+SELECT code,cooldown_turns,parameters FROM hero_chess.team_skill WHERE is_enabled ORDER BY code;
+-- ===== END 23_skill_timers.sql =====

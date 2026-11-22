@@ -21,7 +21,10 @@ public sealed class CatalogVersionService
             await enabled.Select(x => new { x.Id, x.ClassCode, x.SetupPoints, x.AssetKey }).ToArrayAsync(ct);
         var skills = await db.TeamSkills.AsNoTracking().Where(x => x.IsEnabled).OrderBy(x => x.Id)
             .Select(x => new { x.Id, x.ImplementationKey, x.Parameters, x.Eligibility, x.MaxUses, x.CooldownTurns }).ToArrayAsync(ct);
-        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { heroes, skills }, Infrastructure.GameJson.Options));
+        var activeRules = await db.Rulesets.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Id)
+            .Select(x => new { x.Id, x.Config }).ToArrayAsync(ct);
+        var timing = activeRules.Select(x => new { x.Id, version = Rules.Skills.SkillTiming.Version(x.Config.RootElement) });
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { heroes, skills, timing }, Infrastructure.GameJson.Options));
         return "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     }
 }

@@ -195,7 +195,7 @@ public sealed class RankingAndHistoryTests : IClassFixture<HeroChessFactory>
         var byClass = catalog!.Heroes.Where(x => x.IsOwned).GroupBy(x => x.ClassCode)
             .ToDictionary(x => x.Key, x => new Queue<HeroDto>(x.OrderBy(h => h.Code)));
         var entries = catalog.Slots.OrderBy(x => x.SlotNo).Select(x => new LineupEntryInput(x.SlotNo, byClass[x.ClassCode].Dequeue().Id, null)).ToArray();
-        var skills = catalog.TeamSkills.Take(3).Select((x, i) => new LineupSkillInput(i + 1, x.Id)).ToArray();
+        var skills = catalog.TeamSkills.Where(s => s.FactionId is null && s.CooldownTurns > 0).Take(3).Select((x, i) => new LineupSkillInput(i + 1, x.Id)).ToArray();
         var lineup = await Post<LineupDto>(client, "/api/v1/lineups", new SaveLineupRequest("History fixture", catalog.Ruleset.Id, entries, skills));
         return (client, playerId, lineup);
     }

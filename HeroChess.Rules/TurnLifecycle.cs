@@ -145,7 +145,7 @@ public static class TurnLifecycle
             for (var i = 0; i < skillList.Count; i++)
             {
                 var skill = skillList[i];
-                if (skill.CooldownRemaining > 0)
+                if (skill.CooldownRemaining > 0 && SkillTiming.Tick(next, skill.CooldownStartedAtTurn))
                 {
                     var newCooldown = skill.CooldownRemaining - 1;
                     // Replace with a new SkillState (record is immutable after construction).
@@ -163,7 +163,8 @@ public static class TurnLifecycle
 
         foreach (var piece in next.Pieces)
         {
-            if (!piece.TraitState.TryGetValue(SkillKeys.QuangTrungCooldownRemainingKey, out var cooldown) || cooldown is not > 0)
+            if (!piece.TraitState.TryGetValue(SkillKeys.QuangTrungCooldownRemainingKey, out var cooldown) || cooldown is not > 0 ||
+                !SkillTiming.Tick(next, piece.TraitState.GetValueOrDefault(SkillKeys.HeroCooldownStartedAtTurnKey)))
                 continue;
             piece.TraitState[SkillKeys.QuangTrungCooldownRemainingKey] = cooldown - 1;
             if (cooldown == 1)
@@ -171,7 +172,8 @@ public static class TurnLifecycle
         }
         foreach (var piece in next.Pieces)
         {
-            if (piece.TraitState.TryGetValue(SkillKeys.HeroCooldownRemainingKey, out var cooldown) && cooldown is > 0)
+            if (piece.TraitState.TryGetValue(SkillKeys.HeroCooldownRemainingKey, out var cooldown) && cooldown is > 0 &&
+                SkillTiming.Tick(next, piece.TraitState.GetValueOrDefault(SkillKeys.HeroCooldownStartedAtTurnKey)))
                 piece.TraitState[SkillKeys.HeroCooldownRemainingKey] = cooldown - 1;
         }
         foreach (var piece in next.Pieces)
@@ -180,7 +182,7 @@ public static class TurnLifecycle
             {
                 var effect = piece.Effects[i];
                 if (effect.Code is not (SkillKeys.ShieldEffect or FactionSkillHandler.Rooted or FactionSkillHandler.Rally) ||
-                    effect.RemainingTurns is not > 0) continue;
+                    effect.RemainingTurns is not > 0 || !SkillTiming.Tick(next, effect.CreatedAtTurn)) continue;
                 if (effect.RemainingTurns == 1) piece.Effects.RemoveAt(i);
                 else piece.Effects[i] = effect with { RemainingTurns = effect.RemainingTurns - 1 };
             }
@@ -193,7 +195,7 @@ public static class TurnLifecycle
         // Disabled Effects continue their timers — Disabled ≠ Ended (§9.2).
         foreach (var effect in next.EffectInstances)
         {
-            if (effect.State != EffectStateValue.Ended && effect.RemainingDuration > 0)
+            if (effect.State != EffectStateValue.Ended && effect.RemainingDuration > 0 && SkillTiming.Tick(next, effect.CreatedAtTurn))
             {
                 effect.RemainingDuration -= 1;
                 if (effect.RemainingDuration == 0)
@@ -212,7 +214,7 @@ public static class TurnLifecycle
         while (j < next.Obstacles.Count)
         {
             var obstacle = next.Obstacles[j];
-            if (obstacle.RemainingLifetime is null or <= 0)
+            if (obstacle.RemainingLifetime is null or <= 0 || !SkillTiming.Tick(next, obstacle.CreatedAtTurn))
             {
                 j++;
                 continue;

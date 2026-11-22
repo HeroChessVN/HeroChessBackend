@@ -47,6 +47,7 @@ public static class SkillKeys
     /// <summary>Trần Hưng Đạo — Tượng Hero Skill: place a Cọc on the river.</summary>
     public const string ThDTuongCoc = "tran_hung_dao_tuong.coc";
     public const string HeroCooldownRemainingKey = "heroCooldownRemaining";
+    public const string HeroCooldownStartedAtTurnKey = "heroCooldownStartedAtTurn";
     public const string LeLaiSwapGeneral = "le_lai.swap_general";
     public const string TranThuDoGeneralShield = "tran_thu_do.general_shield";
     public const string AdvisorPalaceStep = "advisor.king_step";

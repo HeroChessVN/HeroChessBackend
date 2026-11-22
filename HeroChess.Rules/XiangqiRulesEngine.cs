@@ -197,6 +197,7 @@ public sealed class XiangqiRulesEngine
     // GenerateLegalActions: Sinh đích giả định rồi mô phỏng để lọc tự chiếu, ăn quân mình và ăn Tướng.
     public IReadOnlyList<LegalMove> GenerateLegalActions(GameState state, Side? side = null)
     {
+        if (state.ForecastReview is not null) return Array.Empty<LegalMove>();
         if (state.Result is not null) return Array.Empty<LegalMove>();
         var actor = side ?? state.SideToMove;
         var legal = new List<LegalMove>();
@@ -213,7 +214,7 @@ public sealed class XiangqiRulesEngine
                      !(o.Kind == SkillKeys.ObstacleKindThanh &&
                        (piece.Class == PieceClass.Cannon || piece.MovementImplementationKey == SkillKeys.LyThuongKietXe))))) continue;
                 var candidate = MoveUnchecked(state, piece.PieceId, destination, runHandler: false);
-                if (!IsInCheck(candidate, actor))
+                if (IsSafeAfterPublicExpiry(candidate, actor))
                 {
                     var intercepted = FindPublicStake(state, piece, destination) is not null;
                     legal.Add(new(piece.PieceId, piece.Position!.Value, destination,
@@ -241,7 +242,7 @@ public sealed class XiangqiRulesEngine
                 state.Obstacles.Any(o => o.Position == to && RulesGeometry.IsBlockingObstacle(o)) ||
                 IsBlockedByActiveEffect(state, piece, piece.Position!.Value, to, attacksOnly: false)) continue;
             var candidate = MoveUnchecked(state, pieceId, to, runHandler: false);
-            if (!IsInCheck(candidate, piece.Side))
+            if (IsSafeAfterPublicExpiry(candidate, piece.Side))
             {
                 var intercepted = FindPublicStake(state, piece, to) is not null;
                 result.Add(new LegalMove(pieceId, piece.Position.Value, to,
@@ -253,19 +254,29 @@ public sealed class XiangqiRulesEngine
 
     public ApplyMoveResult ApplyHeroSpecialMove(GameState state, MoveAction action)
     {
+        if (state.ForecastReview is not null)
+            return ApplyMoveResult.Failure(state, "TURN_ALREADY_COMMITTED", "Finish reviewing the forecast before ending this turn.");
+        var hero = state.Pieces.FirstOrDefault(p => p.PieceId == action.PieceId);
+        var cooldown = SkillKeys.QuangTrungCooldownTurns;
+        if (state.SkillTimingVersion >= 2 && (hero is null ||
+            !SkillTiming.Positive(hero.TraitParameters, "cooldownTurns", out cooldown) || !SkillTiming.FitsTurn(state.TurnIndex, cooldown)))
+            return ApplyMoveResult.Failure(state, "INVALID_HERO_SKILL_CONFIG", "Quang Trung requires a positive cooldownTurns.");
         if (!GenerateQuangTrungSpecialMoves(state, action.PieceId).Any(m => m.To == action.To))
             return ApplyMoveResult.Failure(state, "ILLEGAL_HERO_MOVE", "The selected hero skill destination is not legal.");
         var result = ResolveMove(state, action);
         var next = result.State;
         var piece = next.Pieces.Single(p => p.PieceId == action.PieceId);
         piece.TraitState[SkillKeys.QuangTrungCooldownKey] = 0;
-        piece.TraitState[SkillKeys.QuangTrungCooldownRemainingKey] = SkillKeys.QuangTrungCooldownTurns;
+        piece.TraitState[SkillKeys.QuangTrungCooldownRemainingKey] = cooldown;
+        piece.TraitState[SkillKeys.HeroCooldownStartedAtTurnKey] = state.TurnIndex;
         return result;
     }
 
     // ApplyMove: Chỉ nhận nước trong legal list; kết thúc do hết hành động xét sau lifecycle ở MatchCommandService.
     public ApplyMoveResult ApplyMove(GameState state, MoveAction action)
     {
+        if (state.ForecastReview is not null)
+            return ApplyMoveResult.Failure(state, "TURN_ALREADY_COMMITTED", "Finish reviewing the forecast before ending this turn.");
         if (state.Result is not null)
             return ApplyMoveResult.Failure(state, "MATCH_ENDED", "The match has already ended.");
 
@@ -282,7 +293,8 @@ public sealed class XiangqiRulesEngine
         // Resolve hidden snares only after normal legality; legal destinations must not reveal traps.
         var snare = state.RiverSnares.Count == 0 ? null : CrossedCells(moving.Class, moving.Position!.Value, action.To)
             .Select(point => state.RiverSnares.FirstOrDefault(t => t.Owner != moving.Side && t.Position == point &&
-                t.ExpiresAt > state.TurnIndex && !RulesGeometry.IsBlocked(state, point)))
+                t.ExpiresAt > state.TurnIndex && !RulesGeometry.IsBlocked(state, point) &&
+                !state.Obstacles.Any(o => o.Position == point)))
             .FirstOrDefault(trap => trap is not null);
         var destination = snare?.Position ?? action.To;
         var stake = FindPublicStake(state, moving, destination);
@@ -292,7 +304,9 @@ public sealed class XiangqiRulesEngine
             if (snare is not null)
             {
                 stopped.RiverSnares.Remove(snare);
-                stopped.Pieces.Single(p => p.PieceId == action.PieceId).Effects.Add(new EffectState(FactionSkillHandler.Rooted, null, 5));
+                stopped.Pieces.Single(p => p.PieceId == action.PieceId).Effects.Add(new EffectState(FactionSkillHandler.Rooted, null,
+                    state.SkillTimingVersion >= 2 ? snare.RootDurationTurns ?? throw new InvalidDataException("The trap has no frozen root duration.") : 5,
+                    state.TurnIndex));
             }
             return CompleteMove(state, stopped, snareHit: snare is not null);
         }
@@ -328,7 +342,7 @@ public sealed class XiangqiRulesEngine
         next.SideToMove = Opposite(state.SideToMove);
 
         if (!next.Pieces.Any(p => p.Side == state.SideToMove && p.Class == PieceClass.General && IsAlive(p)) ||
-            ((stakeHit is not null || snareHit) && IsInCheck(next, state.SideToMove)))
+            ((stakeHit is not null || snareHit) && !IsSafeAfterPublicExpiry(next, state.SideToMove, turnAdvanced: true)))
         {
             next.Result = state.SideToMove == Side.Red ? "black_win" : "red_win";
             next.EndReason = snareHit ? "river_snare" : "river_stake";
@@ -340,6 +354,24 @@ public sealed class XiangqiRulesEngine
     // ApplyTeamSkill: Stub trả SKILL_NOT_IMPLEMENTED; hiện chưa có dispatcher skill.
     public ApplyMoveResult ApplyTeamSkill(GameState state, int skillSlot) =>
         ApplyMoveResult.Failure(state, "SKILL_NOT_IMPLEMENTED", $"Team skill slot {skillSlot} has no implemented handler.");
+
+    public bool IsSafeAfterPublicExpiry(GameState state, Side actor, bool turnAdvanced = false)
+    {
+        if (IsInCheck(state, actor)) return false;
+        if (state.SkillTimingVersion < 2) return true;
+        var turn = state.TurnIndex + (turnAdvanced ? 0 : 1);
+        bool Ticks(int? created) => created != turn - 1;
+        // Only clone for a public boundary that can change king safety; never resolve hidden snares here.
+        var expires = state.Pieces.Any(p => p.Effects.Any(e => e.RemainingTurns == 1 && Ticks(e.CreatedAtTurn)) ||
+            p.TraitState.GetValueOrDefault(SkillKeys.QuangTrungCooldownRemainingKey) == 1 &&
+            Ticks(p.TraitState.GetValueOrDefault(SkillKeys.HeroCooldownStartedAtTurnKey))) ||
+            state.Obstacles.Any(o => o.RemainingLifetime == 1 && Ticks(o.CreatedAtTurn)) ||
+            state.EffectInstances.Any(e => e.RemainingDuration == 1 && Ticks(e.CreatedAtTurn));
+        if (!expires) return true;
+        var preview = state.Clone();
+        preview.TurnIndex = turn;
+        return !IsInCheck(TurnLifecycle.Apply(preview, Opposite(actor), resolveCreatorCancellation: true).State, actor);
+    }
 
     // IsInCheck: Xét Tướng thiếu, lộ mặt hai Tướng và các quân địch đang khống chế ô Tướng.
     public bool IsInCheck(GameState state, Side side)

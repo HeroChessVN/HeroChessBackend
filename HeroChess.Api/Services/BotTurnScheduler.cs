@@ -45,6 +45,7 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
                     var state = GameJson.Read<GameState>(row.State);
                     // Phase 3.4: v3 → v4 state schema upgrade. Idempotent.
                     state = StateSchemaUpgrade.UpgradeToCurrent(state);
+                    if (state.ForecastReview is not null) continue;
                     var config = BotConfiguration.Read(participant.BotConfig);
                     var started = Stopwatch.GetTimestamp();
                     var legacyNeedsTraitSearch = state.PublicRiverStakes && state.Pieces.Any(p => p.TraitImplementationKey is not null);

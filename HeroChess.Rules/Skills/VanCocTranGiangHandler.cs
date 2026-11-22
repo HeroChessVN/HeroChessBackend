@@ -77,7 +77,7 @@ public sealed class VanCocTranGiangHandler : ICommandSkillHandler
             creationOrder: creationOrder,
             duration: 2, // 2 Creator player turns
             targetPositions: positions,
-            payload: payload);
+            payload: payload, createdAtTurn: ctx.State.TurnIndex);
         next.EffectInstances.Add(effect);
 
         // B. Create physical stake obstacles (one per column, all rows)
@@ -89,7 +89,7 @@ public sealed class VanCocTranGiangHandler : ICommandSkillHandler
             {
                 var obstacleId = Guid.NewGuid();
                 var pos = new BoardPoint(col, row);
-                next.Obstacles.Add(new ObstacleState(obstacleId, pos, "stake") { RemainingLifetime = 2 });
+                next.Obstacles.Add(new ObstacleState(obstacleId, pos, "stake") { RemainingLifetime = 2, CreatedAtTurn = ctx.State.TurnIndex });
                 next.StakeMetadata[obstacleId] = new StakeMetadata
                 {
                     Placer = ctx.ActorSide,

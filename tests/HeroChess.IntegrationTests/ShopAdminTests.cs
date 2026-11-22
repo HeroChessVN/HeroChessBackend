@@ -177,7 +177,7 @@ public sealed partial class ShopAdminTests : IClassFixture<HeroChessFactory>
         var soldierIndex = Array.FindIndex(entries, x => playerCatalog.Slots.Single(s => s.SlotNo == x.SlotNo).ClassCode == "SOLDIER");
         entries[soldierIndex] = entries[soldierIndex] with { HeroId = paid.Id };
         var lineup = await Post<LineupDto>(player, "/api/v1/lineups", new SaveLineupRequest("Price snapshot", playerCatalog.Ruleset.Id, entries,
-            playerCatalog.TeamSkills.Take(3).Select((x, i) => new LineupSkillInput(i + 1, x.Id)).ToArray()));
+            playerCatalog.TeamSkills.Where(s => s.FactionId is null && s.CooldownTurns > 0).Take(3).Select((x, i) => new LineupSkillInput(i + 1, x.Id)).ToArray()));
         var ticket = await Post<MatchmakingTicketDto>(player, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("bot"));
         await Put<MatchSelectionDto>(player, $"/api/v1/matches/{ticket.MatchId}/selection", new SelectLineupRequest(lineup.Id, lineup.Revision));
         await player.PostAsync($"/api/v1/matches/{ticket.MatchId}/confirm", null);

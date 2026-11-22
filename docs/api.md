@@ -144,15 +144,23 @@ FE đếm các `heroId` khác nhau trong đội hình có `classCode != "SOLDIER
 
 | Phe | `implementationKey` | `target` | CD |
 |---|---|---|---:|
-| Trần | `bach_dang_tran_phap` | `{"positions":[{"x":2,"y":4},{"x":4,"y":4},{"x":6,"y":5}]}` | 8 |
-| Hậu Lê | `lam_son_quan_luoc` | `{}` | 16 |
-| Tây Sơn | `hich_xuat_quan` | `{}` | 12 |
+| Trần | `bach_dang_tran_phap` | `{"positions":[{"x":2,"y":4},{"x":4,"y":4},{"x":6,"y":5}]}` | 7 |
+| Hậu Lê | `lam_son_quan_luoc` | `{}` | 15 |
+| Tây Sơn | `hich_xuat_quan` | `{}` | 11 |
 
-Cả ba lệnh tiêu một lượt. `state.riverSnares` chỉ có bẫy của phe người gọi, mỗi bẫy có `owner`, `position` và `expiresAt` theo `turnIndex`. Bẫy sống 6 lượt và mất sau lần khóa đầu tiên. Hiệu ứng trên quân xuất hiện trong `pieces[].effects` với mã `bach_dang_rooted` hoặc `hich_xuat_quan` và `remainingTurns`.
+Cả ba lệnh tiêu một lượt. Riêng Lam Sơn giữ lượt ở giai đoạn xem dự báo cho đến khi xác nhận hoặc hết giờ, nhưng không được thực hiện thêm hành động. `state.riverSnares` chỉ có bẫy của phe người gọi, mỗi bẫy có `owner`, `position` và `expiresAt` theo `turnIndex`. Bẫy sống 6 lượt và mất sau lần khóa đầu tiên. Hiệu ứng trên quân xuất hiện trong `pieces[].effects` với mã `bach_dang_rooted` hoặc `hich_xuat_quan` và `remainingTurns`.
+
+Bẫy địch ẩn không chặn đặt Thành/Rào/Cọc/bẫy phe mình, không làm thiếu ô trong danh sách gợi ý. Các điều kiện công khai như quân, vật cản, nửa bàn vẫn áp dụng. Hai phe có thể đặt bẫy trùng ô; mỗi phe chỉ thấy bẫy của mình. Bẫy tạm ngưng kích hoạt dưới quân hoặc bất kỳ công trình nào, kể cả Cọc công khai.
 
 Unity lấy `slot` từ `state.skillStates[ownSide]` và gửi `action.type = "team_skill"`. Với Bạch Đằng Trận Pháp, xác nhận khi đã chọn đủ ba ô sông trống khác nhau. Quân đi qua bẫy địch còn hiệu lực đầu tiên dừng ngay tại ô bẫy rồi bị khóa 4 lượt, không ăn quân hay phá công trình phía sau. Mã xét chân trước ô đáp và có thể dừng tại chân; áp dụng cả Pháo thường và Lý Thường Kiệt. Ô đang có quân hoặc công trình chặn thì bẫy tạm không kích hoạt, không bị tiêu và vẫn có thể kích hoạt khi ô trống trước lúc hết hạn. Khiên không miễn khóa chân. Bẫy vẫn ẩn nên legal preview giữ đích dự định; khi xử lý xong, `pieces[].position` và sự kiện `piece.moved.to` trả đích thực tế. Không tự xóa quân tại đích request. Nếu dừng sớm làm Tướng mình còn bị chiếu hoặc lộ mặt hai Tướng thì thua ngay với `endReason: "river_snare"`. Với Hịch Xuất Quân, tô đích của Tốt theo `/legal-actions`. Nếu server cho đi hai ô thì gửi như một nước đi thường. `riverSnares` và vật cản Cọc `thd_tuong_coc` là hai dữ liệu riêng khi vẽ bàn.
 
 Sau khi nhận ACK dùng Lam Sơn Quân Lược, người kích hoạt gọi `GET /api/v1/matches/{matchId}/forecast?version=<sequenceNo của ACK>`. Phản hồi có `version`, `prediction.variation` (tối đa ba hành động địch → mình → địch) và `prediction.threats` (tối đa hai phương án ở lượt địch đầu tiên). Mỗi mục có `side`, `action`, cùng `from`, `pieceClass`, `pieceName` hoặc `skillName` khi có; trường không áp dụng có thể null. Kết quả là gợi ý, không bảo đảm đối thủ sẽ đi theo chuỗi đó.
+
+ACK kích hoạt có `state.forecastReview: {"owner":"red","activationSequence":42}`. `sideToMove`, `turnIndex`, `countedActions` và `deadlineAt` chưa đổi; cooldown và lượt dùng đã bị trừ. Đọc trường này từ `/state` để khôi phục sau reconnect. Khi còn review, legal/hero-actions trả mảng rỗng và các hành động khác bị từ chối `422 TURN_ALREADY_COMMITTED`, trừ đầu hàng. `prediction.initialBoard` là bàn mô phỏng đầu lượt địch; mỗi mục variation/threat có `boardAfter` tương ứng. Các bàn này đã lọc dữ liệu bí mật, chỉ dùng cho cửa sổ dự báo riêng.
+
+Nút **Đi** gửi command bình thường với `expectedVersion` hiện tại và `action: {"type":"end_turn"}`. Không gửi nước dự đoán. ACK chốt lượt tăng version thêm một, tăng `countedActions`/`turnIndex` đúng một, xóa `forecastReview` và chuyển phe. Sự kiện `forecast.completed` có `activationSequence`, `automatic`. Retry cùng commandId; request khác dùng version cũ trả 409. Không có review trả `422 NO_FORECAST_REVIEW`. Server tự chốt khi deadline gốc hết, không phạt AFK cho thời gian xem skill. Đóng cửa sổ không hủy skill hay dừng đồng hồ. Bot dùng Lam Sơn tự chốt ngay. Undo chỉ cho sau khi review hoàn tất và đưa về trước lần dùng skill.
+
+Triển khai: chạy `HeroChess.Api/Data/Bootstrap/22_forecast_review.sql` trên DB hiện hữu **trước khi deploy API**, để bảng `match_action` chấp nhận loại `end_turn`. Bootstrap tự chạy file này nếu được bật; Azure đang tắt bootstrap thì chạy thủ công. Cập nhật client cùng đợt; client cũ không có nút Đi sẽ phải đợi hết giờ.
 
 `version` là mốc kích hoạt, không phải version bàn hiện tại. Kích hoạt ở 42 thì phản hồi vẫn là 42 dù bàn đã lên 43 hoặc trận đã kết thúc. Unity đối chiếu với mốc yêu cầu, giữ kết quả để xem lại và ghi rõ khi bàn đã thay đổi; không áp chuỗi dự đoán lên bàn thật. GET không tiêu thêm lượt hoặc cooldown. Cache riêng theo người chơi/trận/mốc, tối đa 128 mục, TTL hai phút; hết cache vẫn có thể tính lại từ snapshot nếu lần kích hoạt còn trên nhánh hiện hành. Mỗi lần đọc, kể cả cache hit, đều kiểm tra quyền và nhánh undo. Không trả bẫy ẩn của địch hoặc dùng chúng để tính dự đoán.
 
@@ -170,8 +178,8 @@ Command hợp lệ trả `MatchCommandResultDto`: `matchId`, `commandId`, `seque
 
 | Hero | Tên trait | `implementationKey` | `kind` | SP | CD |
 |---|---|---|---|---:|---:|
-| Lê Lai — Sĩ | Lê Lai cứu chúa | `le_lai.swap_general` | `active` | 2 | 8 |
-| Trần Thủ Độ — Sĩ | Trấn Quốc Hộ Quân | `tran_thu_do.general_shield` | `active` | 2 | 6 |
+| Lê Lai — Sĩ | Lê Lai cứu chúa | `le_lai.swap_general` | `active` | 2 | 7 |
+| Trần Thủ Độ — Sĩ | Trấn Quốc Hộ Quân | `tran_thu_do.general_shield` | `active` | 2 | 5 |
 | Nguyễn Nhạc — Sĩ | Thái Đức Linh Bộ | `advisor.king_step` | `special_move` | 2 | — |
 | Nguyễn Lữ — Sĩ | Đông Định Linh Bộ | `advisor.king_step` | `special_move` | 2 | — |
 
@@ -194,13 +202,34 @@ Lê Lai đổi hai vị trí trong cung nhà, không giới hạn khoảng cách
 
 Trần Thủ Độ dùng shape trên với `skillCode="tran_thu_do.general_shield"`. Tướng được bảo vệ có thể đã rời cung. Trần Thủ Độ bị khóa chân vẫn dùng được vì đây không phải di chuyển. Khiên dùng chung `code="shield"`, có `sourcePieceId`; không được cộng dồn hoặc ghi đè Khiên còn hiệu lực của Command Skill. Nguồn bị ăn không kéo dài hoặc xóa sớm timer.
 
-Trấn Quốc Hộ Quân tồn tại **2 lượt chung, tính cả lượt kích hoạt**: sau ACK thường còn `remainingTurns=1`, hết khi lượt mình trở lại. CD cấu hình 6 thường còn 5 sau ACK; Lê Lai cấu hình 8 thường còn 7. Đọc `traitParameters` của quân và `traitState.heroCooldownRemaining` trong trận, không tự bù số. Command Khiên vẫn tồn tại 4 lượt, CD hiện tại 14; đây là hai kỹ năng khác nhau.
+Với `state.skillTimingVersion=2`, Trấn Quốc Hộ Quân tồn tại **2 lượt chung tiếp theo, không tính lượt kích hoạt**: ACK còn `remainingTurns=2`, bảo vệ trong lượt địch và lượt mình kế tiếp, rồi hết trước lượt địch sau đó. ACK CD Trần Thủ Độ còn 5, Lê Lai còn 7. Đọc `traitParameters` của quân và `traitState.heroCooldownRemaining` trong trận, không tự bù số. Command Khiên tồn tại 4 lượt, CD 13; đây là hai kỹ năng khác nhau. Snapshot cũ thiếu version hoặc version 1 giữ cách tính cũ.
 
 Hai Sĩ Tây Sơn đi một ô theo tám hướng trong cung, dùng `/legal-actions` và action `move`; không có nút kích hoạt hoặc CD. Bản GENERAL của Nguyễn Nhạc/Nguyễn Lữ không nhận trait này. `classCode` ở catalog là `GENERAL`/`ADVISOR`, còn enum `class` trong snapshot là `general`/`advisor`.
 
 Sai JSON target trả 400 `INVALID_ACTION`; target sai phe/class/vị trí trả 422 `INVALID_TARGET`; đổi chỗ khi khóa chân trả `PIECE_ROOTED`; skill chưa sẵn sàng trả `SKILL_ON_COOLDOWN`; Tướng đã có Khiên trả `ALREADY_SHIELDED`; cấu hình sai trả `INVALID_HERO_SKILL_CONFIG`. Command version cũ vẫn 409. Đọc lỗi và giữ snapshot cũ khi bị từ chối; không tiêu lượt ở client trước ACK.
 
-Phát hành: deploy BE hỗ trợ key và tích hợp Unity trước, rồi mới chạy thủ công `19_hero_sp_and_advisor_traits.sql` trên DB đích. Deploy code không tự áp patch 19. Metadata/SP trong trận cũ giữ nguyên theo snapshot. Description Thành/Rào/Khiên không nhúng CD; UI lấy số từ `teamSkills[].cooldownTurns`, số đang hồi lấy từ `skillStates`.
+Phát hành trait ban đầu: deploy BE hỗ trợ key và tích hợp Unity trước, rồi mới chạy thủ công `19_hero_sp_and_advisor_traits.sql` trên DB đích. Deploy code không tự áp patch 19. Metadata/SP trong trận cũ giữ nguyên theo snapshot. Description Thành/Rào/Khiên không nhúng CD; UI lấy số từ `teamSkills[].cooldownTurns`, số đang hồi lấy từ `skillStates`. Sau khi đã áp patch timer 23, không chạy lại 19 để tránh đưa tham số về mức cũ.
+
+### Cấu hình timer bằng DB — skillTimingVersion 2
+
+Các bảng trên ghi giá trị sau patch `23_skill_timers.sql`. Khi chưa áp patch, catalog và trận V1 vẫn dùng cấu hình trước đó. Client luôn đọc số thực tế, không hardcode theo bảng tài liệu.
+
+| Skill | CD | Thời hạn (`parameters`) |
+|---|---:|---|
+| Thành / Rào / Khiên | 13 / 9 / 13 | `durationTurns`: 6 / 4 / 4 |
+| Bạch Đằng Trận Pháp | 7 | `durationTurns:6`, `rootDurationTurns:4` |
+| Lam Sơn Quân Lược | 15 | Không có duration; review giữ deadline lượt gốc |
+| Hịch Xuất Quân | 11 | `durationTurns:6` — ba lượt mình hưởng buff |
+| Quang Trung / Lê Lai | 7 / 7 | Tức thời |
+| Cọc THĐ / Khiên Trần Thủ Độ | 5 / 5 | `durationTurns`: 3 / 2 |
+
+Team CD lưu ở `team_skill.cooldown_turns`; thời hạn lưu JSONB `team_skill.parameters`. Hero CD/thời hạn lưu JSONB `hero_trait.parameters.cooldownTurns` / `durationTurns`. Giá trị phải là số nguyên dương; giữ các khóa JSON khác khi chỉnh. Không đổi gameplay bằng description.
+
+Catalog cung cấp `teamSkills[].cooldownTurns`, `parameters`; Hero có `trait.parameters`. Trong trận đọc cấu hình **frozen** từ `state.skillStates[side][].cooldownTurns` / `parameters` và `pieces[].traitParameters`. Đọc số còn lại từ `cooldownRemaining`, trait state, effect/obstacle; không tự trừ một. Bẫy đã đặt giữ riêng thời hạn khóa chân của nó. DB thay đổi chỉ áp dụng trận mới.
+
+`state.skillTimingVersion=2`: timer mới giữ nguyên sau ACK; giảm sau mỗi lượt chung tiếp theo. Timer cũ vẫn giảm, cả hai phe dùng cùng cách tính. Lam Sơn cast chưa kết thúc lượt; `end_turn` hoặc timeout chốt đúng một lượt, không giảm CD vừa tạo của Lam Sơn. Version 1 hoặc thiếu field giữ luật cũ khi reconnect/replay/undo. Dùng `turnIndex`, không dùng `version` để đếm thời gian.
+
+Rollout: áp SQL 22 theo hướng dẫn Lam Sơn trước API; deploy BE và client hỗ trợ V1/V2; sau đó mới chạy thủ công SQL 23. SQL 23 cập nhật catalog và `ruleset.config.skillTimingVersion` trong cùng transaction, kiểm tra drift và không ghi đè giá trị tự cân bằng khi chạy lại. Existing DB không tự chạy patch 23 lúc startup. Trận đang đánh giữ snapshot cũ; trận đang chọn đội hình có thể nhận `CONTENT_VERSION_CHANGED` và cần tạo/chọn trận mới.
 
 ### Trang phục bàn cờ
 
@@ -252,9 +281,9 @@ Unity dùng `isOwned` và `selectedCode` từ BE; không nhận `PlayerPrefs` c�
 
 Sau patch 20, tài khoản mới nhận 14 hero: Trần Thánh Tông, Nguyễn Nhạc (Tướng); Mạc Đĩnh Chi, Nguyễn Trãi, Nguyễn Bỉnh Khiêm (Sĩ); Lê Khôi, Lê Văn Hưng (Tượng); Trần Khánh Dư, Trần Quang Diệu (Xe); Trần Quốc Toản, Lê Sát (Mã); Nguyễn Xí, Nguyễn Văn Tuyết (Pháo); Lính nhà Trần (Tốt). Một hero Tốt dùng được ở năm slot. Đội cơ bản 45 SP; mỗi phe có tối đa bốn hero ngoài Tốt trong bộ starter nên cần mua thêm để đạt ngưỡng năm.
 
-`Onboarding:StartingCoins` mặc định 2000; `DevelopmentStartingCoins` chỉ ghi đè trong Development. Tiền và hero được cấp trong transaction tạo Player, có ledger `starter`; Admin không được cấp và tài khoản cũ không được cộng lại. `hero.is_starter` là nguồn đọc của onboarding. Bảng `starter_hero_config` legacy nếu tồn tại được patch 20 đồng bộ; lịch sử cũ được giữ nguyên.
+`Onboarding:StartingCoins` mặc định 1000; `DevelopmentStartingCoins` chỉ ghi đè trong Development. Tiền và hero được cấp trong transaction tạo Player, có ledger `starter`; Admin không được cấp và tài khoản cũ không được cộng lại. `hero.is_starter` là nguồn đọc của onboarding. Bảng `starter_hero_config` legacy nếu tồn tại được patch 20 đồng bộ; lịch sử cũ được giữ nguyên.
 
-Giá ngoài starter theo catalog: quân thường 100, trait vừa 200, trait mạnh 300. Giá/SP phải đọc từ API, không tính giá vàng từ SP trong client. Nguyễn Văn Lộc giữ lại nhưng chưa bán/cấp starter vì chưa có model. Đinh Liệt, Lưu Nhân Chú, Trần Khát Chân và Nguyễn Trung Ngạn được loại khỏi catalog; đội hình có tham chiếu được thay quân cơ bản cùng class, ưu tiên cùng phe, không tăng SP và không lặp nhân vật. Cấp bù khi cần, tăng revision đội hình bị đổi; snapshot trận cũ không bị viết lại.
+Giá ngoài starter theo catalog: quân thường 100, trait vừa 200, trait mạnh 300. Giá/SP phải đọc từ API, không tính giá vàng từ SP trong client. Nguyễn Văn Lộc hệ Pháo có model key `nguyenvanloc`, giá 100 vàng, 6 SP và được mở bán; không thuộc starter. Đinh Liệt, Lưu Nhân Chú, Trần Khát Chân và Nguyễn Trung Ngạn được loại khỏi catalog; đội hình có tham chiếu được thay quân cơ bản cùng class, ưu tiên cùng phe, không tăng SP và không lặp nhân vật. Cấp bù khi cần, tăng revision đội hình bị đổi; snapshot trận cũ không bị viết lại.
 
 Rollout production:
 

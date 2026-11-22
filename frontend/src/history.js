@@ -49,6 +49,7 @@ export function actionLabel(entry, previous, catalog) {
     return `${actor}: dùng Bạch Đằng Giang`;
   }
   if (entry.kind === 'timeout') return `${actor}: hết 90 giây`;
+  if (entry.kind === 'end_turn') return `${actor}: kết thúc xem Lam Sơn`;
   if (entry.kind === 'resign') return `${actor}: đầu hàng`;
   if (entry.kind === 'undo') return `${actor}: hoàn tác về bước ${events.find(event => event.type === 'match.undone')?.targetSequence ?? '?'}`;
   return `${actor}: ${entry.kind}`;

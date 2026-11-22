@@ -171,6 +171,26 @@ public sealed class RiverSnareTests
         Assert.Equal(1, applied.State.CountedActions);
     }
 
+    [Fact]
+    public void Physical_stake_over_a_hidden_snare_suspends_it_until_the_stake_is_gone()
+    {
+        var rook = Piece(PieceClass.Rook, Side.Black, 2, 8);
+        var state = Position(rook);
+        state.RiverSnares.Add(new(Side.Red, new(2, 5), 10));
+        var stake = Guid.NewGuid();
+        state.Obstacles.Add(new(stake, new(2, 5), SkillKeys.ObstacleKindThDTuongCoc, 8));
+        state.ObstacleMetadata[stake] = new() { Placer = Side.Black };
+        var passed = _engine.ApplyMove(state, new(rook.PieceId, new(2, 2)));
+        Assert.True(passed.Accepted);
+        Assert.Equal(new BoardPoint(2, 2), passed.State.Pieces.Single(p => p.PieceId == rook.PieceId).Position);
+        Assert.Single(passed.State.RiverSnares);
+        state.Obstacles.Clear();
+        var stopped = _engine.ApplyMove(state, new(rook.PieceId, new(2, 2)));
+        Assert.True(stopped.Accepted);
+        Assert.Equal(new BoardPoint(2, 5), stopped.State.Pieces.Single(p => p.PieceId == rook.PieceId).Position);
+        Assert.Empty(stopped.State.RiverSnares);
+    }
+
     private static GameState Position(params PieceState[] pieces) => new()
     {
         PublicRiverStakes = true, SideToMove = Side.Black,

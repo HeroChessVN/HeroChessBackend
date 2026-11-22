@@ -6,8 +6,7 @@ using Xunit;
 namespace HeroChess.Rules.Tests;
 
 /// <summary>
-/// Đặt chồng skill: ô đang có quân, Cọc, Thành, Rào hoặc Bẫy thì không skill nào đặt được lên đó.
-/// Luật này giống nhau cho cả hai phe và được server phán quyết (client chỉ tô/nhận ô).
+/// Visible occupancy blocks placement; concealed enemy snares must not reveal themselves through validation.
 /// </summary>
 public sealed class SkillStackingTests
 {
@@ -28,7 +27,7 @@ public sealed class SkillStackingTests
         }
 
         var withTrap = State(side);
-        withTrap.RiverSnares.Add(new RiverSnare(side == Side.Red ? Side.Black : Side.Red, Position(side), 10));
+        withTrap.RiverSnares.Add(new RiverSnare(side, Position(side), 10));
         var trapResult = Place(withTrap, side, key, Position(side));
         Assert.False(trapResult.Accepted, $"{key} must not stack on a trap.");
         Assert.Equal("CELL_OCCUPIED", trapResult.Error!.Code);
@@ -65,7 +64,7 @@ public sealed class SkillStackingTests
         }
 
         var withTrap = State(side);
-        withTrap.RiverSnares.Add(new RiverSnare(side == Side.Red ? Side.Black : Side.Red, Position(side), 10));
+        withTrap.RiverSnares.Add(new RiverSnare(side, Position(side), 10));
         var trapResult = BachDangGiang.Execute(withTrap, side, Hero(withTrap).PieceId, Target(Position(side)));
         Assert.False(trapResult.Accepted, "Cọc must not stack on a trap.");
         Assert.Equal("CELL_OCCUPIED", trapResult.Error!.Code);
@@ -86,7 +85,7 @@ public sealed class SkillStackingTests
         }
 
         var withTrap = State(side);
-        withTrap.RiverSnares.Add(new RiverSnare(side == Side.Red ? Side.Black : Side.Red, Position(side), 10));
+        withTrap.RiverSnares.Add(new RiverSnare(side, Position(side), 10));
         Assert.False(PlaceTraps(withTrap, side).Accepted, "Bẫy must not stack on a trap.");
     }
 
@@ -99,6 +98,24 @@ public sealed class SkillStackingTests
             Assert.True(Place(state, side, SkillKeys.Thanh, Position(side)).Accepted);
             Assert.True(Place(state, side, SkillKeys.Rao, Position(side)).Accepted);
         }
+    }
+
+    [Theory]
+    [InlineData(Side.Red)]
+    [InlineData(Side.Black)]
+    public void Enemy_hidden_traps_do_not_change_placement_or_candidate_targets(Side side)
+    {
+        var state = State(side);
+        var targets = FactionSkillHandler.Targets(state).Select(t => JsonSerializer.Serialize(t)).ToArray();
+        state.RiverSnares.Add(new(side == Side.Red ? Side.Black : Side.Red, Position(side), 10));
+        state.RiverSnares.Add(new(side == Side.Red ? Side.Black : Side.Red, new(4, 4), 10));
+        Assert.True(Place(state, side, SkillKeys.Thanh, Position(side)).Accepted);
+        Assert.True(Place(state, side, SkillKeys.Rao, Position(side)).Accepted);
+        Assert.True(BachDangGiang.Execute(state, side, Hero(state).PieceId, Target(Position(side))).Accepted);
+        var traps = PlaceTraps(state, side);
+        Assert.True(traps.Accepted);
+        Assert.Equal(2, traps.State.RiverSnares.Count(t => t.Position == Position(side)));
+        Assert.Equal(targets, FactionSkillHandler.Targets(state).Select(t => JsonSerializer.Serialize(t)).ToArray());
     }
 
     private static BoardPoint Position(Side side) => side == Side.Red ? new BoardPoint(2, 4) : new BoardPoint(2, 5);

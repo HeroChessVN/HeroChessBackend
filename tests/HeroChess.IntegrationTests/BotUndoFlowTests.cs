@@ -6,6 +6,7 @@ using HeroChess.Api.Infrastructure;
 using HeroChess.Api.Services;
 using HeroChess.Contracts;
 using HeroChess.Rules;
+using HeroChess.Rules.Skills;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -15,6 +16,49 @@ namespace HeroChess.IntegrationTests;
 
 public sealed class BotUndoFlowTests(HeroChessFactory factory) : IClassFixture<HeroChessFactory>
 {
+    [Fact]
+    public async Task Undo_skips_forecast_completion_and_restores_before_the_skill_activation()
+    {
+        await factory.Services.GetRequiredService<BotTurnScheduler>().StopAsync(default);
+        var human = await new MatchFlowTests(factory).CreatePlayerWithLineup();
+        var ticket = await Post<MatchmakingTicketDto>(human.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("bot"));
+        var id = ticket.MatchId!.Value;
+        await Select(human, id);
+        (await human.Client.PostAsync($"/api/v1/matches/{id}/confirm", null)).EnsureSuccessStatusCode();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var participant = await db.MatchParticipants.SingleAsync(p => p.MatchId == id && p.Side == "red");
+            var lineup = GameJson.Read<FrozenLineup>(participant.LineupSnapshot);
+            participant.LineupSnapshot = GameJson.Document(lineup with { Skills = [
+                lineup.Skills[0] with { ImplementationKey = FactionSkillHandler.Forecast, CooldownTurns = 16 }, .. lineup.Skills.Skip(1)] });
+            var row = await db.MatchStates.SingleAsync(s => s.MatchId == id);
+            var state = GameJson.Read<GameState>(row.State);
+            state.SkillStates[Side.Red][0] = state.SkillStates[Side.Red][0] with { ImplementationKey = FactionSkillHandler.Forecast };
+            row.State = GameJson.Document(state);
+            (await db.MatchActions.SingleAsync(a => a.MatchId == id && a.SequenceNo == 0)).StateAfter = GameJson.Document(state);
+            await db.SaveChangesAsync();
+        }
+        string commands = $"/api/v1/matches/{id}/commands";
+        var cast = await Post<MatchCommandResultDto>(human.Client, commands,
+            new MatchCommandRequest(Guid.NewGuid(), 0, GameJson.Element(new { type = "team_skill", slot = 1 })));
+        var done = await Post<MatchCommandResultDto>(human.Client, commands,
+            new MatchCommandRequest(Guid.NewGuid(), cast.SequenceNo, GameJson.Element(new { type = "end_turn" })));
+        using var rejected = await human.Client.PostAsJsonAsync(commands,
+            new MatchCommandRequest(Guid.NewGuid(), done.SequenceNo, GameJson.Element(new { type = "undo", targetSequence = cast.SequenceNo })), Json);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        Assert.Contains("INVALID_UNDO_TARGET", await rejected.Content.ReadAsStringAsync());
+        var undo = await Post<MatchCommandResultDto>(human.Client, commands,
+            new MatchCommandRequest(Guid.NewGuid(), done.SequenceNo, GameJson.Element(new { type = "undo" })));
+        Assert.Equal(0, undo.ResolvedEvents[0].GetProperty("targetSequence").GetInt32());
+        var restored = GameJson.Read<GameState>(GameJson.Document(undo.Snapshot.State));
+        Assert.Null(restored.ForecastReview);
+        Assert.Equal(0, restored.CountedActions);
+        Assert.Equal(0, restored.SkillStates[Side.Red][0].CooldownRemaining);
+        await Post<MatchCommandResultDto>(human.Client, commands,
+            new MatchCommandRequest(Guid.NewGuid(), undo.SequenceNo, GameJson.Element(new { type = "resign" })));
+    }
+
     [Fact]
     public async Task Automatic_bot_undo_restores_the_latest_human_action_on_the_current_branch()
     {
@@ -26,7 +70,7 @@ public sealed class BotUndoFlowTests(HeroChessFactory factory) : IClassFixture<H
         var skill = catalog.TeamSkills.Single(x => x.ImplementationKey == "thanh");
         var lineup = await Post<LineupDto>(human.Client, $"/api/v1/lineups/{human.Lineup.Id}",
             new SaveLineupRequest(human.Lineup.Name, catalog.Ruleset.Id, human.Lineup.Entries,
-                [new LineupSkillInput(1, skill.Id), .. catalog.TeamSkills.Where(x => x.Id != skill.Id).Take(2)
+                [new LineupSkillInput(1, skill.Id), .. catalog.TeamSkills.Where(x => x.Id != skill.Id && x.FactionId is null && x.CooldownTurns > 0).Take(2)
                     .Select((x, index) => new LineupSkillInput(index + 2, x.Id))],
                 human.Lineup.Revision), HttpMethod.Put);
         var ticket = await Post<MatchmakingTicketDto>(human.Client, "/api/v1/matchmaking/tickets", new CreateMatchmakingTicketRequest("bot"));
@@ -42,7 +86,7 @@ public sealed class BotUndoFlowTests(HeroChessFactory factory) : IClassFixture<H
 
         var activated = await Send(Request(0, new { type = "team_skill", slot = 1, target = new { position = new { x = 4, y = 2 } } }));
         Assert.Equal(1, activated.SequenceNo);
-        Assert.Equal(skill.CooldownTurns!.Value - 1, activated.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
+        Assert.Equal(skill.CooldownTurns!.Value, activated.Snapshot.State.GetProperty("skillStates").GetProperty("red")[0].GetProperty("cooldownRemaining").GetInt32());
         var afterSkillAndReply = (await Reply(await PrepareReply(1))).Snapshot;
         Assert.Equal(2, afterSkillAndReply.Version);
 

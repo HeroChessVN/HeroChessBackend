@@ -81,7 +81,7 @@ public sealed class BinhLamThuyHienHandler : ICommandSkillHandler
             creationOrder: creationOrder,
             duration: 1, // 1 user player turn
             targetPositions: appliedPositions,
-            payload: payload);
+            payload: payload, createdAtTurn: ctx.State.TurnIndex);
         next.EffectInstances.Add(effect);
 
         var events = new object[]

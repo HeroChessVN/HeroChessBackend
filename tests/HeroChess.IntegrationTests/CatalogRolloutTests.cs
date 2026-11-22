@@ -20,7 +20,7 @@ public sealed partial class UserMigrationTests
             await SqlFile(connection, "00_install_fresh_database.sql");
             await AssertCatalogue(connection);
             Assert.Equal(4L, await Scalar(connection, "SELECT count(*) FROM hero_chess.piece_cosmetic"));
-            Assert.Equal(42L, await Scalar(connection, "SELECT count(*) FROM hero_chess.hero WHERE is_enabled AND asset_key IS NOT NULL"));
+            Assert.Equal(43L, await Scalar(connection, "SELECT count(*) FROM hero_chess.hero WHERE is_enabled AND asset_key IS NOT NULL"));
         });
     }
 
@@ -120,8 +120,8 @@ public sealed partial class UserMigrationTests
     {
         Assert.Equal(43L, await Scalar(connection, "SELECT count(*) FROM hero_chess.hero WHERE is_enabled"));
         Assert.Equal(14L, await Scalar(connection, "SELECT count(*) FROM hero_chess.hero WHERE is_enabled AND is_starter"));
-        Assert.Equal(28L, await Scalar(connection, "SELECT count(*) FROM hero_chess.hero WHERE is_enabled AND is_in_shop AND coin_price>0"));
-        Assert.Equal(true, await Scalar(connection, "SELECT NOT is_starter AND NOT is_in_shop AND asset_key IS NULL FROM hero_chess.hero WHERE code='nguyen-van-loc-cannon'"));
+        Assert.Equal(29L, await Scalar(connection, "SELECT count(*) FROM hero_chess.hero WHERE is_enabled AND is_in_shop AND coin_price>0"));
+        Assert.Equal(true, await Scalar(connection, "SELECT NOT is_starter AND is_in_shop AND asset_key='nguyenvanloc' AND coin_price=100 AND setup_points=6 FROM hero_chess.hero WHERE code='nguyen-van-loc-cannon'"));
         Assert.Equal(true, await Scalar(connection, "SELECT bool_and(n=4) FROM (SELECT count(*) AS n FROM hero_chess.hero h JOIN hero_chess.hero_faction f ON f.hero_id=h.id WHERE h.is_starter AND h.class_code<>'SOLDIER' GROUP BY f.faction_id) counts"));
     }
 }

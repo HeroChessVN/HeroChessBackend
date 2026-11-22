@@ -33,7 +33,8 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 lineup.Skills.Select(x => new LineupSkillInput(x.SlotNo, x.TeamSkillId)).ToArray(), lineup.Revision);
             var validation = await validator.ValidateAsync(playerId, input, ct);
             if (validation.Errors.Count > 0) throw new ApiException(422, "INVALID_LINEUP", "The lineup is no longer valid.", validation.Errors);
-            var frozen = await Freeze(lineup, validation.TotalSp, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot).HeroTraitsEnabled, ct);
+            var timing = await CheckTimingAsync(match, ct);
+            var frozen = await Freeze(lineup, validation.TotalSp, GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot).HeroTraitsEnabled, timing, ct);
             participant.SourceLineupId = lineup.Id;
             participant.SourceLineupRevision = lineup.Revision;
             participant.LineupSnapshot = GameJson.Document(frozen);
@@ -65,6 +66,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
             if (participant.ConfirmedAt is not null) { await transaction.CommitAsync(ct); return await ToDto(match, playerId, ct); }
             if (participant.SourceLineupId is null) throw new ApiException(422, "SELECTION_REQUIRED", "Select a lineup before confirming.");
             var heroTraitsEnabled = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot).HeroTraitsEnabled;
+            var timing = await CheckTimingAsync(match, ct);
             if (match.ContentVersion != await catalogVersions.ComputeAsync(db, ct, heroTraitsEnabled))
                 throw new ApiException(409, "CONTENT_VERSION_CHANGED", "Catalog content changed. Cancel this selection and create a new match.");
             var lineup = await db.Lineups.AsNoTracking().Include(x => x.Entries).Include(x => x.Skills)
@@ -76,7 +78,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 lineup.Skills.Select(x => new LineupSkillInput(x.SlotNo, x.TeamSkillId)).ToArray(), lineup.Revision);
             var validation = await validator.ValidateAsync(playerId, input, ct);
             if (validation.Errors.Count > 0) throw new ApiException(422, "INVALID_LINEUP", "The selected lineup is no longer valid.", validation.Errors);
-            participant.LineupSnapshot = GameJson.Document(await Freeze(lineup, validation.TotalSp, heroTraitsEnabled, ct));
+            participant.LineupSnapshot = GameJson.Document(await Freeze(lineup, validation.TotalSp, heroTraitsEnabled, timing, ct));
             if (match.Mode == "bot")
             {
                 var bot = match.Participants.Single(x => x.ParticipantType == "bot");
@@ -113,11 +115,24 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
         ?? throw new ApiException(404, "MATCH_NOT_FOUND", "The match was not found.");
 
     // Freeze: Sao chép hero/class/SP, vị trí và team skill để trận không phụ thuộc lineup nguồn về sau.
-    private async Task<FrozenLineup> Freeze(SavedLineup lineup, int totalSp, bool includeTraits, CancellationToken ct)
+    private async Task<int> CheckTimingAsync(GameMatch match, CancellationToken ct)
+    {
+        var version = SkillTiming.Version(GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot).Config);
+        var live = await db.Rulesets.AsNoTracking().Where(r => r.Id == match.RulesetId).Select(r => r.Config).SingleAsync(ct);
+        var current = SkillTiming.Version(live.RootElement);
+        if (version == 0 || current == 0) throw new ApiException(422, "INVALID_SKILL_CONFIG", "The ruleset timing version is unsupported.");
+        if (version != current) throw new ApiException(409, "CONTENT_VERSION_CHANGED", "Skill timing changed. Cancel this selection and create a new match.");
+        return version;
+    }
+
+    private async Task<FrozenLineup> Freeze(SavedLineup lineup, int totalSp, bool includeTraits, int timing, CancellationToken ct)
     {
         var heroIds = lineup.Entries.Select(x => x.HeroId).ToArray();
         var query = db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id));
         var heroes = await (includeTraits ? query.Include(x => x.Trait) : query).ToDictionaryAsync(x => x.Id, ct);
+        if (timing >= 2 && heroes.Values.Any(h => h.Trait is { } t &&
+            !SkillTiming.ValidHero(t.ImplementationKey, t.Parameters.RootElement)))
+            throw new ApiException(422, "INVALID_HERO_SKILL_CONFIG", "An active hero has an invalid frozen timer configuration.");
         if (heroes.Values.Any(x => x.Trait is { ImplementationKey: SkillKeys.ThDTuongCoc } trait &&
             !BachDangGiang.TryReadParameters(trait.Parameters.RootElement, out _, out _)))
             throw new ApiException(422, "INVALID_HERO_SKILL_CONFIG", "Bạch Đằng Giang requires positive integer cooldown and duration.");
@@ -131,6 +146,8 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
         var slots = await db.LineupSlots.AsNoTracking().ToDictionaryAsync(x => x.SlotNo, ct);
         var skillIds = lineup.Skills.Select(x => x.TeamSkillId).ToArray();
         var skills = await db.TeamSkills.AsNoTracking().Where(x => skillIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        if (timing >= 2 && skills.Values.Any(s => !SkillTiming.ValidCommand(s.ImplementationKey, s.CooldownTurns ?? 0, s.Parameters.RootElement)))
+            throw new ApiException(422, "INVALID_SKILL_CONFIG", "An enabled skill has an invalid timer configuration.");
         return new FrozenLineup(lineup.Id, lineup.Revision, totalSp,
             lineup.Entries.OrderBy(x => x.SlotNo).Select(x =>
             {
@@ -154,7 +171,8 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
     {
         var now = clock.GetUtcNow();
         var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
-        var state = new GameState { RulesetCode = rules.Code, ContentVersion = match.ContentVersion, PublicRiverStakes = rules.HeroTraitsEnabled };
+        var state = new GameState { RulesetCode = rules.Code, ContentVersion = match.ContentVersion,
+            PublicRiverStakes = rules.HeroTraitsEnabled, SkillTimingVersion = SkillTiming.Version(rules.Config) };
         foreach (var participant in match.Participants.OrderBy(x => x.Side))
         {
             var side = participant.Side == "red" ? Side.Red : Side.Black;
@@ -176,7 +194,7 @@ public sealed class MatchSelectionService(AppDbContext db, LineupValidator valid
                 state.Pieces.Add(piece);
             }
             state.SkillStates[side].AddRange(lineup.Skills.Select(x => new SkillState(x.SlotNo, x.SkillId, x.MaxUses, 0,
-                x.ImplementationKey, x.Name, x.Description, x.Parameters)));
+                x.ImplementationKey, x.Name, x.Description, x.Parameters, x.CooldownTurns)));
         }
         TurnLifecycle.MarkTurnProcessed(state, Side.Red, state.TurnIndex);
         match.Status = "active"; match.StartedAt = now;

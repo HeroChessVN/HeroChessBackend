@@ -17,18 +17,37 @@ public static class MatchTurnRules
     }
 
     public static CommandSkillResult ApplySkill(GameState state, Side actor, FrozenSkillSnapshot skill,
-        JsonElement action, CommandSkillDispatcher dispatcher)
+        JsonElement action, CommandSkillDispatcher dispatcher, bool reviewForecast = false)
     {
+        if (state.ForecastReview is not null)
+            return CommandSkillResult.Failure(state, "TURN_ALREADY_COMMITTED", "Finish reviewing the forecast before ending this turn.");
         var result = dispatcher.Dispatch(state, actor, skill, action);
         if (!result.Accepted) return result;
-        if (new XiangqiRulesEngine().IsInCheck(result.State, actor))
+        if (!new XiangqiRulesEngine().IsSafeAfterPublicExpiry(result.State, actor))
             return CommandSkillResult.Failure(state, "KING_IN_CHECK", "The skill must resolve check before ending the turn.");
-        AdvanceSkill(result.State, actor);
+        if (reviewForecast && skill.ImplementationKey == FactionSkillHandler.Forecast)
+        {
+            result.State.Version++;
+            result.State.ForecastReview = new(actor, result.State.Version);
+        }
+        else AdvanceSkill(result.State, actor);
         return result;
+    }
+
+    public static GameState CompleteForecastReview(GameState state)
+    {
+        if (state.ForecastReview is not { } review || review.Owner != state.SideToMove)
+            throw new InvalidOperationException("There is no pending forecast turn to complete.");
+        var next = state.Clone();
+        next.ForecastReview = null;
+        AdvanceSkill(next, review.Owner);
+        return next;
     }
 
     public static CommandSkillResult ApplyHeroSkill(GameState state, JsonElement action, XiangqiRulesEngine engine)
     {
+        if (state.ForecastReview is not null)
+            return CommandSkillResult.Failure(state, "TURN_ALREADY_COMMITTED", "Finish reviewing the forecast before ending this turn.");
         var actor = state.SideToMove;
         var pieceId = action.GetProperty("pieceId").GetGuid();
         var key = action.GetProperty("skillCode").GetString();
@@ -64,7 +83,7 @@ public static class MatchTurnRules
         var advisor = AdvisorHeroSkills.IsActive(key);
         var placed = advisor ? AdvisorHeroSkills.Execute(state, actor, pieceId, key!, target) : BachDangGiang.Execute(state, actor, pieceId, target);
         if (!placed.Accepted) return placed;
-        if (engine.IsInCheck(placed.State, actor))
+        if (!engine.IsSafeAfterPublicExpiry(placed.State, actor))
             return CommandSkillResult.Failure(state, "KING_IN_CHECK", "The skill must resolve check before ending the turn.");
         AdvanceSkill(placed.State, actor);
         return CommandSkillResult.Success(placed.State, new object[] { activated }.Concat(advisor ? placed.Events : Array.Empty<object>()).ToArray());
@@ -79,8 +98,7 @@ public static class MatchTurnRules
             side = before.ObstacleMetadata[hit.ObstacleId].Placer, victimSide = piece.Side, victimClass = piece.Class, victimName = piece.HeroName };
     }
 
-    public static IEnumerable<JsonElement> HeroCandidates(GameState state, XiangqiRulesEngine engine,
-        IReadOnlyCollection<BoardPoint>? hiddenBlocked = null)
+    public static IEnumerable<JsonElement> HeroCandidates(GameState state, XiangqiRulesEngine engine)
     {
         if (!state.PublicRiverStakes || state.Result is not null) yield break;
         foreach (var hero in state.Pieces.Where(p => p.Side == state.SideToMove && p.Status == PieceStatus.Alive && p.Position is not null))
@@ -105,8 +123,7 @@ public static class MatchTurnRules
                 foreach (var y in new[] { 4, 5 })
                 {
                     var point = new BoardPoint(x, y);
-                    // Same cell-blocking rule the server enforces: no stacking on Cọc, Thành, Rào, bẫy or a piece.
-                    if (SkillPlacement.IsCellFree(state, point, hiddenBlocked))
+                    if (SkillPlacement.IsCellFree(state, point, state.SideToMove))
                         yield return Make(hero, new { position = point });
                 }
             }
@@ -125,6 +142,7 @@ public static class MatchTurnRules
 
     public static (GameState State, object[] Events, IReadOnlyList<LegalMove> Replies) AfterAction(GameState next, RulesetSnapshot rules, CommandSkillDispatcher dispatcher)
     {
+        if (next.ForecastReview is not null) return (next, [], []);
         var events = new List<object>();
         if (next.Result is null && !TurnLifecycle.IsTurnProcessed(next, next.SideToMove, next.TurnIndex))
         {
@@ -143,7 +161,7 @@ public static class MatchTurnRules
 
     public static IReadOnlyList<LegalMove> Finish(GameState state, RulesetSnapshot rules, CommandSkillDispatcher dispatcher)
     {
-        if (state.Result is not null) return [];
+        if (state.Result is not null || state.ForecastReview is not null) return [];
         var engine = new XiangqiRulesEngine();
         // Never use the bot's bounded/top-K candidates to decide whether a match has ended.
         var replies = engine.GenerateLegalActions(state);

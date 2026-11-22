@@ -30,7 +30,12 @@ public sealed class LineupValidator(AppDbContext db, IOptions<MatchRuntimeOption
             errors.Add(new("MISSING_SLOT", "The required lineup slot is missing.", slot));
 
         var heroIds = request.Entries.Select(x => x.HeroId).Distinct().ToArray();
-        var heroes = await db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);
+        var heroes = await db.Heroes.AsNoTracking().Include(x => x.Trait).Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);
+        var timing = ruleset is null ? 1 : SkillTiming.Version(ruleset.Config.RootElement);
+        if (timing == 0) errors.Add(new("INVALID_SKILL_CONFIG", "The ruleset timing version is unsupported."));
+        if (timing >= 2 && runtime.Value.HeroTraitsEnabled && heroes.Values.Any(h => h.Trait is { } t &&
+            !SkillTiming.ValidHero(t.ImplementationKey, t.Parameters.RootElement)))
+            errors.Add(new("INVALID_HERO_SKILL_CONFIG", "An active hero has an invalid timer configuration."));
         var owned = await db.PlayerHeroes.AsNoTracking().Where(x => x.PlayerId == playerId && heroIds.Contains(x.HeroId)).Select(x => x.HeroId).ToHashSetAsync(cancellationToken);
         foreach (var entry in request.Entries)
         {
@@ -75,6 +80,8 @@ public sealed class LineupValidator(AppDbContext db, IOptions<MatchRuntimeOption
             errors.Add(new("DUPLICATE_SKILL", "The same team skill cannot be selected twice."));
         var skillIds = request.Skills.Select(x => x.SkillId).Distinct().ToArray();
         var skills = await db.TeamSkills.AsNoTracking().Where(x => skillIds.Contains(x.Id)).ToListAsync(cancellationToken);
+        if (timing >= 2 && skills.Any(s => !SkillTiming.ValidCommand(s.ImplementationKey, s.CooldownTurns ?? 0, s.Parameters.RootElement)))
+            errors.Add(new("INVALID_SKILL_CONFIG", "An enabled skill has an invalid timer configuration."));
         if (skills.Count != skillIds.Length || skills.Any(x => !x.IsEnabled)) errors.Add(new("SKILL_UNAVAILABLE", "One or more team skills are unavailable."));
         if (skills.Count(x => x.FactionId is not null) > 1) errors.Add(new("MULTIPLE_FACTION_SKILLS", "At most one faction team skill may be active."));
         var newFactionSkill = skills.FirstOrDefault(s => FactionSkillHandler.IsNewFactionSkill(s.ImplementationKey));

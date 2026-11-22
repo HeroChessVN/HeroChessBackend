@@ -14,15 +14,15 @@ public sealed record FrozenSkillSnapshot(
     int SlotNo,
     Guid SkillId,
     string ImplementationKey,
-    int CooldownTurns);
+    int CooldownTurns, JsonElement? Parameters = null);
 
 /// <summary>
 /// Creates a FrozenSkillSnapshot from a SkillState record (for the dispatcher).
 /// </summary>
 public static class FrozenSkillSnapshotFactory
 {
-    public static FrozenSkillSnapshot FromSkillState(SkillState skill, int cooldownTurns = 0) =>
-        new(skill.SlotNo, skill.SkillId, skill.ImplementationKey ?? "", cooldownTurns);
+    public static FrozenSkillSnapshot FromSkillState(SkillState skill, int? cooldownTurns = null) =>
+        new(skill.SlotNo, skill.SkillId, skill.ImplementationKey ?? "", cooldownTurns ?? skill.CooldownTurns ?? 0, skill.Parameters);
 }
 
 /// <summary>
@@ -90,6 +90,13 @@ public sealed class CommandSkillDispatcher
             return CommandSkillResult.Failure(state, "MATCH_ENDED",
                 "The match has already ended.");
 
+        if (state.SkillTimingVersion >= 2 &&
+            (!SkillTiming.ValidCommand(frozenSkill.ImplementationKey, frozenSkill.CooldownTurns, frozenSkill.Parameters) ||
+             !SkillTiming.FitsTurn(state.TurnIndex, frozenSkill.CooldownTurns) ||
+             SkillTiming.Positive(frozenSkill.Parameters, "durationTurns", out var duration) && !SkillTiming.FitsTurn(state.TurnIndex, duration) ||
+             SkillTiming.Positive(frozenSkill.Parameters, "rootDurationTurns", out var root) && !SkillTiming.FitsTurn(state.TurnIndex, root)))
+            return CommandSkillResult.Failure(state, "INVALID_SKILL_CONFIG", "The frozen skill timer configuration is invalid.");
+
         // 3. Skill cooldown must be 0.
         var skillState = FindSkillState(state, actorSide, frozenSkill.SlotNo);
         if (skillState == null)
@@ -122,7 +129,7 @@ public sealed class CommandSkillDispatcher
             skillId: frozenSkill.SkillId,
             implementationKey: frozenSkill.ImplementationKey,
             cooldownTurns: frozenSkill.CooldownTurns,
-            target: target);
+            target: target, parameters: frozenSkill.Parameters);
 
         // --- Execute handler ---
         var result = handler.Execute(context);
@@ -145,6 +152,7 @@ public sealed class CommandSkillDispatcher
                     updatedList[i] = updatedList[i] with
                     {
                         CooldownRemaining = frozenSkill.CooldownTurns,
+                        CooldownStartedAtTurn = state.TurnIndex,
                         UsesRemaining = updatedList[i].UsesRemaining is int remaining ? remaining - 1 : null
                     };
                     break;

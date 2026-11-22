@@ -2,6 +2,9 @@
 -- These skills are wired to handler implementations in HeroChess.Rules.
 BEGIN;
 SET LOCAL search_path = hero_chess, pg_catalog;
+DO $legacy_catalog$
+BEGIN
+ IF EXISTS (SELECT 1 FROM ruleset WHERE is_active AND config->>'skillTimingVersion'='2') THEN RETURN; END IF;
 
 -- Step 6: Thành Command Skill
 INSERT INTO team_skill(id,code,name,implementation_key,cooldown_turns,is_enabled,is_test_fixture,description) VALUES
@@ -60,4 +63,6 @@ ON CONFLICT (id) DO UPDATE SET implementation_key=EXCLUDED.implementation_key,de
 UPDATE hero SET trait_id='30000000-0000-4000-8000-000000000008'
  WHERE code='ly-thuong-kiet-cannon';
 
+END
+$legacy_catalog$;
 COMMIT;

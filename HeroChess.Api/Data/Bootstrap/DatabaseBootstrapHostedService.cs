@@ -88,11 +88,14 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "13_admin_module.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "17_board_cosmetics.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "21_piece_cosmetics.sql"), cancellationToken);
+        await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "22_forecast_review.sql"), cancellationToken);
         // Existing catalogues require an explicit rollout, never a startup reprice/delete.
         if (createdDatabase)
         {
             await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "13_hero_factions.sql"), cancellationToken);
             await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "20_hero_catalog_and_starters.sql"), cancellationToken);
+            await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "16_faction_skills.sql"), cancellationToken);
+            await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "23_skill_timers.sql"), cancellationToken);
         }
         // 18 is a one-time manual patch; startup must preserve DB-configured faction thresholds.
         if (environment.IsDevelopment() && options.Value.SeedDevelopmentFixtures)

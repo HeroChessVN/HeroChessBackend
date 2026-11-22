@@ -23,6 +23,7 @@ JOIN hero_chess.faction faction ON faction.code = skill.faction_code
 ON CONFLICT (code) DO UPDATE SET
     name = EXCLUDED.name, faction_id = EXCLUDED.faction_id,
     implementation_key = EXCLUDED.implementation_key, cooldown_turns = EXCLUDED.cooldown_turns,
-    eligibility = EXCLUDED.eligibility, description = EXCLUDED.description;
+    eligibility = EXCLUDED.eligibility, description = EXCLUDED.description
+WHERE NOT EXISTS (SELECT 1 FROM hero_chess.ruleset WHERE is_active AND config->>'skillTimingVersion'='2');
 
 COMMIT;

@@ -18,6 +18,7 @@ public sealed class ForecastAlgorithmTests
         var engine = BotDifficultyTests.Engine();
         var forecast = GameJson.Element(engine.Forecast(state, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
         var first = forecast.GetProperty("variation")[0].GetProperty("action");
+        Assert.Equal("black", forecast.GetProperty("initialBoard").GetProperty("sideToMove").GetString());
         var next = engine.Simulate(state, first, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups())!;
         Assert.Equal(PieceStatus.Alive, next.Pieces.Single(p => p.PieceId == horse.PieceId).Status);
         Assert.DoesNotContain(new XiangqiRulesEngine().GenerateLegalActions(next), m => m.CapturedPieceId == cannon.PieceId);
@@ -28,6 +29,7 @@ public sealed class ForecastAlgorithmTests
             Assert.Equal(state.SideToMove == Side.Red ? "red" : "black", entry.GetProperty("side").GetString());
             state = engine.Simulate(state, entry.GetProperty("action"), BotDifficultyTests.Rules(), BotDifficultyTests.Lineups())!;
             Assert.NotNull(state);
+            Assert.True(JsonElement.DeepEquals(MatchStateProjection.State(GameJson.Element(state), Side.Red), entry.GetProperty("boardAfter")));
         }
         var threats = forecast.GetProperty("threats").EnumerateArray().Select(x => x.GetProperty("action").GetRawText()).ToArray();
         Assert.Equal(threats.Length, threats.Distinct().Count());

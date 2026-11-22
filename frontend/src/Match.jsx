@@ -180,12 +180,8 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
     try {
       const result = await api(token, `/matches/${matchId}/commands`, { method: 'POST', body: payload });
       setPending(null); accept(result.snapshot);
+      if (payload.action.type === 'undo') setForecast(null);
       if (!result.duplicate) showSkill(result.sequenceNo, result.resolvedEvents?.find(event => skillNotice(event)));
-      if (result.resolvedEvents?.some(event => event.type === 'team_skill.activated' && event.code === forecastSkill)) {
-        api(token, `/matches/${matchId}/forecast?version=${result.sequenceNo}`)
-          .then(data => setForecast({ matchId, ...data }))
-          .catch(error => { if (error.code !== 'STALE_STATE') setActionError(error.message); });
-      }
       setEvents(previous => [...(result.resolvedEvents || []), ...previous].slice(0, 12));
     } catch (error) {
       if (payload.action.type === 'undo' && (error.code === 'NO_UNDO_AVAILABLE' || error.code === 'STALE_STATE')) {
@@ -247,7 +243,17 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
 
   // ownSide: Phe của người đang chơi; /matches trả sẵn nên dùng khi chưa chọn đội hình.
   const ownSide = matchInfo?.side || selection?.sides?.find(side => side.ownLineupId)?.side;
-  const ourTurn = ownSide && snapshot?.sideToMove === ownSide;
+  const reviewingForecast = snapshot?.status === 'active' && ownSide && snapshot?.state?.forecastReview?.owner === ownSide;
+  const forecastActivation = reviewingForecast ? snapshot.state.forecastReview.activationSequence : null;
+  const ourTurn = ownSide && snapshot?.sideToMove === ownSide && !snapshot?.state?.forecastReview;
+  useEffect(() => {
+    if (!forecastActivation) return;
+    let live = true;
+    api(token, `/matches/${matchId}/forecast?version=${forecastActivation}`)
+      .then(data => { if (live) setForecast({ matchId, ...data }); })
+      .catch(error => { if (live) setActionError(error.message); });
+    return () => { live = false; };
+  }, [token, matchId, forecastActivation]);
   useEffect(() => {
     if (heroTargetMode !== 'quangtrung' || !selectedPiece || !ourTurn) { setHeroMoves([]); return; }
     let live = true;
@@ -360,16 +366,20 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
       {sideSkills.map(skill => {
         const info = catalog?.teamSkills?.find(item => item.id === skill.skillId);
         const turnAlreadyProcessed = view?.processedTurns?.[ownSide]?.includes(snapshot?.turnIndex);
-        const shownCooldown = ourTurn && !turnAlreadyProcessed ? Math.max(0, skill.cooldownRemaining - 1) : skill.cooldownRemaining;
+        const shownCooldown = (snapshot?.state?.skillTimingVersion ?? 1) < 2 && ourTurn && !turnAlreadyProcessed ? Math.max(0, skill.cooldownRemaining - 1) : skill.cooldownRemaining;
         const allowed = ourTurn && status === 'active' && !pending && shownCooldown === 0 && skill.usesRemaining !== 0 && knownSkills.has(skill.implementationKey);
-        return <button key={skill.slotNo} className={`skill-button ${skillSlot === skill.slotNo ? 'active' : ''}`} disabled={!allowed} onClick={() => { setSkillSlot(skill.slotNo); setTargetPoint(null); setTargetPieceId(null); setEffectId(''); setHeroTargetMode(null); setSelectedPiece(null); setActionError(''); }}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>{shownCooldown ? `Hồi chiêu: ${shownCooldown}` : `Lượt dùng: ${skill.usesRemaining ?? '∞'}`} · {skill.implementationKey}</small></button>;
+        return <button key={skill.slotNo} className={`skill-button ${skillSlot === skill.slotNo ? 'active' : ''}`} disabled={!allowed} onClick={() => { setSkillSlot(skill.slotNo); setTargetPoint(null); setTargetPieceId(null); setEffectId(''); setHeroTargetMode(null); setSelectedPiece(null); setActionError(''); }}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>{shownCooldown ? `Hồi chiêu: ${shownCooldown}` : `Lượt dùng: ${skill.usesRemaining ?? '∞'}`} · {skill.implementationKey}</small>{skill.cooldownTurns != null && <small>CD cấu hình: {skill.cooldownTurns} lượt chung tiếp theo</small>}{skill.parameters?.durationTurns != null && <small>Hiệu lực: {skill.parameters.durationTurns} lượt chung tiếp theo{skill.parameters.rootDurationTurns != null ? ` · Khóa chân: ${skill.parameters.rootDurationTurns}` : ''}</small>}</button>;
       })}
       {activeInfo && <div className="target-panel"><strong>{activeInfo.name}</strong><p>{selectingTrap ? `Chọn 3 ô trống trên sông (${trapTargets.length}/3).` : untargetedSkills.has(activeInfo.implementationKey) ? 'Dùng kỹ năng sẽ kết thúc lượt.' : pointSkills.has(activeInfo.implementationKey) ? 'Chọn ô trống bên sông mình trên bàn cờ.' : activeInfo.implementationKey === 'khien' ? 'Chọn một quân đồng minh trên bàn cờ.' : effectSkills.has(activeInfo.implementationKey) ? 'Chọn hiệu ứng cần tác động.' : 'Tác động ba đường sông 4, 5, 6.'}</p>
         {effectSkills.has(activeInfo.implementationKey) && <select value={effectId} onChange={event => setEffectId(event.target.value)}><option value="">Chọn hiệu ứng</option>{effects.map(effect => <option key={effect.effectId} value={effect.effectId}>{effect.code || effect.effectId} · {effect.creator} · {effect.remainingDuration} lượt</option>)}</select>}
         {targetPoint && <small>Ô: ({targetPoint.x}, {targetPoint.y})</small>}
         <button disabled={!target || pending || busy} onClick={() => command({ type: 'team_skill', slot: skillSlot, target })}>Dùng skill</button></div>}
-      {forecast?.matchId === matchId && forecast.version === snapshot?.version && !replay && <div className="target-panel">
+      {reviewingForecast && !replay && <div className="target-panel"><strong>Đang xem Lam Sơn · còn {timeLeft ?? '—'} giây</strong>
+        <p>Skill đã dùng. Bấm Đi để chốt lượt; hết giờ máy chủ tự chuyển lượt.</p>
+        <button disabled={!!pending || busy} onClick={() => command({ type: 'end_turn' })}>Đi · kết thúc lượt</button></div>}
+      {forecast?.matchId === matchId && !replay && <div className="target-panel">
         <strong>Lam Sơn Quân Lược · Dự đoán riêng</strong>
+        {forecast.version !== snapshot?.version && <p>Dự báo tại bước {forecast.version}; bàn thật đã thay đổi.</p>}
         <p>Địch → Ta → Địch</p>
         <ol>{forecast.prediction.variation.map((action, index) => <li key={index}>{forecastLabel(action)}</li>)}</ol>
         <p>Phương án nguy hiểm của địch</p>
@@ -378,7 +388,7 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
       <h3>Skill đối thủ</h3>{enemySkills.map(skill => { const info = catalog?.teamSkills?.find(item => item.id === skill.skillId); return <div className="skill-button" key={skill.slotNo}><strong>#{skill.slotNo} · {skill.name || info?.name || skill.implementationKey}</strong><small>CD {skill.cooldownRemaining} · lượt dùng {skill.usesRemaining ?? '∞'}</small></div>; })}
       <h3>Hero skill hai bên</h3><div className="hero-skill-list">{pieces.filter(piece => piece.traitKind === 'active' || piece.traitKind === 'special_move').map(piece => { const hero = catalog?.heroes?.find(item => item.id === piece.heroId); const cd = piece.traitState?.heroCooldownRemaining ?? piece.traitState?.quangTrungCooldownRemaining ?? 0; return <button className="skill-button" key={piece.pieceId} onClick={() => setSelectedPiece(piece.pieceId)}><strong>{piece.side}: {piece.heroName || hero?.name} · {piece.traitName || hero?.trait?.name}</strong><small>{piece.traitImplementationKey === 'rook.hoanh_soc' ? (piece.traitState?.hoanhSocCharged === 1 ? 'Hoành Sóc sẵn sàng' : 'Hoành Sóc chưa tích điện') : piece.traitKind === 'active' || piece.traitImplementationKey === 'general.orthogonal_range_3' ? `CD ${cd}` : 'Nội tại'}</small></button>; })}</div></section>
       <section className="card"><h2>Điều khiển trận</h2><div className="actions"><button className="danger" disabled={status !== 'active' || !!pending || busy} onClick={() => window.confirm('Đầu hàng trận này?') && command({ type: 'resign' })}>Đầu hàng</button>
-        {snapshot?.mode === 'bot' && status === 'active' && <button className="secondary" disabled={!snapshot.version || snapshot.version === blockedUndoVersion || !!pending || busy} onClick={() => command({ type: 'undo' })}>Hoàn tác</button>}</div>
+        {snapshot?.mode === 'bot' && status === 'active' && <button className="secondary" disabled={!!snapshot.state?.forecastReview || !snapshot.version || snapshot.version === blockedUndoVersion || !!pending || busy} onClick={() => command({ type: 'undo' })}>Hoàn tác</button>}</div>
         {pending && <div className="pending"><small>Lệnh #{pending.commandId} chưa xác nhận.</small><button disabled={busy} onClick={() => submit(pending)}>Thử lại cùng mã lệnh</button></div>}
         {snapshot?.state?.result && <p>Kết quả: <strong>{snapshot.state.result}</strong> · {snapshot.state.endReason}</p>}
         {replay && <div className="replay-controls"><button className="secondary" disabled={replayIndex === 0} onClick={() => { setReplayPlaying(false); setReplayIndex(replayIndex - 1); }}>←</button>

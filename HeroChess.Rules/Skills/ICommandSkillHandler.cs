@@ -82,7 +82,7 @@ public sealed class CommandSkillContext
         Guid skillId,
         string implementationKey,
         int? cooldownTurns,
-        System.Text.Json.JsonElement target)
+        System.Text.Json.JsonElement target, System.Text.Json.JsonElement? parameters = null)
     {
         State = state;
         ActorSide = actorSide;
@@ -91,10 +91,12 @@ public sealed class CommandSkillContext
         ImplementationKey = implementationKey;
         CooldownTurns = cooldownTurns;
         Target = target;
+        Parameters = parameters;
     }
 
     /// <summary>The current authoritative game state (read-only; mutation via return value).</summary>
     public GameState State { get; }
+    public System.Text.Json.JsonElement? Parameters { get; }
 
     /// <summary>The side that activated the skill.</summary>
     public Side ActorSide { get; }

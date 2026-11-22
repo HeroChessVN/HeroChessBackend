@@ -33,7 +33,7 @@ public static class EffectFactory
         int duration,
         IReadOnlyList<BoardPoint> targetPositions,
         IDictionary<BoardPoint, Side>? initialControllers = null,
-        IReadOnlyDictionary<string, object?>? payload = null)
+        IReadOnlyDictionary<string, object?>? payload = null, int? createdAtTurn = null)
     {
         // Build PositionControllers: every position in targetPositions must have an entry.
         var positionControllers = new Dictionary<BoardPoint, Side>(targetPositions.Count);
@@ -55,6 +55,7 @@ public static class EffectFactory
             Creator = creator,
             CreationOrder = creationOrder,
             Duration = duration,
+            CreatedAtTurn = createdAtTurn,
             RemainingDuration = duration, // initialized to Duration per U-DUR = A
             State = EffectStateValue.Active,
             TargetPositions = targetPositions,

@@ -2,6 +2,9 @@
 -- Intentionally leaves setup_points and existing hero IDs/ownership untouched.
 BEGIN;
 SET LOCAL search_path = hero_chess, pg_catalog;
+DO $legacy_catalog$
+BEGIN
+ IF EXISTS (SELECT 1 FROM ruleset WHERE is_active AND config->>'skillTimingVersion'='2') THEN RETURN; END IF;
 
 INSERT INTO hero_trait(id,code,name,kind,implementation_key,parameters,description) VALUES
  ('30000000-0000-4000-8000-000000000005','quang-trung-orthogonal-3','Quang Trung — hành quân thần tốc','active','quang_trung.special_move',
@@ -31,4 +34,6 @@ UPDATE hero SET description='Pháo 7 SP; dùng Thành hoặc Rào làm ngòi, c�
  WHERE code='ly-thuong-kiet-cannon';
 UPDATE hero SET description='Tướng đi thường 1 ô thẳng, được ra khỏi cung, không qua sông; skill đi thẳng 1–3 ô với CD 3.'
  WHERE code='quang-trung-general';
+END
+$legacy_catalog$;
 COMMIT;

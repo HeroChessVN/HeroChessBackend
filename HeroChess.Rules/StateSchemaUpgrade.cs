@@ -51,6 +51,8 @@ public static class StateSchemaUpgrade
         var upgraded = new GameState
         {
             StateSchemaVersion = 4,
+            SkillTimingVersion = state.SkillTimingVersion,
+            ForecastReview = state.ForecastReview,
             EffectInstances = new List<Effects.EffectInstance>(),
             NextCreationOrder = 0,
             ProcessedTurns = new Dictionary<Side, List<int>>()
@@ -85,6 +87,8 @@ public static class StateSchemaUpgrade
         var upgraded = new GameState
         {
             StateSchemaVersion = 3,
+            SkillTimingVersion = state.SkillTimingVersion,
+            ForecastReview = state.ForecastReview,
             EffectInstances = new List<Effects.EffectInstance>(),
             NextCreationOrder = 0,
             ProcessedTurns = new Dictionary<Side, List<int>>()

@@ -65,6 +65,8 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
                 var actor = participants.Single(p => p.PlayerId == playerId);
                 var side = actor.Side == "red" ? Side.Red : Side.Black;
                 var rules = GameJson.Read<RulesetSnapshot>(match.RulesetSnapshot);
+                if (state.ForecastReview is not null)
+                    state = MatchTurnRules.AfterAction(MatchTurnRules.CompleteForecastReview(state), rules, dispatcher).State;
                 var searchAt = Stopwatch.GetTimestamp();
                 var prediction = new BotEngine(dispatcher, clock).Forecast(state, rules, lineups, ct, side);
                 BotTelemetry.ForecastSearch.Record(Stopwatch.GetElapsedTime(searchAt).TotalSeconds);
@@ -157,6 +159,7 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
         var state = GameJson.Read<GameState>(row.State);
         // Phase 3.4: v3 → v4 state schema upgrade. Idempotent. Ensures GenerateLegalActions works with v3 state.
         state = StateSchemaUpgrade.UpgradeToCurrent(state);
+        if (state.ForecastReview is not null) return [];
         return new XiangqiRulesEngine().GenerateLegalActions(state).Select(x => new LegalMoveDto(x.PieceId, x.From.X, x.From.Y, x.To.X, x.To.Y, x.CapturedPieceId)).ToArray();
     }
 
@@ -167,6 +170,7 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
         var row = await db.MatchStates.AsNoTracking().SingleOrDefaultAsync(x => x.MatchId == matchId, ct);
         if (row is null || row.SideToMove != side) return [];
         var state = StateSchemaUpgrade.UpgradeToCurrent(GameJson.Read<GameState>(row.State));
+        if (state.ForecastReview is not null) return [];
         if (!state.PublicRiverStakes) return [];
         return new XiangqiRulesEngine().GenerateQuangTrungSpecialMoves(state, pieceId)
             .Select(x => new LegalMoveDto(x.PieceId, x.From.X, x.From.Y, x.To.X, x.To.Y, x.CapturedPieceId)).ToArray();

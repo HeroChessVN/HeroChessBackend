@@ -64,23 +64,28 @@ public sealed class PieceState
 }
 
 // EffectState: Dữ liệu hiệu ứng trên quân; chưa đồng nghĩa có engine xử lý hiệu ứng.
-public sealed record EffectState(string Code, Guid? SourcePieceId, int? RemainingTurns);
+public sealed record EffectState(string Code, Guid? SourcePieceId, int? RemainingTurns, int? CreatedAtTurn = null);
 // ObstacleState: Vật cản tại một ô trong state.
-public sealed record ObstacleState(Guid ObstacleId, BoardPoint Position, string Kind, int? RemainingLifetime = null);
+public sealed record ObstacleState(Guid ObstacleId, BoardPoint Position, string Kind, int? RemainingLifetime = null, int? CreatedAtTurn = null);
 // PendingEffectState: Dữ liệu hiệu ứng chờ, chưa có cơ chế resolution hoàn chỉnh.
 public sealed record PendingEffectState(string Code, Side Owner, int? ExpiresAtTurn);
 // SkillState: Charge/cooldown của một skill theo bên; hiện chủ yếu là dữ liệu snapshot.
 public sealed record SkillState(int SlotNo, Guid SkillId, int? UsesRemaining, int CooldownRemaining, string ImplementationKey,
-    string? Name = null, string? Description = null, JsonElement? Parameters = null);
+    string? Name = null, string? Description = null, JsonElement? Parameters = null,
+    int? CooldownTurns = null, int? CooldownStartedAtTurn = null);
 // LegalMove: Một nước hợp lệ do server sinh, gồm quân bị ăn nếu có.
 public sealed record LegalMove(Guid PieceId, BoardPoint From, BoardPoint To, Guid? CapturedPieceId = null, bool InterceptedByStake = false);
 // MoveAction: Ý định đi một quân tới ô đích.
 public sealed record MoveAction(Guid PieceId, BoardPoint To);
 
+// A committed skill waiting for review; the existing turn deadline remains authoritative.
+public sealed record ForecastReviewState(Side Owner, int ActivationSequence);
+
 // GameState: Bàn cờ runtime dùng cho tính luật/serialize; không phải EF entity.
 public sealed class GameState
 {
     public int StateSchemaVersion { get; init; } = 4;
+    public int SkillTimingVersion { get; init; } = 1;
     public string RulesetCode { get; init; } = "prototype-v0.1";
     public string ContentVersion { get; init; } = "development";
     public bool PublicRiverStakes { get; init; }
@@ -88,6 +93,7 @@ public sealed class GameState
     public int Version { get; set; }
     public int TurnIndex { get; set; }
     public int CountedActions { get; set; }
+    public ForecastReviewState? ForecastReview { get; set; }
     public Dictionary<Side, int> ConsecutiveTimeouts { get; set; } = new()
     {
         [Side.Red] = 0,
@@ -139,6 +145,7 @@ public sealed class GameState
         var copy = new GameState
         {
             StateSchemaVersion = StateSchemaVersion,
+            SkillTimingVersion = SkillTimingVersion,
             RulesetCode = RulesetCode,
             ContentVersion = ContentVersion,
             PublicRiverStakes = PublicRiverStakes,
@@ -146,6 +153,7 @@ public sealed class GameState
             Version = Version,
             TurnIndex = TurnIndex,
             CountedActions = CountedActions,
+            ForecastReview = ForecastReview,
             Result = Result,
             EndReason = EndReason,
             NextCreationOrder = NextCreationOrder

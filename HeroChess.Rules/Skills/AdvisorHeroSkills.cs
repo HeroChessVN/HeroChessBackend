@@ -31,7 +31,9 @@ public static class AdvisorHeroSkills
             return Fail("HERO_SKILL_NOT_AVAILABLE", "The selected advisor skill is not available.");
         if (hero.TraitState.GetValueOrDefault(SkillKeys.HeroCooldownRemainingKey) is > 0)
             return Fail("SKILL_ON_COOLDOWN", "The advisor skill is on cooldown.");
-        if (!TryReadParameters(key, hero.TraitParameters, out var cooldown, out var duration))
+        if (!TryReadParameters(key, hero.TraitParameters, out var cooldown, out var duration) ||
+            state.SkillTimingVersion >= 2 && (!SkillTiming.FitsTurn(state.TurnIndex, cooldown) ||
+                key == SkillKeys.TranThuDoGeneralShield && !SkillTiming.FitsTurn(state.TurnIndex, duration)))
             return Fail("INVALID_HERO_SKILL_CONFIG", "The advisor skill requires a positive cooldown and a shorter shield duration of at least two shared turns.");
         if (target.ValueKind != JsonValueKind.Object || !target.TryGetProperty("pieceId", out var value) ||
             value.ValueKind != JsonValueKind.String || !value.TryGetGuid(out var generalId))
@@ -52,6 +54,7 @@ public static class AdvisorHeroSkills
         var source = next.Pieces.Single(p => p.PieceId == pieceId);
         var receiver = next.Pieces.Single(p => p.PieceId == generalId);
         source.TraitState[SkillKeys.HeroCooldownRemainingKey] = cooldown;
+        source.TraitState[SkillKeys.HeroCooldownStartedAtTurnKey] = state.TurnIndex;
         if (key == SkillKeys.LeLaiSwapGeneral)
         {
             (source.Position, receiver.Position) = (receiver.Position, source.Position);
@@ -61,7 +64,7 @@ public static class AdvisorHeroSkills
                 new { type = "piece.moved", pieceId = generalId, from = general.Position, to = receiver.Position }
             });
         }
-        receiver.Effects.Add(new EffectState(SkillKeys.ShieldEffect, pieceId, duration));
+        receiver.Effects.Add(new EffectState(SkillKeys.ShieldEffect, pieceId, duration, state.TurnIndex));
         return CommandSkillResult.Success(next, new object[] { new { type = "shield.applied", pieceId = generalId } });
 
         CommandSkillResult Fail(string code, string message) => CommandSkillResult.Failure(state, code, message);

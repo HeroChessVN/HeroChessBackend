@@ -161,9 +161,14 @@ public sealed class AdminCatalogService(AppDbContext db, AdminAuditWriter audit)
         }
         if (request.CooldownTurns.HasValue)
         {
-            if (request.CooldownTurns.Value < 0) throw new ApiException(400, "INVALID_COOLDOWN", "cooldownTurns must not be negative.");
-            skill.CooldownTurns = (short?)Math.Clamp(request.CooldownTurns.Value, 0, short.MaxValue);
+            if (request.CooldownTurns.Value < 0 || request.CooldownTurns.Value > short.MaxValue)
+                throw new ApiException(400, "INVALID_COOLDOWN", "cooldownTurns is outside the supported range.");
+            skill.CooldownTurns = (short?)request.CooldownTurns.Value;
         }
+        var timingRules = await db.Rulesets.AsNoTracking().Where(r => r.IsActive).Select(r => r.Config).SingleAsync(ct);
+        if (skill.IsEnabled && Rules.Skills.SkillTiming.Version(timingRules.RootElement) >= 2 &&
+            !Rules.Skills.SkillTiming.ValidCommand(skill.ImplementationKey, skill.CooldownTurns ?? 0, skill.Parameters.RootElement))
+            throw new ApiException(400, "INVALID_SKILL_CONFIG", "The skill requires a positive cooldown and valid duration parameters.");
         var after = new { skill.Name, skill.Description, skill.IsEnabled, skill.MaxUses, skill.CooldownTurns };
         audit.Write(actorId, "skill.update", "team_skill", skillId.ToString("D"), before, after, request.Reason);
         await db.SaveChangesAsync(ct);

@@ -23,6 +23,8 @@ public sealed partial class MatchFlowTests
         var faction = new Faction { Id = Guid.NewGuid(), Code = $"test-{Guid.NewGuid():N}", Name = "Test faction" };
         var skill = new TeamSkill { Id = Guid.NewGuid(), Code = $"zz-{Guid.NewGuid():N}", Name = "Test faction skill",
             FactionId = faction.Id, ImplementationKey = key, IsEnabled = true, CooldownTurns = 8,
+            Parameters = JsonDocument.Parse(key == FactionSkillHandler.Forecast ? "{}" :
+                key == FactionSkillHandler.Trap ? "{\"durationTurns\":6,\"rootDurationTurns\":4}" : "{\"durationTurns\":6}"),
             Eligibility = JsonDocument.Parse("""{"minNonSoldierFactionHeroes":8,"keepThisSetting":true}""") };
         db.Factions.Add(faction);
         db.TeamSkills.Add(skill);
@@ -70,7 +72,7 @@ public sealed partial class MatchFlowTests
                 target = new { positions = new[] { new { x = 2, y = 4 }, new { x = 4, y = 4 }, new { x = 6, y = 5 } } } });
             var url = $"/api/v1/matches/{id}";
             var played = await Post<MatchCommandResultDto>(red.Client, $"{url}/commands", new MatchCommandRequest(Guid.NewGuid(), 0, action));
-            Assert.Equal("black", played.Snapshot.SideToMove);
+            Assert.Equal(key == FactionSkillHandler.Forecast ? "red" : "black", played.Snapshot.SideToMove);
             if (key == FactionSkillHandler.Trap)
             {
                 Assert.Equal(3, played.Snapshot.State.GetProperty("riverSnares").GetArrayLength());
@@ -88,6 +90,9 @@ public sealed partial class MatchFlowTests
                 Assert.All(repeated, reply => Assert.True(JsonElement.DeepEquals(result, reply)));
                 using var hidden = await black.Client.GetAsync(forecast);
                 Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode);
+                played = await Post<MatchCommandResultDto>(red.Client, $"{url}/commands",
+                    new MatchCommandRequest(Guid.NewGuid(), played.SequenceNo, JsonSerializer.SerializeToElement(new { type = "end_turn" })));
+                Assert.Equal("black", played.Snapshot.SideToMove);
             }
             else
             {
@@ -158,7 +163,7 @@ public sealed partial class MatchFlowTests
         var entry = Assert.Single(replay.Entries);
         Assert.Equal("hero_active", entry.Kind);
         var stake = Assert.Single(entry.StateAfter.GetProperty("obstacles").EnumerateArray());
-        Assert.Equal(2, stake.GetProperty("remainingLifetime").GetInt32());
+        Assert.Equal(3, stake.GetProperty("remainingLifetime").GetInt32());
         Assert.Equal("red", entry.StateAfter.GetProperty("obstacleMetadata").GetProperty(stake.GetProperty("obstacleId").GetString()!).GetProperty("placer").GetString());
         await Post<MatchCommandResultDto>(black.Client, path, new MatchCommandRequest(Guid.NewGuid(), accepted.SequenceNo,
             JsonSerializer.SerializeToElement(new { type = "resign" })));

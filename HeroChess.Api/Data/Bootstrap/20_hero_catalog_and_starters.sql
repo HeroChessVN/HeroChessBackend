@@ -22,7 +22,7 @@ BEGIN
  ('tran-thu-do-advisor','tranthudo',200,false),('nguyen-nhac-advisor','nguyennhac',200,false),
  ('nguyen-lu-advisor','nguyenlu_rig',200,false),('dinh-le-cannon','dinhle',100,false),
  ('ly-thuong-kiet-cannon','lythuongkiet',200,false),('yet-kieu-cannon','yetkeu',100,false),
- ('nguyen-van-loc-cannon',NULL,100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
+ ('nguyen-van-loc-cannon','nguyenvanloc',100,false),('bui-thi-xuan-elephant','buithixuan',200,false),
  ('da-tuong-elephant','datuong',300,false),('pham-van-xao-elephant','phamvanxao',100,false),
  ('tran-binh-trong-elephant','tranbinhtrong',200,false),('tran-hung-dao-elephant','tranhungdao',300,false),
  ('trung-trac-elephant','trungtrac',300,false),('trung-nhi-elephant','trungnhi',300,false),
