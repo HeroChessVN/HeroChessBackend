@@ -64,11 +64,27 @@ public sealed partial class MatchmakingService
             var guest = new CustomRoomMember { RoomId = room.Id, PlayerId = playerId,
                 Seat = room.Members.Single().Seat == 1 ? (short)2 : (short)1, LastSeenAt = DateTimeOffset.UtcNow };
             db.CustomRoomMembers.Add(guest);
+            await db.SaveChangesAsync(ct);
+            return await RoomDtoAsync(db, room, playerId, ct);
+        }, ct);
+    }
+
+    public Task<CustomRoomDto> StartRoomAsync(Guid playerId, Guid roomId, CancellationToken ct) =>
+        MutateRoomAsync(async db =>
+        {
+            var room = await LockRoomAsync(db, roomId, ct);
+            RequireMember(room, playerId);
+            if (room.OwnerId != playerId) throw new ApiException(403, "ROOM_OWNER_REQUIRED", "Only the room owner can start the match.");
+            // Retrying a start returns the same open match, never a second one.
+            if (await HasOpenMatchAsync(db, room, ct)) return await RoomDtoAsync(db, room, playerId, ct);
+            if (room.Members.Count != 2) throw new ApiException(409, "ROOM_NOT_READY", "Two players must join before starting.");
+            var guest = room.Members.Single(x => x.PlayerId != playerId);
+            await RequireAvailableAsync(db, playerId, ct, allowRoom: true);
+            await RequireAvailableAsync(db, guest.PlayerId, ct, allowRoom: true);
             var match = await AddRoomMatchAsync(db, room, guest.PlayerId, ct);
             await db.SaveChangesAsync(ct);
             return BuildRoomDto(room, playerId, match.Id, match.Status);
         }, ct);
-    }
 
     public Task<CustomRoomDto> RematchRoomAsync(Guid playerId, Guid roomId, Guid previousMatchId, Guid requestId, CancellationToken ct) =>
         MutateRoomAsync(async db =>
