@@ -9,6 +9,56 @@ namespace HeroChess.IntegrationTests;
 public sealed partial class MatchFlowTests
 {
     [Fact]
+    public async Task Custom_room_exposes_current_public_profiles_to_both_members()
+    {
+        const string rooms = "/api/v1/matchmaking/rooms";
+        var host = await CreatePlayerWithLineup();
+        var guest = await CreatePlayerWithLineup();
+        var hostProfile = await Post<MeDto>(host.Client, "/api/v1/me",
+            new UpdateProfileRequest("Chủ phòng", "leloi", "khung-vang"), HttpMethod.Patch);
+        var guestProfile = await Post<MeDto>(guest.Client, "/api/v1/me",
+            new UpdateProfileRequest("Khách vào phòng", "lelai", "khung-rong"), HttpMethod.Patch);
+        var created = await Post<CustomRoomDto>(host.Client, rooms, new { });
+        var initial = Assert.Single(created.Members);
+        Assert.True(initial.IsSelf && initial.IsOwner);
+        Assert.Equal(hostProfile.UserId, initial.Player.PlayerId);
+
+        var joined = await Post<CustomRoomDto>(guest.Client, rooms + "/join", new JoinCustomRoomRequest(created.Code));
+        Assert.Equal("ready", joined.Status);
+        Assert.Null(joined.MatchId);
+        Assert.Equal(2, joined.Members.Count);
+        var seenHost = Assert.Single(joined.Members, member => !member.IsSelf);
+        Assert.True(seenHost.IsOwner);
+        Assert.Equal((hostProfile.UserId, "Chủ phòng", "leloi", "khung-vang"),
+            (seenHost.Player.PlayerId, seenHost.Player.DisplayName, seenHost.Player.AvatarName, seenHost.Player.FrameName));
+        var hostView = (await host.Client.GetFromJsonAsync<CustomRoomDto>(rooms + "/current", Json))!;
+        var seenGuest = Assert.Single(hostView.Members, member => !member.IsSelf);
+        Assert.False(seenGuest.IsOwner);
+        Assert.Equal((guestProfile.UserId, "Khách vào phòng", "lelai", "khung-rong"),
+            (seenGuest.Player.PlayerId, seenGuest.Player.DisplayName, seenGuest.Player.AvatarName, seenGuest.Player.FrameName));
+
+        await Post<MeDto>(guest.Client, "/api/v1/me", new UpdateProfileRequest(DisplayName: "Tên mới"), HttpMethod.Patch);
+        using var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+        form.Add(file, "file", "avatar.png");
+        using var upload = await guest.Client.PostAsync("/api/v1/me/avatar", form);
+        Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
+        var uploaded = (await upload.Content.ReadFromJsonAsync<MeDto>(Json))!;
+        hostView = (await host.Client.GetFromJsonAsync<CustomRoomDto>(rooms + "/current", Json))!;
+        seenGuest = Assert.Single(hostView.Members, member => !member.IsSelf);
+        Assert.Equal("Tên mới", seenGuest.Player.DisplayName);
+        Assert.Equal(uploaded.AvatarName, seenGuest.Player.AvatarName);
+        Assert.Equal(uploaded.AvatarUrl, seenGuest.Player.AvatarUrl);
+
+        await host.Client.PostAsJsonAsync($"{rooms}/{created.RoomId}/leave", new LeaveCustomRoomRequest("leave_room"), Json);
+        var transferred = (await guest.Client.GetFromJsonAsync<CustomRoomDto>(rooms + "/current", Json))!;
+        var remaining = Assert.Single(transferred.Members);
+        Assert.True(remaining.IsSelf && remaining.IsOwner);
+        Assert.Equal(guestProfile.UserId, remaining.Player.PlayerId);
+    }
+
+    [Fact]
     public async Task Custom_room_keeps_its_code_after_transfer_and_closes_when_new_owner_ends_session()
     {
         const string rooms = "/api/v1/matchmaking/rooms";

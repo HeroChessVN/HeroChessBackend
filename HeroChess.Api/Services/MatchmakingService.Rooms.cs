@@ -83,7 +83,7 @@ public sealed partial class MatchmakingService
             await RequireAvailableAsync(db, guest.PlayerId, ct, allowRoom: true);
             var match = await AddRoomMatchAsync(db, room, guest.PlayerId, ct);
             await db.SaveChangesAsync(ct);
-            return BuildRoomDto(room, playerId, match.Id, match.Status);
+            return await RoomDtoAsync(db, room, playerId, ct, match.Id);
         }, ct);
 
     public Task<CustomRoomDto> RematchRoomAsync(Guid playerId, Guid roomId, Guid previousMatchId, Guid requestId, CancellationToken ct) =>
@@ -113,7 +113,7 @@ public sealed partial class MatchmakingService
                 RoomId = room.Id, RequestId = requestId, PreviousMatchId = previousMatchId, MatchId = match.Id
             });
             await db.SaveChangesAsync(ct);
-            return BuildRoomDto(room, playerId, match.Id, match.Status);
+            return await RoomDtoAsync(db, room, playerId, ct, match.Id);
         }, ct);
 
     public async Task RoomPresenceAsync(Guid playerId, Guid roomId, CancellationToken ct)
@@ -220,17 +220,24 @@ public sealed partial class MatchmakingService
     private static async Task<bool> HasOpenMatchAsync(AppDbContext db, CustomRoom room, CancellationToken ct) =>
         await MatchStatusAsync(db, room.CurrentMatchId, ct) is "selecting" or "active";
 
-    private static async Task<CustomRoomDto> RoomDtoAsync(AppDbContext db, CustomRoom room, Guid playerId, CancellationToken ct, Guid? replayId = null)
+    private async Task<CustomRoomDto> RoomDtoAsync(AppDbContext db, CustomRoom room, Guid playerId, CancellationToken ct, Guid? replayId = null)
     {
         var last = replayId ?? room.CurrentMatchId;
-        return BuildRoomDto(room, playerId, last, await MatchStatusAsync(db, last, ct));
+        await using var scope = scopes.CreateAsyncScope();
+        var profiles = await scope.ServiceProvider.GetRequiredService<PlayerProfileService>()
+            .ForPlayersAsync(room.Members.Select(member => member.PlayerId), null, ct);
+        var members = room.Members.OrderBy(member => member.Seat)
+            .Select(member => new CustomRoomMemberDto(member.Seat, member.PlayerId == playerId,
+                member.PlayerId == room.OwnerId, profiles[member.PlayerId])).ToArray();
+        return BuildRoomDto(room, playerId, last, await MatchStatusAsync(db, last, ct), members);
     }
 
-    private static CustomRoomDto BuildRoomDto(CustomRoom room, Guid playerId, Guid? last, string? matchStatus)
+    private static CustomRoomDto BuildRoomDto(CustomRoom room, Guid playerId, Guid? last, string? matchStatus,
+        IReadOnlyList<CustomRoomMemberDto> members)
     {
         var playing = matchStatus is "selecting" or "active";
         var owner = room.Members.Single(x => x.PlayerId == room.OwnerId);
         return new(room.Id, room.Code, room.Members.Count, 2, playing ? matchStatus! : room.Members.Count == 2 ? "ready" : "waiting",
-            room.OwnerId == playerId, playing ? last : null, last, owner.LastSeenAt >= DateTimeOffset.UtcNow.AddSeconds(-90));
+            room.OwnerId == playerId, playing ? last : null, last, owner.LastSeenAt >= DateTimeOffset.UtcNow.AddSeconds(-90), members);
     }
 }
