@@ -51,6 +51,19 @@ public sealed class ForecastAlgorithmTests
     }
 
     [Fact]
+    public void Forecast_stops_when_the_match_ends_instead_of_padding_the_five_action_sequence()
+    {
+        var state = Position();
+        state.CountedActions = 149;
+        var forecast = GameJson.Element(BotDifficultyTests.Engine().Forecast(state,
+            BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
+        var action = Assert.Single(forecast.GetProperty("variation").EnumerateArray());
+        Assert.NotEqual(JsonValueKind.Null, action.GetProperty("boardAfter").GetProperty("result").ValueKind);
+        Assert.Equal(149, state.CountedActions);
+        Assert.Null(state.Result);
+    }
+
+    [Fact]
     public void Cutoff_and_cancellation_never_publish_unchecked_actions()
     {
         var state = Position();

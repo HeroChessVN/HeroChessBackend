@@ -1,73 +1,48 @@
-# Prompt bàn giao Unity cho Lam Sơn Quân Lược
+# Unity — Lam Sơn Quân Lược và bẫy Trần
 
-Lưu ý: phần BE bên dưới đã triển khai local, chưa deploy. Unity chưa được sửa trong đợt này. Chỉ test tích hợp sau khi API chạy bản BE tương ứng.
+BE và Unity đã được sửa local. Phải chạy SQL `22_forecast_review.sql` trước khi deploy API rồi phát hành client tương ứng. Chưa deploy từ đợt này.
 
-Sao chép phần dưới cho người phụ trách Unity:
+## Luồng Lam Sơn
 
----
+1. Gửi command `team_skill` như cũ. ACK bắt đầu cooldown và trừ lượt dùng nhưng giữ phe đi và deadline cũ. Với `state.skillTimingVersion=2`, CD mới giữ nguyên sau cast và sau xác nhận Đi/timeout (mặc định 15 sau SQL 23); timer cũ chỉ giảm một lần khi lượt thật sự kết thúc. Đọc CD frozen, không tự trừ một hoặc hardcode 15. Snapshot V1 giữ luật cũ.
+2. Đọc `snapshot.state.forecastReview`: `{ "owner": "red", "activationSequence": 42 }`. Khóa di chuyển, Hero skill, Command skill và Undo khi còn trạng thái này. Đầu hàng vẫn được phép.
+3. Gọi `GET /api/v1/matches/{id}/forecast?version=42`. Dùng mốc activationSequence, không dùng version bàn sau đó.
+4. Mở bàn 2D riêng: `prediction.initialBoard`; các bước `variation[].boardAfter`; các nhánh nguy hiểm `threats[].boardAfter`. Chuỗi tối đa năm hành động địch → mình → địch → mình → địch (ba địch, hai mình); tối đa hai nhánh nguy hiểm ở bước đầu. Duyệt `variation.Length`, bỏ giới hạn ba bước nếu client còn hardcode. Có thể nhận ít hơn khi hết ngân sách tính hoặc trận kết thúc; không tự bù bước còn thiếu.
+5. Dùng ảnh tướng, mũi tên và nút Trước/Tiếp. Chỉ thay bàn mô phỏng, không gửi các nước này lên server.
+6. Nút **Đi** gửi command với commandId mới, expectedVersion hiện tại và `action: { "type": "end_turn" }`. ACK xóa forecastReview và chuyển phe; cả lần dùng skill chỉ tính một hành động.
+7. Đồng hồ lượt gốc tiếp tục chạy. Server tự chốt khi hết giờ, không phạt AFK cho thời gian xem skill. Client không tự đổi phe. Tải dự báo lỗi vẫn có nút Đi.
+8. Thu gọn cửa sổ không hoàn tác skill. Reconnect đọc lại forecastReview và mở đúng lần kích hoạt; mất mạng không khôi phục quyền đi thêm nước. Khi trận kết thúc hoặc server chốt lượt, đóng cửa sổ. Có thể xem lại dự báo bằng nút riêng.
 
-Chỉ sửa luồng Lam Sơn Quân Lược và việc hiển thị kết quả authoritative của bẫy Trần. Không sửa luật cờ phía client, cấp độ bot, cooldown, dữ liệu tài khoản hoặc backend. Đọc AGENTS.md của project trước khi sửa. Không tạo nhánh/commit/push nếu chưa được yêu cầu.
+Giữ cơ chế retry commandId hiện có. Retry GET có giãn nhịp, không gửi lại lệnh dùng skill. Forecast là gợi ý chứ không bảo đảm nước tiếp theo. Bàn mô phỏng đã lọc dữ liệu bí mật. Không dùng nó làm snapshot trận thật.
 
-## Bối cảnh và hợp đồng Lam Sơn
+## Bẫy Trần
 
-Kỹ năng `lam_son_quan_luoc` tốn một hành động và chuyển lượt. Sau ACK kích hoạt, gọi:
+Bẫy địch không xuất hiện trong state của người gọi và không cản đặt skill. Thành/Rào/Cọc/bẫy của mình được đặt đè lên bẫy địch ẩn nếu ô hợp lệ theo thông tin công khai. Bẫy cùng phe vẫn chặn đặt trùng. Bẫy tạm không kích hoạt khi có quân hoặc bất kỳ công trình nào trên ô, kể cả Cọc.
 
-```http
-GET /api/v1/matches/{matchId}/forecast?version={activationSequence}
-```
+Khi trúng bẫy, luôn lấy vị trí thực tế từ snapshot sau command, không tự đặt quân tại đích request. Quân dừng ở bẫy đầu tiên; Mã có thể dừng tại chân. Không tự ăn quân phía sau. Lý Thường Kiệt cũng chịu quy tắc khóa chân này.
 
-`activationSequence` là `sequenceNo` trong ACK của lần dùng skill, không phải version mới nhất sau khi bot đi. Phản hồi:
+## Các file chính
 
-```json
-{
-  "version": 42,
-  "prediction": {
-    "variation": [],
-    "threats": []
-  }
-}
-```
+- `HeroChessOnlineDemo.cs`: gửi command, nhận snapshot, khóa hành động.
+- `HeroChessOnlineDemo.CommandSkills.cs`: khôi phục review, GET forecast, xác nhận end_turn.
+- `HeroChessOnlineDemo.AuthoredUI.cs`: hiển thị/ẩn cửa sổ.
+- `XiangqiPlayHud.Forecast.cs`: bàn dự báo 2D, dùng ảnh tướng có sẵn; không tải model 3D.
 
-Mỗi mục chứa `side`, `action`, `from`, `pieceClass`, `pieceName`, `skillName`; chấp nhận null ở trường không áp dụng. Chuỗi gồm tối đa ba hành động địch → mình → địch, không phải ba phương án hay ba nước liên tiếp của mình. Nguy cơ là tối đa hai phương án ở bước địch đầu tiên, có thể không có.
+## Kiểm tra trên Unity Editor
 
-BE tính từ snapshot lúc kích hoạt và trả version 42 dù bàn hiện tại đã là 43 hoặc trận đã kết thúc. Version trong phản hồi là mốc lịch sử của dự đoán. Không dùng response forecast làm snapshot bàn cờ. Cache hai phút là thời hạn giữ kết quả tính sẵn, không phải thời hạn mất quyền xem lại; khi hết cache BE có thể tính lại.
+- Dùng Lam Sơn: chưa đổi phe, không đi được quân; xem 0–5 bước và 0–2 nhánh nguy hiểm. Nếu có đủ năm bước, thứ tự là địch → mình → địch → mình → địch.
+- Nhấn Đi hai lần, hoặc đúng lúc hết giờ: chỉ một lần chốt lượt.
+- GET lỗi, đóng/mở cửa sổ, mất mạng, reconnect: vẫn đã dùng skill và giữ deadline gốc.
+- Hết giờ tự đóng; không tăng chuỗi AFK. Đầu hàng khi đang xem đóng cửa sổ.
+- Trong trận bot: sau khi chốt, bot mới đi; Undo đưa về trước lần dùng skill.
+- Bẫy ẩn không làm lộ tọa độ qua việc đặt Thành/Rào/Cọc/bẫy. Bẫy dưới công trình chờ đến khi ô trống.
 
-## Các vị trí cần đọc trong Unity
+## Nâng chuỗi dự báo từ 3 lên 5 hành động
 
-- `Assets/HeroChess/Scripts/Runtime/Backend/HeroChessOnlineDemo.cs`: `SubmitPending`, `AcceptSnapshot`.
-- `Assets/HeroChess/Scripts/Runtime/Backend/HeroChessOnlineDemo.CommandSkills.cs`: `ReadSkillForecast`, `PresentForecast`, `ForecastActionLabel`.
-- `Assets/HeroChess/Scripts/Runtime/Backend/HeroChessOnlineDemo.AuthoredUI.cs`: chỗ gọi `PresentForecast` và chọn skill.
-- `Assets/HeroChess/Scripts/Runtime/Board/XiangqiPlayHud.cs`: bảng hiển thị dự đoán.
+BE trả tối đa năm mục `variation`; schema API giữ nguyên. Đợt này chỉ sửa BE và tài liệu, chưa sửa source Unity. Các chỗ Unity hiện vẫn giới hạn ba bước:
 
-## Việc cần sửa
+- `HeroChessOnlineDemo.CommandSkills.cs`: `ForecastLines(prediction, "variation", 3)` trong phần mô tả sử dụng và `AddForecastMoves(f, Child(prediction, "variation"), false, 3)` trong phần tạo dữ liệu hiển thị. Cả hai cần lấy đủ số mục server trả, tối đa năm; không cắt còn ba.
+- `LamSonForecastView.cs`: hiện chỉ tạo năm `RowView` (`for (int i = 0; i < 5; i++)`). Trước đây đủ cho ba bước và hai nguy cơ; nay cần hỗ trợ tối đa bảy dòng, tốt nhất tạo thêm dòng theo số mục thực tế. Kiểm tra lại chiều cao, vùng cuộn và giới hạn mép màn hình khi hiện đủ năm bước cùng hai nguy cơ.
+- `XiangqiPlayHud.Forecast.cs` đã đọc `variation.Count` để điều hướng bàn dự báo; giữ cách đọc động này.
 
-1. Khi ACK xác nhận Lam Sơn, chụp `matchId`, `activationSequence`, ngữ cảnh tài khoản/trận và một mã yêu cầu forecast cục bộ. Hiện “Đang phân tích…”. Gọi GET dù snapshot hiện tại đã mới hơn ACK.
-2. Khi nhận dữ liệu, kiểm tra còn cùng tài khoản/trận và đây vẫn là yêu cầu Lam Sơn mới nhất. Kiểm tra `reply.version == activationSequence` đã chụp; **không** bắt nó bằng version bàn hiện tại.
-3. Không xóa forecast chỉ vì `AcceptSnapshot` nhận một nước đi mới. Giữ kết quả để người chơi đọc/đóng/mở lại trong cùng trận. Xóa khi thoát trận, logout, chuyển tài khoản hoặc thay bằng lần kích hoạt mới. Undo phải xóa/hủy kết quả đang chờ; không nhận lại response của nhánh cũ.
-4. Hiện tiêu đề “Lam Sơn Quân Lược”, mốc “Dự đoán tại lượt …”, chuỗi và nguy cơ. Khi bàn đã khác mốc, ghi “Bàn cờ đã thay đổi — đây là dự đoán tại thời điểm kích hoạt”. Không giữ mũi tên cũ trên bàn hiện tại khiến người chơi hiểu nhầm là nước hợp lệ mới.
-5. Nếu có minh họa mũi tên, chỉ vẽ ở snapshot đúng mốc hoặc khung xem lại riêng. Không di chuyển/xóa quân thật hay áp hành động trong chuỗi dự đoán lên trận đang chơi.
-6. Danh sách ngắn hơn ba hoặc hai vẫn hợp lệ. Nếu cả hai rỗng, hiện “Chưa có phương án dự đoán phù hợp”, không báo chắc chắn đủ ba nước.
-7. Nút thử lại chỉ gọi GET với cùng activationSequence. Không gửi lại `team_skill` bằng commandId mới, không tiêu thêm lượt hoặc reset cooldown.
-8. `429 FORECAST_BUSY`: báo máy chủ bận và cho tải lại có giãn nhịp. `429 FORECAST_RATE_LIMITED`: đã quá 30 yêu cầu/phút/người, chờ trước khi thử lại, không polling liên tục. `404`: báo kết quả không còn khả dụng hoặc lần kích hoạt không hợp lệ. `422`: dữ liệu lịch sử không phân tích được, hiện không có dự đoán, không tự kích hoạt lại skill. Lỗi mạng: báo rõ và cho GET lại. `401`: xử lý đăng nhập như các API khác. Khi gặp `409` với BE cũ, báo chưa lấy được dự đoán thay vì im lặng.
-9. Chống response đến sai thứ tự: kết quả của trận cũ, tài khoản cũ hoặc lần kích hoạt trước không được đè kết quả mới.
-
-## Bẫy Trần đã đổi luật ở BE
-
-`bach_dang_tran_phap`: mọi quân dừng ở bẫy đầu tiên trên đường; Mã có thể đứng ở ô chân nếu dính bẫy tại chân. Không được suy diễn rằng Mã luôn phải xuất hiện ở ô đáp đã gửi.
-
-- Khi nhận ACK/WS, vị trí và quân bị ăn phải lấy từ snapshot mới. Sự kiện `piece.moved.to` cũng trả tọa độ dừng thực tế; đích trong request chỉ là đích dự định.
-- Không tự xóa quân ở đích dự định trước khi có xác nhận; nếu có animation lạc quan thì phải sửa/hoàn tác khi đích thực tế khác.
-- Vẽ khóa chân tại vị trí thực tế trong `pieces[].position`, đọc `bach_dang_rooted` và `remainingTurns` từ effects.
-- Không vẽ bẫy địch chưa biết, không tự tính lại ngòi Pháo hay đặc quyền Lý Thường Kiệt để ghi đè state server.
-- `endReason=river_snare` là thua do dừng sớm khiến Tướng không còn an toàn. Hiển thị kết quả server, không tiếp tục cho đi.
-
-## Test cần báo kết quả
-
-- Bot đi trước lúc GET bắt đầu và trước lúc GET kết thúc: dự đoán vẫn hiện, có nhãn cũ khi cần.
-- Dự đoán đã hiện, đối thủ đi tiếp: bảng không tự biến mất.
-- Bấm tải lại không tiêu lượt; không gửi thêm command kích hoạt.
-- Logout/đổi trận/undo trong lúc chờ: response cũ không xuất hiện.
-- Loading, lỗi mạng, 404, 429 và danh sách rỗng có phản hồi rõ ràng.
-- Pháo thường và Pháo Lý Thường Kiệt cùng dừng ở bẫy; quân ở đích dự định vẫn còn. Mã dừng ở chân đúng state, không bị client kéo về ô đáp.
-
-Khi bàn giao, liệt kê file đã sửa, kết quả test thực tế và điểm chưa kiểm chứng. Không tự thay đổi contract API.
+Test cả khi người dùng skill là Đỏ lẫn Đen: thứ tự tương đối luôn là địch ① → mình ① → địch ② → mình ② → địch ③. Cảnh báo vẫn thuộc lượt địch đầu tiên, không phải bước thứ sáu và bảy của chuỗi. Có thể trả 0–5 bước khi hết ngân sách hoặc trận kết thúc.

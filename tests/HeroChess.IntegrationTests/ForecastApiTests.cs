@@ -45,7 +45,7 @@ public sealed partial class MatchFlowTests
         {
             Assert.Equal(1, reply.GetProperty("version").GetInt32());
             Assert.True(JsonElement.DeepEquals(replies[0], reply));
-            Assert.InRange(reply.GetProperty("prediction").GetProperty("variation").GetArrayLength(), 0, 3);
+            Assert.InRange(reply.GetProperty("prediction").GetProperty("variation").GetArrayLength(), 0, 5);
         });
         Assert.Equal(HttpStatusCode.NotFound, (await black.Client.GetAsync(url)).StatusCode);
         var outsider = await CreatePlayerWithLineup();

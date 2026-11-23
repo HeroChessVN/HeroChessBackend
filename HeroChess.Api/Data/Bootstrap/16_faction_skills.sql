@@ -15,7 +15,7 @@ FROM (VALUES
     ('tran', 'bach_dang_tran_phap', 'Bạch Đằng Trận Pháp', 8,
         'Đặt ba bẫy ẩn trên sông trong 6 lượt. Quân địch đi qua bị khóa chân 4 lượt. Mỗi bẫy dùng một lần.'),
     ('hau-le', 'lam_son_quan_luoc', 'Lam Sơn Quân Lược', 16,
-        'Xem riêng tối đa ba hành động dự đoán và hai phương án nguy hiểm của địch ở lượt kế tiếp.'),
+        'Xem riêng chuỗi dự đoán tối đa năm hành động: địch, ta, địch, ta, địch; gồm ba hành động của địch và hai hành động của ta. Hiển thị thêm tối đa hai phương án nguy hiểm của địch ở lượt dự đoán đầu tiên. Dự báo có thể ngắn hơn khi hết ngân sách phân tích hoặc trận kết thúc.'),
     ('tay-son', 'hich_xuat_quan', 'Hịch Xuất Quân', 12,
         'Trong 6 lượt, Tốt phe mình có thể đi thêm một ô theo hướng hợp lệ nếu ô trung gian trống.')
 ) AS skill(faction_code, code, name, cooldown, description)

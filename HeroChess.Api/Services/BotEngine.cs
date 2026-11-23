@@ -27,9 +27,9 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
         var initialBoard = Board(state);
         var started = _clock.GetTimestamp();
         var nodes = 0;
-        var variation = new List<object>(3);
+        var variation = new List<object>(5);
         object[] threats = [];
-        for (var ply = 0; ply < 3 && state.Result is null && !OutOfTime(); ply++)
+        for (var ply = 0; ply < 5 && state.Result is null && !OutOfTime(); ply++)
         {
             var actor = state.SideToMove;
             var ranked = new List<(JsonElement Action, GameState Next, int Score, bool Threat)>();

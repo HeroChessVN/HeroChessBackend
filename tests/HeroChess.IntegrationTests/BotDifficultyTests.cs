@@ -40,16 +40,20 @@ public sealed class BotDifficultyTests
         }
     }
 
-    [Fact]
-    public void Forecast_lists_three_alternating_actions_and_at_most_two_first_turn_threats()
+    [Theory]
+    [InlineData(Side.Black)]
+    [InlineData(Side.Red)]
+    public void Forecast_lists_five_alternating_actions_and_at_most_two_first_turn_threats(Side first)
     {
         var state = Position();
-        state.SideToMove = Side.Black;
+        state.SideToMove = first;
         var forecast = GameJson.Element(Engine().Forecast(state, Rules(), Lineups(), default));
-        Assert.Equal(new[] { "black", "red", "black" }, forecast.GetProperty("variation").EnumerateArray()
+        var enemy = first == Side.Black ? "black" : "red";
+        var ours = first == Side.Black ? "red" : "black";
+        Assert.Equal(new[] { enemy, ours, enemy, ours, enemy }, forecast.GetProperty("variation").EnumerateArray()
             .Select(item => item.GetProperty("side").GetString()));
         Assert.InRange(forecast.GetProperty("threats").GetArrayLength(), 0, 2);
-        Assert.All(forecast.GetProperty("threats").EnumerateArray(), threat => Assert.Equal("black", threat.GetProperty("side").GetString()));
+        Assert.All(forecast.GetProperty("threats").EnumerateArray(), threat => Assert.Equal(enemy, threat.GetProperty("side").GetString()));
     }
 
     [Theory]
