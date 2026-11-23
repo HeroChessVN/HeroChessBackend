@@ -109,11 +109,56 @@ Các `action` khác đặt vào cùng phong bì trên:
 { "type": "team_skill", "slot": 2, "target": { "pieceId": "<quân đồng minh>" } }
 { "type": "hero_active", "pieceId": "<Trần Hưng Đạo hệ Tượng>", "skillCode": "tran_hung_dao_tuong.coc", "target": { "position": { "x": 4, "y": 5 } } }
 { "type": "hero_active", "pieceId": "<Quang Trung>", "skillCode": "quang_trung.special_move", "target": { "to": { "x": 4, "y": 2 } } }
-{ "type": "undo", "targetSequence": 0 }
+{ "type": "undo" }
 { "type": "resign" }
 ```
 
 Với `team_skill`, chọn `slot` theo `state.skillStates.<phe>.slotNo`, rồi dựng `target` theo `implementationKey`. Thành và Rào dùng `position`, còn Khiên dùng `pieceId` của quân mình. `undo` dành cho trận bot và có thể hoàn tác `hero_active`.
+
+### Undo trong trận với bot
+
+Nút **Hoàn tác** gửi `POST /api/v1/matches/{matchId}/commands` với command envelope hiện có:
+
+```json
+{
+  "commandId": "<UUID mới>",
+  "expectedVersion": 12,
+  "action": { "type": "undo" }
+}
+```
+
+Không gửi `targetSequence` cho nút Undo thông thường. BE tự tìm hành động gần nhất của người chơi trên nhánh hiện hành rồi đưa bàn về **trước hành động đó**. Nếu bot đã trả nước thì cả nước bot sau đó cũng được hoàn tác. Có thể bấm trong lúc chờ bot; nếu bot vừa đi trước khi lệnh đến server thì xử lý `409 STALE_STATE` bên dưới.
+
+`targetSequence` là tùy chọn nâng cao để về một snapshot cụ thể, không phải số lượt lùi. Ví dụ `targetSequence: 0` nghĩa là **về đầu trận**, không phải hoàn tác một nước. Mục tiêu phải tồn tại, nhỏ hơn version hiện tại và không nằm giữa giai đoạn xem Lam Sơn.
+
+**Điều kiện và giao diện:**
+
+- Chỉ hiện nút cho `mode == "bot"` và `status == "active"`; không dùng trong Ranked/Custom PvP hoặc sau khi trận đã kết thúc, kể cả sau đầu hàng/chiếu bí.
+- Khóa khi `state.forecastReview` còn tồn tại, khi đang gửi command khác hoặc đang xem replay. Lam Sơn phải bấm kết thúc review/đợi timeout trước khi Undo.
+- Chưa có hành động của mình thì không có gì để hoàn tác. Có thể khóa nút sau lỗi `NO_UNDO_AVAILABLE` ở version đó và mở lại khi bàn có version mới.
+- Không tự đảo tọa độ, cộng CD hoặc hồi sinh model bằng suy đoán. Thay toàn bộ bàn và UI theo `snapshot` trả về: quân sống/bị loại, vị trí hai quân khi Lê Lai đổi chỗ, Khiên, khóa chân, buff Tốt, Thành/Rào/Cọc/bẫy, CD/lượt dùng và trạng thái nội tại đều được khôi phục từ dữ liệu trận.
+- Sau Undo thành công, lấy lại legal actions nếu tới lượt mình. Đồng hồ dùng `snapshot.deadlineAt` và `serverNow` mới; không giữ deadline trước Undo.
+
+**ACK và đồng bộ:** Undo tạo thêm một bản ghi lịch sử, không xóa các nước cũ. `sequenceNo`/`snapshot.version` tiếp tục tăng, dù `turnIndex` và `countedActions` có thể lùi. Không dùng hai số lượt đó để bỏ snapshot mới. Sự kiện trả về:
+
+```json
+{ "type": "match.undone", "targetSequence": 8 }
+```
+
+Server gửi `match.changed` cho các kết nối; client gọi lại `/state` theo cơ chế hiện có. Retry vì mất ACK phải dùng lại đúng `commandId` và action, không tạo UUID khác cho cùng lần bấm. ACK duplicate có thể chứa snapshot lịch sử: không ghi đè bàn mới hơn bằng response có version thấp hơn. Sau Undo, xóa phần dự báo Lam Sơn thuộc nhánh đã bị bỏ; endpoint forecast vẫn kiểm tra nhánh ngay cả khi có cache.
+
+| HTTP / mã lỗi | Cách xử lý |
+|---|---|
+| `409 STALE_STATE` | Tải `/state` mới; chưa coi Undo là thành công. Nếu người chơi vẫn muốn Undo thì gửi command mới theo version mới. |
+| `409 TURN_DEADLINE_PASSED` | Tải state mới sau khi server xử lý hết giờ, không tự lùi bàn. |
+| `409 MATCH_NOT_ACTIVE` / `MATCH_NOT_STARTED` | Cập nhật trạng thái trận và khóa nút. |
+| `422 NO_UNDO_AVAILABLE` | Báo không còn nước của mình để hoàn tác. |
+| `422 UNDO_NOT_ALLOWED` | Chế độ hiện tại không hỗ trợ Undo. |
+| `422 TURN_ALREADY_COMMITTED` | Lam Sơn còn đang chờ kết thúc review. |
+| `422 INVALID_UNDO_TARGET` | Snapshot đích không hợp lệ; nút thông thường không nên tự chọn target. |
+| `409 COMMAND_ID_CONFLICT` | Không tái sử dụng commandId cho nội dung khác. |
+
+Kiểm tra Unity: Undo trước/sau khi bot trả nước; bấm lặp/mất ACK; dùng skill rồi Undo; ăn quân hoặc trúng Cọc/bẫy rồi Undo; CD/hiệu lực không giảm thêm khi dựng lại bàn; Lam Sơn bị khóa trong review và hoàn tác cả lần dùng sau khi đã chốt. Xem lại replay/reconnect phải giữ đúng nhánh và version mới.
 
 ### Tích hợp Hero Skill trên Unity
 
