@@ -80,6 +80,7 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "06_user_inheritance.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "07_exclusive_hero_traits.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "02_seed_catalog.sql"), cancellationToken);
+        await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "24_hero_biographies.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "08_step6_skills.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "09_hero_movement_fixes.sql"), cancellationToken);
         await ExecuteFile(connection, Path.Combine(AppContext.BaseDirectory, "Database", "10_player_profile.sql"), cancellationToken);

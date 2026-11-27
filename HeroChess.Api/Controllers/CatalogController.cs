@@ -25,6 +25,8 @@ public sealed class CatalogController(AppDbContext db, ICurrentUser current, IOp
         var factionLinks = await db.HeroFactions.AsNoTracking().ToListAsync(cancellationToken);
         var heroes = await db.Heroes.AsNoTracking().Include(x => x.Trait)
             .Where(x => x.IsEnabled).OrderBy(x => x.ClassCode).ThenBy(x => x.Code).ToListAsync(cancellationToken);
+        var biographies = await db.HistoricalCharacters.AsNoTracking().Where(x => x.Description != null)
+            .ToDictionaryAsync(x => x.Id, x => x.Description, cancellationToken);
 
         return Ok(new CatalogDto(
             new(ruleset.Id, ruleset.Code, ruleset.Name, ruleset.SetupBudget, ruleset.TurnSeconds, ruleset.ActionLimit, ruleset.Config.RootElement.Clone()),
@@ -32,7 +34,10 @@ public sealed class CatalogController(AppDbContext db, ICurrentUser current, IOp
             await db.LineupSlots.AsNoTracking().OrderBy(x => x.SlotNo).Select(x => new LineupSlotDto(x.SlotNo, x.ClassCode, x.StartX, x.StartY)).ToListAsync(cancellationToken),
             heroes.Select(x => new HeroDto(x.Id, x.Code, x.Name, x.CharacterId, x.ClassCode, x.SetupPoints,
                 x.Trait is null ? null : Trait(x.Trait), factionLinks.Where(f => f.HeroId == x.Id).Select(f => f.FactionId).ToArray(),
-                x.AssetKey, owned.Contains(x.Id), x.CoinPrice.ToString())).ToArray(),
+                x.AssetKey, owned.Contains(x.Id), x.CoinPrice.ToString())
+            {
+                Biography = x.CharacterId is Guid characterId ? biographies.GetValueOrDefault(characterId) : x.Description
+            }).ToArray(),
             heroes.Select(x => x.Trait).OfType<HeroTrait>().DistinctBy(x => x.Id).OrderBy(x => x.Code).Select(Trait).ToArray(),
             await db.Factions.AsNoTracking().OrderBy(x => x.Code).Select(x => new FactionDto(x.Id, x.Code, x.Name, x.Description)).ToListAsync(cancellationToken),
             (await db.TeamSkills.AsNoTracking().Where(x => x.IsEnabled).OrderBy(x => x.Code).ToListAsync(cancellationToken))

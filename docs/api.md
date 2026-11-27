@@ -38,6 +38,7 @@ Gọi login sau khi đăng ký. `/catalog` trả hero đang bật kèm `id`, `na
 Đọc dữ liệu từ `GET /api/v1/catalog`.
 
 - Dùng `heroes[].id` để gửi lựa chọn đội hình và `heroes[].name` để hiển thị tên có dấu. Một nhân vật có thể có nhiều biến thể với ID và hệ quân riêng, nên đối chiếu thêm `classCode` khi hiển thị.
+- Dùng `heroes[].biography` để hiển thị tiểu sử tiếng Việt. Các biến thể của cùng một nhân vật dùng chung tiểu sử. Với DB đã có dữ liệu, có thể chạy [24_hero_biographies.sql](../HeroChess.Api/Data/Bootstrap/24_hero_biographies.sql) để bổ sung các mục trống.
 - Ở màn xếp đội hình, đọc `heroes[].setupPoints` cho từng quân và `ruleset.setupBudget` cho giới hạn tổng SP. Sau khi lưu, dùng `totalSp`, `budget` và `validationErrors` từ phản hồi lineup. Trong trận và replay, dùng tên và SP từ snapshot của trận.
 - Ghép từng ID trong `heroes[].factionIds` với `factions[].id` để lấy `factions[].name`. Hiện có ba phe Trần, Hậu Lê và Tây Sơn. Mảng `factionIds` rỗng thì bỏ nhãn phe.
 - Nếu `heroes[].trait` là `null` thì ẩn phần trait của hero. Nếu có, hiển thị `trait.name` và `trait.description` khi có mô tả. Trong trận và replay, dùng metadata trait từ snapshot.

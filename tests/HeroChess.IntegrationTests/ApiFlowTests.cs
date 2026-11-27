@@ -45,6 +45,13 @@ public sealed class ApiFlowTests : IClassFixture<HeroChessFactory>
         Assert.True(catalog.Heroes.Count(x => x.IsOwned) >= 16);
         Assert.All(new[] { "tran-binh-trong-elephant", "bui-thi-xuan-elephant", "da-tuong-elephant" },
             code => Assert.Contains(catalog.Heroes, x => x.Code == code && x.IsOwned));
+        Assert.All(catalog.Heroes.Where(x => !x.Code.StartsWith("dev-", StringComparison.Ordinal)),
+            hero => Assert.False(string.IsNullOrWhiteSpace(hero.Biography), hero.Code));
+        var biographies = catalog.Heroes.ToDictionary(x => x.Code, x => x.Biography);
+        Assert.Equal(biographies["tran-hung-dao-general"], biographies["tran-hung-dao-elephant"]);
+        Assert.NotEqual(biographies["trung-trac-elephant"], biographies["trung-nhi-elephant"]);
+        Assert.Contains("Trần Hoảng", biographies["tran-thanh-tong-general"]);
+        Assert.Contains("ngụ binh ư nông", biographies["linh-nha-le-soldier"]);
 
         var heroesByClass = catalog.Heroes.Where(x => x.IsOwned).GroupBy(x => x.ClassCode)
             .ToDictionary(x => x.Key, x => new Queue<HeroDto>(x.OrderBy(hero => !hero.Code.StartsWith("dev-slot-", StringComparison.Ordinal)).ThenBy(hero => hero.Code)));
