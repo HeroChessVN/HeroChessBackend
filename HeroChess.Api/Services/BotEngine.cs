@@ -18,52 +18,87 @@ public sealed class BotEngine(CommandSkillDispatcher dispatcher, TimeProvider? t
     public object Forecast(GameState state, RulesetSnapshot rules, IReadOnlyDictionary<Side, FrozenLineup> lineups,
         CancellationToken ct, Side? viewer = null)
     {
+        const int plies = 5, nodeLimit = 128;
+        const double searchMilliseconds = 250, timeoutMilliseconds = 2000;
         ct.ThrowIfCancellationRequested();
+        var started = _clock.GetTimestamp();
         state = MatchTurnRules.Prepare(state.Clone());
         var observer = viewer ?? (state.SideToMove == Side.Red ? Side.Black : Side.Red);
         // Placement must not use concealed enemy information either.
         state.RiverSnares.RemoveAll(trap => trap.Owner != observer);
         if (!Supports(state)) throw new InvalidDataException("Forecast cannot analyse legacy hidden states.");
+        CheckCompletion();
+        var legal = MatchTurnRules.Finish(state, rules, dispatcher);
         var initialBoard = Board(state);
-        var started = _clock.GetTimestamp();
         var nodes = 0;
-        var variation = new List<object>(5);
+        var variation = new List<object>(plies);
         object[] threats = [];
-        for (var ply = 0; ply < 5 && state.Result is null && !OutOfTime(); ply++)
+        for (var ply = 0; ply < plies && state.Result is null; ply++)
         {
+            CheckCompletion();
             var actor = state.SideToMove;
-            var ranked = new List<(JsonElement Action, GameState Next, int Score, bool Threat)>();
-            var moves = OrderedMoves(state);
-            if (OutOfTime()) break;
-            var threatened = _rules.GenerateLegalActions(state, actor == Side.Red ? Side.Black : Side.Red)
-                .Where(move => move.CapturedPieceId is not null).Select(move => move.CapturedPieceId!.Value).ToHashSet();
-            var quiet = moves.Where(move => move.CapturedPieceId is null && !move.InterceptedByStake)
-                .OrderByDescending(move => threatened.Contains(move.PieceId)).DistinctBy(move => move.PieceId).Take(2).ToArray();
-            var candidates = Candidates(state, quiet.Concat(moves.Except(quiet)).ToArray(), 6);
-            foreach (var action in candidates)
+            var remaining = plies - ply;
+            var elapsed = _clock.GetElapsedTime(started).TotalMilliseconds;
+            var stepDeadline = elapsed + Math.Max(0, searchMilliseconds - elapsed) / remaining;
+            var stepNodeLimit = nodes + (nodeLimit - nodes) / remaining;
+            var ranked = new List<(JsonElement Action, GameState Next, int Score, bool Threat, IReadOnlyList<LegalMove> Replies)>();
+            var moves = OrderMoves(state, legal);
+            var fallbackMove = moves.FirstOrDefault(move => !move.InterceptedByStake && move.CapturedPieceId is null)
+                ?? moves.FirstOrDefault(move => !move.InterceptedByStake) ?? moves.FirstOrDefault();
+            var fallback = fallbackMove is not null ? Move(fallbackMove) : MatchCommandService.FindLegalSkillAction(state, _rules, dispatcher);
+            if (fallback is null) throw new InvalidDataException("The nonterminal forecast position has no legal continuation.");
+            nodes++; // Reserve one validated transition per remaining ply, even after the soft cutoff.
+            var baseline = Simulate(state, fallback.Value, rules, lineups, out var baselineReplies)
+                ?? throw new InvalidDataException("The forecast fallback does not match its frozen rules.");
+            Rank(fallback.Value, baseline, baselineReplies);
+            if (!StepExhausted())
             {
-                ct.ThrowIfCancellationRequested();
-                if (OutOfTime() || ranked.Count == 6) break;
-                nodes++;
-                if (Simulate(state, action, rules, lineups, out var replies) is not { } next) continue;
+                var threatened = _rules.GenerateLegalActions(state, actor == Side.Red ? Side.Black : Side.Red)
+                    .Where(move => move.CapturedPieceId is not null).Select(move => move.CapturedPieceId!.Value).ToHashSet();
+                var quiet = moves.Where(move => move.CapturedPieceId is null && !move.InterceptedByStake)
+                    .OrderByDescending(move => threatened.Contains(move.PieceId)).DistinctBy(move => move.PieceId).Take(2).ToArray();
+                foreach (var action in Candidates(state, quiet.Concat(moves.Except(quiet)).ToArray(), 6))
+                {
+                    if (StepExhausted() || ranked.Count == 6) break;
+                    if (ranked.Any(option => JsonElement.DeepEquals(option.Action, action))) continue;
+                    nodes++;
+                    if (Simulate(state, action, rules, lineups, out var replies) is { } next) Rank(action, next, replies);
+                }
+            }
+            CheckCompletion();
+            var ordered = ranked.OrderByDescending(option => option.Score).ToArray();
+            if (ply == 0) threats = ordered.Where(option => option.Threat).Take(2).Select(option => Describe(option.Action, state, option.Next)).ToArray();
+            variation.Add(Describe(ordered[0].Action, state, ordered[0].Next));
+            state = ordered[0].Next;
+            legal = ordered[0].Replies;
+
+            bool StepExhausted()
+            {
+                CheckCompletion();
+                return nodes >= stepNodeLimit || _clock.GetElapsedTime(started).TotalMilliseconds >= stepDeadline;
+            }
+
+            void Rank(JsonElement action, GameState next, IReadOnlyList<LegalMove> replies)
+            {
                 var score = Evaluate(next, actor);
-                var loss = ExchangeLoss(next, replies, score, actor, rules, lineups, OutOfTime, ref nodes, ct);
+                var loss = StepExhausted() ? ImmediateCaptureLoss(next, replies) :
+                    ExchangeLoss(next, replies, score, actor, rules, lineups, StepExhausted, ref nodes, ct);
                 var threat = next.Result == (actor == Side.Red ? "red_win" : "black_win") ||
                     _rules.IsInCheck(next, next.SideToMove) ||
                     next.Pieces.Count(p => p.Side != actor && p.Status == PieceStatus.Alive) <
                     state.Pieces.Count(p => p.Side != actor && p.Status == PieceStatus.Alive);
-                ranked.Add((action, next, score - loss, threat));
+                ranked.Add((action, next, score - loss, threat, replies));
             }
-            var ordered = ranked.OrderByDescending(option => option.Score).ToArray();
-            if (ordered.Length == 0) break;
-            if (ply == 0) threats = ordered.Where(option => option.Threat).Take(2).Select(option => Describe(option.Action, state, option.Next)).ToArray();
-            variation.Add(Describe(ordered[0].Action, state, ordered[0].Next));
-            state = ordered[0].Next;
         }
-        ct.ThrowIfCancellationRequested();
+        CheckCompletion();
         return new { initialBoard, variation, threats };
 
-        bool OutOfTime() => nodes >= 64 || _clock.GetElapsedTime(started).TotalMilliseconds >= 50;
+        void CheckCompletion()
+        {
+            ct.ThrowIfCancellationRequested();
+            if (_clock.GetElapsedTime(started).TotalMilliseconds >= timeoutMilliseconds)
+                throw new TimeoutException("Forecast computation exceeded its completion limit.");
+        }
 
         JsonElement Board(GameState board) => MatchStateProjection.State(GameJson.Element(board), observer);
 

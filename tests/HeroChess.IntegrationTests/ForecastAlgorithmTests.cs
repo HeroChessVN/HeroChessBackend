@@ -2,6 +2,7 @@ using System.Text.Json;
 using HeroChess.Api.Infrastructure;
 using HeroChess.Api.Services;
 using HeroChess.Rules;
+using HeroChess.Rules.Skills;
 using Xunit;
 
 namespace HeroChess.IntegrationTests;
@@ -17,6 +18,7 @@ public sealed class ForecastAlgorithmTests
         var horse = state.Pieces.Single(p => p.Class == PieceClass.Horse);
         var engine = BotDifficultyTests.Engine();
         var forecast = GameJson.Element(engine.Forecast(state, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
+        Assert.Equal(5, forecast.GetProperty("variation").GetArrayLength());
         var first = forecast.GetProperty("variation")[0].GetProperty("action");
         Assert.Equal("black", forecast.GetProperty("initialBoard").GetProperty("sideToMove").GetString());
         var next = engine.Simulate(state, first, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups())!;
@@ -50,31 +52,97 @@ public sealed class ForecastAlgorithmTests
         Assert.Equal(2, state.RiverSnares.Count);
     }
 
-    [Fact]
-    public void Forecast_stops_when_the_match_ends_instead_of_padding_the_five_action_sequence()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void Forecast_stops_when_the_match_ends_instead_of_padding_the_five_action_sequence(int remaining)
     {
         var state = Position();
-        state.CountedActions = 149;
+        state.CountedActions = 150 - remaining;
         var forecast = GameJson.Element(BotDifficultyTests.Engine().Forecast(state,
             BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
-        var action = Assert.Single(forecast.GetProperty("variation").EnumerateArray());
+        var entries = forecast.GetProperty("variation").EnumerateArray().ToArray();
+        Assert.Equal(remaining, entries.Length);
+        var action = entries[^1];
         Assert.NotEqual(JsonValueKind.Null, action.GetProperty("boardAfter").GetProperty("result").ValueKind);
-        Assert.Equal(149, state.CountedActions);
+        Assert.Equal(150 - remaining, state.CountedActions);
         Assert.Null(state.Result);
     }
 
     [Fact]
-    public void Cutoff_and_cancellation_never_publish_unchecked_actions()
+    public void Soft_cutoff_still_completes_five_valid_actions_and_cancellation_is_observed()
     {
         var state = Position();
-        var engine = BotDifficultyTests.Engine(new ExpiredClock());
+        var engine = BotDifficultyTests.Engine(new ElapsedClock(300));
         var forecast = GameJson.Element(engine.Forecast(state, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
-        Assert.Empty(forecast.GetProperty("variation").EnumerateArray());
-        Assert.Empty(forecast.GetProperty("threats").EnumerateArray());
+        AssertComplete(engine, state, forecast, BotDifficultyTests.Lineups());
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         Assert.ThrowsAny<OperationCanceledException>(() => engine.Forecast(state,
             BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), cancellation.Token));
+    }
+
+    [Theory]
+    [InlineData(Side.Red)]
+    [InlineData(Side.Black)]
+    public void Invalid_optional_skill_candidates_do_not_spend_the_completion_budget(Side side)
+    {
+        var state = Position(); state.SideToMove = side;
+        foreach (var actor in new[] { Side.Red, Side.Black })
+            state.SkillStates[actor].AddRange(new[] { new SkillState(1, Guid.NewGuid(), 1, 0, SkillKeys.Khien),
+                new SkillState(2, Guid.NewGuid(), 1, 0, SkillKeys.Thanh), new SkillState(3, Guid.NewGuid(), 1, 0, SkillKeys.Rao) });
+        var engine = BotDifficultyTests.Engine();
+        var forecast = GameJson.Element(engine.Forecast(state, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
+        AssertComplete(engine, state, forecast, BotDifficultyTests.Lineups());
+    }
+
+    [Theory]
+    [InlineData(SkillKeys.Khien)]
+    [InlineData(FactionSkillHandler.Forecast)]
+    public void Skill_only_turn_is_a_real_ply_and_does_not_recurse_into_forecast(string key)
+    {
+        var state = new GameState { PublicRiverStakes = true, SideToMove = Side.Black,
+            Pieces = [BotDifficultyTests.Piece(PieceClass.General, Side.Red, 3, 0, 100),
+                BotDifficultyTests.Piece(PieceClass.General, Side.Black, 5, 9, 100)] };
+        state.Pieces[1].Effects.Add(new EffectState(FactionSkillHandler.Rooted, null, 3));
+        var id = Guid.NewGuid(); state.SkillStates[Side.Black].Add(new(1, id, 1, 0, key));
+        var lineups = BotDifficultyTests.Lineups();
+        lineups[Side.Black] = lineups[Side.Black] with { Skills = [new(1, id, key, 1, 15)] };
+        var engine = new BotEngine(new CommandSkillDispatcher(new CommandSkillRegistry([
+            new KhienHandler(), new FactionSkillHandler(FactionSkillHandler.Forecast)])), new ElapsedClock(300));
+        var forecast = GameJson.Element(engine.Forecast(state, BotDifficultyTests.Rules(), lineups, default));
+        Assert.Equal("team_skill", forecast.GetProperty("variation")[0].GetProperty("action").GetProperty("type").GetString());
+        AssertComplete(engine, state, forecast, lineups);
+    }
+
+    [Fact]
+    public void A_terminal_initial_board_needs_no_padding_and_hard_timeout_never_returns_partial_success()
+    {
+        var state = Position(); state.Result = "draw";
+        var forecast = GameJson.Element(BotDifficultyTests.Engine().Forecast(state, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
+        Assert.Empty(forecast.GetProperty("variation").EnumerateArray());
+        Assert.Equal("draw", forecast.GetProperty("initialBoard").GetProperty("result").GetString());
+        state.Result = null; var original = GameJson.Element(state);
+        Assert.Throws<TimeoutException>(() => BotDifficultyTests.Engine(new ElapsedClock(2500))
+            .Forecast(state, BotDifficultyTests.Rules(), BotDifficultyTests.Lineups(), default));
+        Assert.True(JsonElement.DeepEquals(original, GameJson.Element(state)));
+    }
+
+    private static void AssertComplete(BotEngine engine, GameState state, JsonElement forecast, Dictionary<Side, FrozenLineup> lineups)
+    {
+        var original = GameJson.Element(state); var cursor = state.Clone();
+        var entries = forecast.GetProperty("variation").EnumerateArray().ToArray();
+        Assert.Equal(5, entries.Length);
+        foreach (var entry in entries)
+        {
+            Assert.Equal(cursor.SideToMove == Side.Red ? "red" : "black", entry.GetProperty("side").GetString());
+            cursor = engine.Simulate(cursor, entry.GetProperty("action"), BotDifficultyTests.Rules(), lineups)!;
+            Assert.NotNull(cursor);
+            Assert.True(JsonElement.DeepEquals(MatchStateProjection.State(GameJson.Element(cursor), Side.Red), entry.GetProperty("boardAfter")));
+        }
+        Assert.True(JsonElement.DeepEquals(original, GameJson.Element(state)));
     }
 
     private static GameState Position() => new()
@@ -88,10 +156,10 @@ public sealed class ForecastAlgorithmTests
             BotDifficultyTests.Piece(PieceClass.Rook, Side.Red, 0, 0, 7)]
     };
 
-    private sealed class ExpiredClock : TimeProvider
+    private sealed class ElapsedClock(long elapsed) : TimeProvider
     {
         private long _time;
         public override long TimestampFrequency => 1000;
-        public override long GetTimestamp() => Interlocked.Add(ref _time, 100);
+        public override long GetTimestamp() => Interlocked.Increment(ref _time) == 1 ? 0 : elapsed;
     }
 }

@@ -45,7 +45,7 @@ public sealed partial class MatchFlowTests
         {
             Assert.Equal(1, reply.GetProperty("version").GetInt32());
             Assert.True(JsonElement.DeepEquals(replies[0], reply));
-            Assert.InRange(reply.GetProperty("prediction").GetProperty("variation").GetArrayLength(), 0, 5);
+            Assert.Equal(5, reply.GetProperty("prediction").GetProperty("variation").GetArrayLength());
         });
         Assert.Equal(HttpStatusCode.NotFound, (await black.Client.GetAsync(url)).StatusCode);
         var outsider = await CreatePlayerWithLineup();
@@ -67,6 +67,33 @@ public sealed partial class MatchFlowTests
         activation.ResolvedEvents = GameJson.Document(new[] { new { type = "team_skill.activated", code = SkillKeys.Khien } });
         await db.SaveChangesAsync();
         Assert.Equal(HttpStatusCode.NotFound, (await red.Client.GetAsync(url)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Forecast_timeout_does_not_cache_a_partial_result_or_hold_the_computation_slot()
+    {
+        var (id, red, _) = await ForecastFixture();
+        var user = (await red.Client.GetFromJsonAsync<MeDto>("/api/v1/me", Json))!;
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var before = (await db.MatchStates.AsNoTracking().SingleAsync(x => x.MatchId == id)).State.RootElement.GetRawText();
+        var read = new MatchReadService(db, new ForecastTimeoutClock(), scope.ServiceProvider.GetRequiredService<PlayerProfileService>(),
+            scope.ServiceProvider.GetRequiredService<ILogger<MatchReadService>>(), scope.ServiceProvider.GetRequiredService<HeroNameLookup>());
+        var error = await Assert.ThrowsAsync<ApiException>(() => read.ForecastAsync(user.UserId, id, 1,
+            scope.ServiceProvider.GetRequiredService<CommandSkillDispatcher>(), default));
+        Assert.Equal(503, error.StatusCode); Assert.Equal("FORECAST_TIMEOUT", error.Code);
+        var result = await red.Client.GetFromJsonAsync<JsonElement>($"/api/v1/matches/{id}/forecast?version=1", Json);
+        Assert.Equal(5, result.GetProperty("prediction").GetProperty("variation").GetArrayLength());
+        var cached = await red.Client.GetFromJsonAsync<JsonElement>($"/api/v1/matches/{id}/forecast?version=1", Json);
+        Assert.True(JsonElement.DeepEquals(result, cached));
+        Assert.Equal(before, (await db.MatchStates.AsNoTracking().SingleAsync(x => x.MatchId == id)).State.RootElement.GetRawText());
+    }
+
+    private sealed class ForecastTimeoutClock : TimeProvider
+    {
+        private long _calls;
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Interlocked.Increment(ref _calls) == 1 ? 0 : 2500;
     }
 
     [Fact]

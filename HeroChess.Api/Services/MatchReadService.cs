@@ -70,9 +70,16 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
                 if (state.ForecastReview is not null)
                     state = MatchTurnRules.AfterAction(MatchTurnRules.CompleteForecastReview(state), rules, dispatcher).State;
                 var searchAt = Stopwatch.GetTimestamp();
-                var prediction = new BotEngine(dispatcher, clock).Forecast(state, rules, lineups, ct, side);
-                BotTelemetry.ForecastSearch.Record(Stopwatch.GetElapsedTime(searchAt).TotalSeconds);
+                object prediction;
+                try { prediction = new BotEngine(dispatcher, clock).Forecast(state, rules, lineups, ct, side); }
+                finally { BotTelemetry.ForecastSearch.Record(Stopwatch.GetElapsedTime(searchAt).TotalSeconds); }
                 result = GameJson.Element(new { version, prediction });
+            }
+            catch (TimeoutException)
+            {
+                ct.ThrowIfCancellationRequested();
+                BotTelemetry.Forecasts.Add(1, new KeyValuePair<string, object?>("outcome", "timeout"));
+                throw new ApiException(503, "FORECAST_TIMEOUT", "The forecast could not complete in time. Retry or finish reviewing the turn.");
             }
             catch (Exception error) when (error is JsonException or InvalidDataException or ArgumentException or InvalidOperationException or NullReferenceException)
             {
