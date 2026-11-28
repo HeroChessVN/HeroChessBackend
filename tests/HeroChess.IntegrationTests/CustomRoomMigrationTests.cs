@@ -39,7 +39,7 @@ public sealed partial class UserMigrationTests
         await WithLegacyDatabase(async (connection, connectionString) =>
         {
             var host = Host.CreateApplicationBuilder();
-            host.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
+            host.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(new NpgsqlConnectionStringBuilder(connectionString) { Pooling = true }.ConnectionString));
             await using var services = host.Services.BuildServiceProvider();
             var bootstrap = new DatabaseBootstrapHostedService(services, host.Environment,
                 Options.Create(new DatabaseBootstrapOptions { Enabled = true }), NullLogger<DatabaseBootstrapHostedService>.Instance);
@@ -50,7 +50,9 @@ public sealed partial class UserMigrationTests
                 """, connection);
             await extras.ExecuteNonQueryAsync();
             await bootstrap.StartAsync(default);
+            await CheckBootstrapLockReleased();
             await bootstrap.StartAsync(default);
+            await CheckBootstrapLockReleased();
 
             await using var check = new NpgsqlCommand("""
                 SELECT to_regclass('hero_chess.user_account') IS NOT NULL
@@ -64,6 +66,15 @@ public sealed partial class UserMigrationTests
             await rename.ExecuteNonQueryAsync();
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => bootstrap.StartAsync(default));
             Assert.Contains("admin_audit_log", error.Message);
+            await CheckBootstrapLockReleased();
+
+            async Task CheckBootstrapLockReleased()
+            {
+                await using var probe = new NpgsqlCommand("SELECT pg_try_advisory_lock(hashtext('hero_chess_bootstrap'))", connection);
+                Assert.Equal(true, await probe.ExecuteScalarAsync());
+                probe.CommandText = "SELECT pg_advisory_unlock(hashtext('hero_chess_bootstrap'))";
+                Assert.Equal(true, await probe.ExecuteScalarAsync());
+            }
         });
     }
 

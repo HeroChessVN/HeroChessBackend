@@ -40,16 +40,18 @@ public sealed class PlayerProfileService(AppDbContext db, IHttpContextAccessor h
     {
         var ids = playerIds.Distinct().ToArray();
         if (ids.Length == 0) return new Dictionary<Guid, PlayerProfileDto>();
-        var players = await db.Players.AsNoTracking().Where(x => ids.Contains(x.Id)).ToListAsync(ct);
-        var ratings = await db.Ratings.AsNoTracking().Where(x => ids.Contains(x.PlayerId))
-            .ToDictionaryAsync(x => x.PlayerId, x => x.Elo, ct);
+        var players = await (from player in db.Players.AsNoTracking()
+            join rating in db.Ratings.AsNoTracking() on player.Id equals rating.PlayerId into ratings
+            from rating in ratings.DefaultIfEmpty()
+            where ids.Contains(player.Id)
+            select new { Player = player, Elo = (int?)rating.Elo ?? 0 }).ToListAsync(ct);
         var result = new Dictionary<Guid, PlayerProfileDto>();
         foreach (var player in players)
         {
-            var elo = eloOverride is not null && eloOverride.TryGetValue(player.Id, out var fixedElo)
+            var elo = eloOverride is not null && eloOverride.TryGetValue(player.Player.Id, out var fixedElo)
                 ? fixedElo
-                : ratings.GetValueOrDefault(player.Id);
-            result[player.Id] = Build(player, elo);
+                : player.Elo;
+            result[player.Player.Id] = Build(player.Player, elo);
         }
         return result;
     }

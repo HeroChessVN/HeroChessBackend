@@ -2,6 +2,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace HeroChess.Api.Data.Bootstrap;
 
@@ -15,7 +16,8 @@ public sealed class DatabaseBootstrapHostedService(IServiceProvider services, IH
         if (!options.Value.Enabled) { logger.LogInformation("Database bootstrap is disabled."); return; }
         await using var scope = services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var connection = db.Database.GetDbConnection();
+        // A session advisory lock must not survive on an idle pooled connection, including failed startup.
+        await using var connection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(db.Database.GetConnectionString()) { Pooling = false }.ConnectionString);
         await connection.OpenAsync(cancellationToken);
         await using (var advisoryLock = connection.CreateCommand())
         {

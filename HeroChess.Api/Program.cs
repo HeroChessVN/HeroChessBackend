@@ -6,6 +6,8 @@ using HeroChess.Api.Infrastructure;
 using HeroChess.Api.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.HttpOverrides;
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 
@@ -35,6 +37,17 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddAuthorization(AccountPolicies.Configure);
 builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, AccountAuthorizationHandler>();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddOptions<TrafficLimitsOptions>().Bind(builder.Configuration.GetSection("TrafficLimits"))
+    .Validate(o => o.IsValid(), "TrafficLimits must have positive bounded quotas, automatic replenishment and no waiting queues.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<TrafficLimits>();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    foreach (var proxy in builder.Configuration.GetSection("ReverseProxy:KnownProxies").Get<string[]>() ?? [])
+        options.KnownProxies.Add(IPAddress.Parse(proxy));
+});
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -57,10 +70,14 @@ builder.Services.AddScoped<IUserStore<User>, UserStore>();
 builder.Services.AddScoped<IUserClaimsPrincipalFactory<User>, UserClaimsPrincipalFactory>();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 builder.Services.AddScoped<PlayerProfileService>();
+builder.Services.AddSingleton<HeroNameLookup>();
 builder.Services.AddScoped<LineupValidator>();
 builder.Services.AddScoped<LineupService>();
 builder.Services.Configure<MatchmakingOptions>(builder.Configuration.GetSection("Matchmaking"));
-builder.Services.Configure<MatchRuntimeOptions>(builder.Configuration.GetSection("MatchRuntime"));
+builder.Services.AddOptions<MatchRuntimeOptions>().Bind(builder.Configuration.GetSection("MatchRuntime"))
+    .Validate(o => o.BotWorkerCount is 1 or 2, "MatchRuntime:BotWorkerCount must be 1 or 2.")
+    .Validate(o => o.BotQueueCapacity is >= 1 and <= 4096, "MatchRuntime:BotQueueCapacity must be between 1 and 4096.")
+    .ValidateOnStart();
 builder.Services.AddBotObservability(builder.Configuration);
 // Singleton sống cùng process. Các worker dùng IServiceScopeFactory để lấy service scoped cho từng công việc.
 builder.Services.AddSingleton(TimeProvider.System);
@@ -129,11 +146,13 @@ using (var validationScope = app.Services.CreateScope())
 
 // Thứ tự middleware có ý nghĩa: bắt lỗi bao ngoài, xác thực trước phân quyền; WS là endpoint riêng.
 app.UseMiddleware<ApiExceptionMiddleware>();
+app.UseForwardedHeaders();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 else app.UseHttpsRedirection();
 app.UseAuthentication();
+app.UseMiddleware<TrafficLimitsMiddleware>();
 app.UseAuthorization();
-app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20), KeepAliveTimeout = TimeSpan.FromSeconds(20) });
 app.UseDefaultFiles();
 app.UseStaticFiles();
 

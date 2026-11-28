@@ -12,6 +12,7 @@ public sealed class BotWorkQueue
     private readonly object _gate = new();
     private readonly HashSet<(Guid, int)> _pending = new();
     private readonly HashSet<(Guid, int)> _inFlight = new();
+    private readonly Dictionary<Guid, int> _runningMatches = new();
     private int _waiting;
     public int Waiting { get { lock (_gate) return _waiting; } }
     public int InFlight { get { lock (_gate) return _inFlight.Count; } }
@@ -20,7 +21,7 @@ public sealed class BotWorkQueue
     {
         if (capacity is < 1 or > 4096) throw new ArgumentOutOfRangeException(nameof(capacity));
         _channel = Channel.CreateBounded<BotWorkItem>(new BoundedChannelOptions(capacity)
-        { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
+        { SingleReader = false, FullMode = BoundedChannelFullMode.Wait });
     }
 
     public bool Schedule(Guid matchId, int version)
@@ -52,11 +53,20 @@ public sealed class BotWorkQueue
         return item;
     }
 
+    // A newer version can arrive while an older search finishes. Maintenance retries skipped versions from DB.
+    public bool TryBegin(BotWorkItem item)
+    {
+        lock (_gate)
+            return _inFlight.Contains((item.MatchId, item.Version)) && _runningMatches.TryAdd(item.MatchId, item.Version);
+    }
+
     public void Complete(BotWorkItem item)
     {
         lock (_gate)
         {
             if (!_inFlight.Remove((item.MatchId, item.Version))) return;
+            if (_runningMatches.TryGetValue(item.MatchId, out var version) && version == item.Version)
+                _runningMatches.Remove(item.MatchId);
             _pending.Remove((item.MatchId, item.Version));
             BotTelemetry.InFlight.Add(-1);
         }

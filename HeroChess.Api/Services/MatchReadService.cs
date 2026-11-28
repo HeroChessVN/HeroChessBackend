@@ -12,7 +12,8 @@ using System.Threading.RateLimiting;
 
 namespace HeroChess.Api.Services;
 
-public sealed class MatchReadService(AppDbContext db, TimeProvider clock, PlayerProfileService profiles, ILogger<MatchReadService> logger)
+public sealed class MatchReadService(AppDbContext db, TimeProvider clock, PlayerProfileService profiles, ILogger<MatchReadService> logger,
+    HeroNameLookup heroNames)
 {
     private static readonly MemoryCache ForecastCache = new(new MemoryCacheOptions { SizeLimit = 128 });
     private static readonly MatchLockRegistry ForecastLocks = new();
@@ -30,7 +31,8 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
     {
         if (version < 1) throw new ApiException(400, "INVALID_FORECAST_VERSION", "A positive activation sequence is required.");
         using var requestLease = ForecastRequests.AttemptAcquire(playerId);
-        if (!requestLease.IsAcquired) throw new ApiException(429, "FORECAST_RATE_LIMITED", "Too many forecast requests. Try again later.");
+        if (!requestLease.IsAcquired) throw TrafficLimits.Rejected("FORECAST_RATE_LIMITED",
+            requestLease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter) ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)) : 60);
         var actionId = await ValidateForecastAsync(playerId, matchId, version, ct);
         var key = (playerId, matchId, version);
         if (ForecastCache.TryGetValue<JsonElement>(key, out var cached))
@@ -51,7 +53,7 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
                 return cached;
             }
             using var lease = await ForecastLimiter.AcquireAsync(1, ct);
-            if (!lease.IsAcquired) throw new ApiException(429, "FORECAST_BUSY", "The forecast worker is busy.");
+            if (!lease.IsAcquired) throw TrafficLimits.Rejected("FORECAST_BUSY", 1);
             BotTelemetry.ForecastWait.Record(Stopwatch.GetElapsedTime(waitingAt).TotalSeconds);
             var action = await db.MatchActions.AsNoTracking().SingleAsync(a => a.Id == actionId, ct);
             var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId, ct);
@@ -141,10 +143,10 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
         var queryMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
         var row = result.State;
         var sides = await SidesAsync(matchId, playerId, ct);
-        var heroNames = await HeroNamesAsync(row.State.RootElement, ct);
+        var names = await heroNames.MissingAsync(db, [row.State.RootElement], ct);
         var dto = new MatchStateDto(result.Id, result.Mode, result.Status, row.Version, row.SideToMove, row.TurnIndex,
             row.CountedActions, row.TurnDeadlineAt, clock.GetUtcNow(), row.StateSchemaVersion,
-            MatchStateProjection.State(row.State.RootElement, result.Side == "red" ? Side.Red : Side.Black, heroNames), result.SettledAt, sides, sides.FirstOrDefault(x => x.IsBot)?.Bot);
+            MatchStateProjection.State(row.State.RootElement, result.Side == "red" ? Side.Red : Side.Black, names), result.SettledAt, sides, sides.FirstOrDefault(x => x.IsBot)?.Bot);
         logger.LogDebug("match.state timing match={MatchId} version={Version} queryMs={QueryMs:F1} totalMs={TotalMs:F1}",
             matchId, row.Version, queryMs, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds);
         return dto;
@@ -192,16 +194,6 @@ public sealed class MatchReadService(AppDbContext db, TimeProvider clock, Player
         return participants.Select(x => new MatchSidePlayerDto(x.Side, x.ParticipantType == "bot",
             x.PlayerId is not null && playerProfiles.TryGetValue(x.PlayerId.Value, out var profile) ? profile : null,
             x.PlayerId == viewerId, BotConfiguration.Client(x.BotConfig))).ToArray();
-    }
-
-    // HeroNamesAsync: Tên tướng theo heroId để bù cho quân lưu từ state cũ chưa có heroName.
-    private async Task<Dictionary<Guid, string>> HeroNamesAsync(JsonElement stored, CancellationToken ct)
-    {
-        var heroIds = stored.TryGetProperty("pieces", out var pieces) && pieces.ValueKind == JsonValueKind.Array
-            ? pieces.EnumerateArray().Where(p => p.TryGetProperty("heroId", out _)).Select(p => p.GetProperty("heroId").GetGuid()).Distinct().ToArray()
-            : [];
-        if (heroIds.Length == 0) return [];
-        return await db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
     }
 
     // ToDto: Gộp metadata trận, state, deadline và giờ server thành DTO đồng bộ client.

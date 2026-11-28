@@ -20,7 +20,7 @@ public sealed class MatchesController(ICurrentUser current, MatchReadService rea
         [FromServices] HeroChess.Rules.Skills.CommandSkillDispatcher dispatcher, CancellationToken ct) =>
         await read.ForecastAsync(current.UserId, id, version, dispatcher, ct);
     // Command: POST action qua pipeline có dedup/version/transaction.
-    [HttpPost("{id:guid}/commands")] public async Task<ActionResult<MatchCommandResultDto>> Command(Guid id, MatchCommandRequest request, CancellationToken ct) => Ok(await commands.ExecuteAsync(current.UserId, id, request, null, ct));
+    [HttpPost("{id:guid}/commands"), RequestSizeLimit(65536)] public async Task<ActionResult<MatchCommandResultDto>> Command(Guid id, MatchCommandRequest request, CancellationToken ct) => Ok(await commands.ExecuteAsync(current.UserId, id, request, null, ct));
     // List: GET lịch sử trận của actor; lọc theo mode và kết quả nếu client truyền.
     [HttpGet] public async Task<ActionResult<MatchPageDto>> List([FromQuery] string? cursor, [FromQuery] int limit = 20, [FromQuery] string? mode = null, [FromQuery] string? outcome = null, CancellationToken ct = default) => Ok(await history.ListAsync(current.UserId, cursor, limit, mode, outcome, ct));
     // Detail: GET chi tiết một trận; chỉ participant của trận được xem.

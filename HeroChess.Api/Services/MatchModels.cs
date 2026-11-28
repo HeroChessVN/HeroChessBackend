@@ -36,5 +36,6 @@ public sealed class MatchRuntimeOptions
     public int EloKFactor { get; set; } = 32;
     public int BotThinkMilliseconds { get; set; } = 250;
     public int BotQueueCapacity { get; set; } = 128;
+    public int BotWorkerCount { get; set; } = 1;
     public int SelectionSeconds { get; set; } = 120;
 }

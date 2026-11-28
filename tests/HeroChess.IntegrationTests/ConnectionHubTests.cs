@@ -3,12 +3,27 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading.Channels;
 using HeroChess.Api.Services;
+using HeroChess.Api.Infrastructure;
 using Xunit;
 
 namespace HeroChess.IntegrationTests;
 
 public sealed class ConnectionHubTests
 {
+    [Fact]
+    public void Subscriptions_are_bounded_but_resubscribing_the_same_match_is_allowed()
+    {
+        var hub = new MatchConnectionHub(); using var socket = new ProbeSocket(false);
+        var id = hub.Add(socket); var matches = Enumerable.Range(0, 8).Select(_ => Guid.NewGuid()).ToArray();
+        try
+        {
+            foreach (var match in matches) hub.Subscribe(id, match);
+            hub.Subscribe(id, matches[0]);
+            Assert.Equal("SUBSCRIPTION_LIMIT", Assert.Throws<ApiException>(() => hub.Subscribe(id, Guid.NewGuid())).Code);
+        }
+        finally { hub.Remove(id); }
+    }
+
     [Fact]
     // Slow_socket_does_not_block_other_recipients_and_overflow_disconnects_it: Một socket chậm không cản socket khác; đầy queue thì ngắt socket chậm.
     public async Task Slow_socket_does_not_block_other_recipients_and_overflow_disconnects_it()

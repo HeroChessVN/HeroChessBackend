@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HeroChess.Api.Services;
 
-public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService profiles)
+public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService profiles, HeroNameLookup heroNames)
 {
     // ListAsync: Phân trang keyset theo thời điểm/ID; chỉ liệt kê trận actor tham gia. Lọc theo mode và kết quả nếu có.
     public async Task<MatchPageDto> ListAsync(Guid playerId, string? cursor, int limit, string? mode, string? outcome, CancellationToken ct)
@@ -111,26 +111,16 @@ public sealed class MatchHistoryService(AppDbContext db, PlayerProfileService pr
         var rows = await db.MatchActions.AsNoTracking().Where(x => x.MatchId == matchId && x.SequenceNo > afterSequence).OrderBy(x => x.SequenceNo).Take(limit + 1).ToListAsync(ct);
         var viewer = participant.Side == "red" ? Side.Red : Side.Black;
         // Tên tướng để bù cho stateAfter lưu từ trước khi có heroName.
-        var heroNames = await HeroNamesAsync(rows.Select(x => x.StateAfter.RootElement), ct);
+        var names = await heroNames.MissingAsync(db, rows.Select(x => x.StateAfter.RootElement), ct);
         var entries = rows.Take(limit).Select(x =>
         {
             var state = x.StateAfter.RootElement;
             var publicStakes = MatchStateProjection.HasPublicStakes(state);
             return new ReplayEntryDto(x.SequenceNo, x.Kind == "hero_active" && !publicStakes ? "legacy_action" : x.Kind, x.ActorSide,
                 MatchStateProjection.Events(x.ResolvedEvents.RootElement, viewer, publicStakes),
-                MatchStateProjection.State(state, viewer, heroNames), x.CommittedAt);
+                MatchStateProjection.State(state, viewer, names), x.CommittedAt);
         }).ToArray();
         return new(matchId, entries, rows.Count > limit ? entries[^1].SequenceNo : null);
-    }
-
-    // HeroNamesAsync: Tên tướng theo heroId cho các state snapshot cần hiển thị tên quân.
-    private async Task<Dictionary<Guid, string>> HeroNamesAsync(IEnumerable<JsonElement> states, CancellationToken ct)
-    {
-        var heroIds = states.SelectMany(stored => stored.TryGetProperty("pieces", out var pieces) && pieces.ValueKind == JsonValueKind.Array
-            ? pieces.EnumerateArray().Where(p => p.TryGetProperty("heroId", out _)).Select(p => p.GetProperty("heroId").GetGuid())
-            : []).Distinct().ToArray();
-        if (heroIds.Length == 0) return [];
-        return await db.Heroes.AsNoTracking().Where(x => heroIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
     }
 
     // SideRow: Một bên của trận gộp participant, tên hiển thị và cờ replay có dữ liệu.

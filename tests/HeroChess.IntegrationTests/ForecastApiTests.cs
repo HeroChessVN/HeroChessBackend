@@ -114,7 +114,7 @@ public sealed partial class MatchFlowTests
         using var cancellation = new CancellationTokenSource();
         var read = new MatchReadService(scope.ServiceProvider.GetRequiredService<AppDbContext>(),
             new ForecastCallbackClock(cancellation.Cancel), scope.ServiceProvider.GetRequiredService<PlayerProfileService>(),
-            scope.ServiceProvider.GetRequiredService<ILogger<MatchReadService>>());
+            scope.ServiceProvider.GetRequiredService<ILogger<MatchReadService>>(), scope.ServiceProvider.GetRequiredService<HeroNameLookup>());
         var dispatcher = scope.ServiceProvider.GetRequiredService<CommandSkillDispatcher>();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read.ForecastAsync(user.UserId, id, 1, dispatcher, cancellation.Token));
         Assert.Equal(HttpStatusCode.OK, (await red.Client.GetAsync($"/api/v1/matches/{id}/forecast?version=1")).StatusCode);
@@ -143,7 +143,8 @@ public sealed partial class MatchFlowTests
             concurrent.SaveChanges();
         });
         var read = new MatchReadService(scope.ServiceProvider.GetRequiredService<AppDbContext>(), clock,
-            scope.ServiceProvider.GetRequiredService<PlayerProfileService>(), scope.ServiceProvider.GetRequiredService<ILogger<MatchReadService>>());
+            scope.ServiceProvider.GetRequiredService<PlayerProfileService>(), scope.ServiceProvider.GetRequiredService<ILogger<MatchReadService>>(),
+            scope.ServiceProvider.GetRequiredService<HeroNameLookup>());
         var dispatcher = scope.ServiceProvider.GetRequiredService<CommandSkillDispatcher>();
         if (undo)
         {

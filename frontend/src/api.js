@@ -11,6 +11,9 @@ export async function api(token, path, options = {}) {
     error.status = response.status;
     error.code = data?.code;
     error.details = data?.details || data?.errors;
+    const retryAfter = response.headers.get('Retry-After');
+    if (retryAfter != null) error.retryAfterMs = Math.max(0, /^\d+$/.test(retryAfter.trim())
+      ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now()) || 0;
     throw error;
   }
   return data;

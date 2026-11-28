@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, canPlaceStructure, pollRetryDelay, skillTarget } from './api.js';
+import { api, canPlaceStructure, skillTarget } from './api.js';
 import { actionLabel, skillNotice } from './history.js';
 import { botDifficultyLabels, modeLabel, playerAvatar, playerName, sideLabel } from './records.js';
 import MatchSelection from './MatchSelection.jsx';
+import { createMatchRefresh, mergeMatchSnapshot, syncDelay } from './matchSync.js';
 
 const classes = { general: 'TƯỚNG', advisor: 'SĨ', elephant: 'TƯỢNG', rook: 'XE', cannon: 'PHÁO', horse: 'MÃ', soldier: 'TỐT' };
 const pointSkills = new Set(['thanh', 'rao']);
@@ -54,6 +55,19 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   const latestSnapshot = useRef(null);
   const seenSkills = useRef(new Set());
   const historyCache = useRef(null);
+  const socketReady = useRef(false);
+  const selectionStatus = useRef(null);
+  const viewSession = useRef(null);
+  const syncRef = useRef(null);
+  const errorHandler = useRef(onError);
+  errorHandler.current = onError;
+  const viewKey = `${token}\n${matchId}`;
+  if (viewSession.current !== viewKey) {
+    viewSession.current = viewKey;
+    latestSnapshot.current = null;
+    selectionStatus.current = null;
+    socketReady.current = false;
+  }
 
   const showSkill = useCallback((sequence, event) => {
     if (!Number.isInteger(sequence)) return;
@@ -71,29 +85,46 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
   }, [skillBanner]);
 
   const accept = useCallback(next => {
-    if (!next?.state || next.matchId !== matchId) return;
+    if (viewSession.current !== viewKey) return;
     const previous = latestSnapshot.current;
-    if (previous?.matchId === next.matchId && (next.version < previous.version ||
-        (next.version === previous.version && Date.parse(next.serverNow) < Date.parse(previous.serverNow)))) return;
-    latestSnapshot.current = next;
-    clockOffset.current = Date.now() - Date.parse(next.serverNow);
-    setSnapshot(next);
-  }, [matchId]);
+    const merged = mergeMatchSnapshot(previous, next, matchId);
+    if (!merged || merged === previous) return;
+    latestSnapshot.current = merged;
+    clockOffset.current = Date.now() - Date.parse(merged.serverNow);
+    setSnapshot(merged);
+  }, [matchId, viewKey]);
 
-  const refresh = useCallback(async () => {
-    const stage = await api(token, `/matches/${matchId}/selection`);
-    setSelection(stage);
-    if (stage.status === 'active' || stage.status === 'completed') {
-      const state = await api(token, `/matches/${matchId}/state`);
-      accept(state);
-    }
-  }, [token, matchId, accept]);
+  const refresh = useCallback(options => viewSession.current === viewKey ? syncRef.current?.refresh(options) ?? Promise.resolve() : Promise.resolve(), [viewKey]);
+  useEffect(() => {
+    const sync = createMatchRefresh(async signal => {
+      if (!latestSnapshot.current) {
+        const stage = await api(token, `/matches/${matchId}/selection`, { signal });
+        if (signal.aborted || viewSession.current !== viewKey) return;
+        selectionStatus.current = stage.status;
+        setSelection(stage);
+        if (stage.status !== 'active' && stage.status !== 'completed') return;
+      }
+      return api(token, `/matches/${matchId}/state`, { signal });
+    }, () => latestSnapshot.current, accept, error => { if (viewSession.current === viewKey) errorHandler.current(error); });
+    syncRef.current = sync;
+    setSnapshot(latestSnapshot.current); setSelection(null);
+    return () => { sync.dispose(); if (syncRef.current === sync) syncRef.current = null; };
+  }, [token, matchId, viewKey, accept]);
 
   useEffect(() => {
-    let stopped = false; let timer;
+    let stopped = false, timer, failures = 0, terminalReads = 0, retryAfter = 0;
     async function poll() {
-      try { await refresh(); if (!stopped) timer = setTimeout(poll, 3000); }
-      catch (error) { if (!stopped) { onError(error); timer = setTimeout(poll, pollRetryDelay(error.status)); } }
+      try {
+        await refresh(); failures = 0; retryAfter = 0;
+        const state = latestSnapshot.current;
+        if (state && state.status !== 'active') {
+          if (state.settledAt || ++terminalReads >= 5) return;
+        } else if (selectionStatus.current === 'cancelled') return;
+      } catch (error) {
+        if (stopped) return;
+        failures++; retryAfter = error.retryAfterMs || 0; onError(error);
+      }
+      if (!stopped) timer = setTimeout(poll, syncDelay(socketReady.current, failures, retryAfter));
     }
     poll();
     return () => { stopped = true; clearTimeout(timer); };
@@ -101,22 +132,32 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
 
   useEffect(() => {
     if (snapshot?.status !== 'active') { setSocketStatus('chờ bắt đầu trận'); return; }
-    let stopped = false; let socket; let retry;
+    let stopped = false, socket, retry, subscriptionTimer, failures = 0;
     async function connect() {
       try {
         const issued = await api(token, '/ws-ticket', { method: 'POST' });
         if (stopped) return;
         socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/v1?ticket=${encodeURIComponent(issued.ticket)}`);
+        subscriptionTimer = setTimeout(() => socket.close(), 10000);
         socket.onopen = () => {
-          setSocketStatus('trực tuyến');
+          if (stopped) return;
+          setSocketStatus('đang đồng bộ');
           socket.send(JSON.stringify({ type: 'match.subscribe', requestId: crypto.randomUUID(), payload: { matchId } }));
         };
         socket.onmessage = event => {
-          const message = JSON.parse(event.data);
-          if (message.type === 'match.state') accept(message.payload);
+          if (stopped) return;
+          let message;
+          try { message = JSON.parse(event.data); } catch { socket.close(); return; }
+          if (!message || typeof message !== 'object') { socket.close(); return; }
+          const messageMatch = message.payload?.matchId || message.payload?.snapshot?.matchId;
+          if (messageMatch && messageMatch !== matchId) return;
+          if (message.type === 'match.state' && message.payload?.matchId === matchId) {
+            clearTimeout(subscriptionTimer);
+            accept(message.payload); socketReady.current = true; failures = 0; setSocketStatus('trực tuyến');
+          }
           if (message.type === 'match.changed') {
             if (message.payload?.matchId === matchId) showSkill(message.payload.version, message.payload.skillUsed);
-            refresh().catch(onError);
+            refresh({ version: message.payload?.version }).catch(onError);
           }
           if (message.payload?.snapshot) accept(message.payload.snapshot);
           if (message.type === 'match.command_accepted') setPending(previous => previous?.commandId === message.payload?.commandId ? null : previous);
@@ -127,14 +168,15 @@ export default function MatchView({ token, matchId, catalog, lineups, matchInfo,
           if (message.payload?.resolvedEvents) setEvents(previous => [...message.payload.resolvedEvents, ...previous].slice(0, 12));
           if (message.type === 'match.ended' || message.type === 'match.settled') refresh().catch(onError);
         };
-        socket.onclose = () => { if (!stopped) { setSocketStatus('mất kết nối · đang thử lại'); retry = setTimeout(connect, 1500); } };
-        socket.onerror = () => setSocketStatus('mất kết nối');
+        socket.onclose = () => { clearTimeout(subscriptionTimer); if (!stopped) { socketReady.current = false; setSocketStatus('mất kết nối · đang thử lại');
+          refresh().catch(onError); retry = setTimeout(connect, syncDelay(false, ++failures)); } };
+        socket.onerror = () => { socketReady.current = false; if (!stopped) setSocketStatus('mất kết nối'); };
       } catch (error) {
-        if (!stopped) { setSocketStatus('REST polling'); retry = setTimeout(connect, pollRetryDelay(error.status)); }
+        if (!stopped) { socketReady.current = false; setSocketStatus('REST polling'); retry = setTimeout(connect, syncDelay(false, ++failures, error.retryAfterMs)); }
       }
     }
     connect();
-    return () => { stopped = true; clearTimeout(retry); socket?.close(); };
+    return () => { stopped = true; socketReady.current = false; clearTimeout(retry); clearTimeout(subscriptionTimer); socket?.close(); };
   }, [token, matchId, accept, refresh, snapshot?.status, showSkill]);
 
   useEffect(() => {

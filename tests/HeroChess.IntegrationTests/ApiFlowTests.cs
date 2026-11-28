@@ -7,6 +7,8 @@ using HeroChess.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using HeroChess.Api.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace HeroChess.IntegrationTests;
@@ -45,7 +47,8 @@ public sealed class ApiFlowTests : IClassFixture<HeroChessFactory>
         Assert.True(catalog.Heroes.Count(x => x.IsOwned) >= 16);
         Assert.All(new[] { "tran-binh-trong-elephant", "bui-thi-xuan-elephant", "da-tuong-elephant" },
             code => Assert.Contains(catalog.Heroes, x => x.Code == code && x.IsOwned));
-        Assert.All(catalog.Heroes.Where(x => !x.Code.StartsWith("dev-", StringComparison.Ordinal)),
+        // Synthetic admin/regression heroes have no historical identity and may omit this optional field.
+        Assert.All(catalog.Heroes.Where(x => x.CharacterId is not null || x.Code.StartsWith("linh-nha-", StringComparison.Ordinal)),
             hero => Assert.False(string.IsNullOrWhiteSpace(hero.Biography), hero.Code));
         var biographies = catalog.Heroes.ToDictionary(x => x.Code, x => x.Biography);
         Assert.Equal(biographies["tran-hung-dao-general"], biographies["tran-hung-dao-elephant"]);
@@ -102,6 +105,11 @@ public sealed class HeroChessFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        // Functional suites deliberately poll much faster than real clients; dedicated traffic tests use small quotas.
+        builder.ConfigureServices(services => services.PostConfigure<TrafficLimitsOptions>(options =>
+        {
+            foreach (var bucket in options.Buckets) { bucket.TokenLimit = 100_000; bucket.TokensPerPeriod = 100_000; }
+        }));
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["MatchRuntime:HeroTraitsEnabled"] = "true",

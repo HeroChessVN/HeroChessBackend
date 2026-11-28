@@ -14,6 +14,8 @@ namespace HeroChess.Api.Services;
 public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTurnScheduler> logger, IOptions<MatchRuntimeOptions> options) : BackgroundService
 {
     private readonly BotWorkQueue _queue = new(options.Value.BotQueueCapacity);
+    private readonly int _workers = options.Value.BotWorkerCount is 1 or 2 ? options.Value.BotWorkerCount
+        : throw new ArgumentOutOfRangeException(nameof(options), "BotWorkerCount must be 1 or 2.");
     // Schedule: Enqueue match/version, gộp các tín hiệu trùng còn pending.
     public void Schedule(Guid matchId, int version)
     {
@@ -23,6 +25,13 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
     // ExecuteAsync: Worker lấy DB snapshot mới, bỏ job stale/sai lượt, chọn legal move rồi gọi cùng command pipeline; không tự sửa DB bàn cờ.
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        try { await Task.WhenAll(Enumerable.Range(0, _workers).Select(_ => WorkAsync(stoppingToken))); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        finally { _queue.Stop(); }
+    }
+
+    private async Task WorkAsync(CancellationToken stoppingToken)
+    {
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -31,6 +40,7 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
                 var outcome = "stale";
                 try
                 {
+                    if (!_queue.TryBegin(work)) { outcome = "busy"; continue; }
                     var readStarted = Stopwatch.GetTimestamp();
                     await using var scope = scopes.CreateAsyncScope();
                     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -106,7 +116,6 @@ public sealed class BotTurnScheduler(IServiceScopeFactory scopes, ILogger<BotTur
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
-        finally { _queue.Stop(); }
     }
 
     private static async Task<string> Commit(IServiceProvider services, BotWorkItem work, JsonElement action, CancellationToken ct)

@@ -29,7 +29,15 @@ public sealed class MatchConnectionHub
     }
     // Subscribe: Đánh dấu connection muốn nhận broadcast của match; caller phải authorize trước.
     public void Subscribe(Guid connectionId, Guid matchId)
-    { if (_connections.TryGetValue(connectionId, out var item)) item.Matches[matchId] = 0; }
+    {
+        if (!_connections.TryGetValue(connectionId, out var item)) return;
+        lock (item.Matches)
+        {
+            if (!item.Matches.ContainsKey(matchId) && item.Matches.Count >= 8)
+                throw TrafficLimits.Rejected("SUBSCRIPTION_LIMIT", 5);
+            item.Matches[matchId] = 0;
+        }
+    }
     // Remove: Gỡ connection, đóng queue, hủy lifetime và abort socket.
     public void Remove(Guid connectionId)
     {

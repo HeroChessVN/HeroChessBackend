@@ -9,6 +9,32 @@ namespace HeroChess.IntegrationTests;
 public sealed class BotQueueTests
 {
     [Fact]
+    public async Task Two_readers_run_different_matches_but_never_two_versions_of_the_same_match()
+    {
+        var queue = new BotWorkQueue(4);
+        var match = Guid.NewGuid(); var other = Guid.NewGuid();
+        queue.Schedule(match, 1); queue.Schedule(match, 3); queue.Schedule(other, 1);
+        var first = await queue.TakeAsync(default);
+        Assert.True(queue.TryBegin(first));
+        var newer = await queue.TakeAsync(default);
+        Assert.False(queue.TryBegin(newer));
+        queue.Complete(newer); // must not release the older job's match lease
+        Assert.True(queue.Schedule(match, 3));
+        var parallel = await queue.TakeAsync(default);
+        Assert.True(queue.TryBegin(parallel));
+        var retry = await queue.TakeAsync(default);
+        Assert.False(queue.TryBegin(retry));
+        queue.Complete(first);
+        Assert.True(queue.TryBegin(retry));
+        queue.Complete(first); // duplicate cleanup cannot release the new lease
+        Assert.False(queue.TryBegin(retry));
+        queue.Complete(retry); queue.Complete(parallel); queue.Stop();
+        Assert.Equal(0, queue.InFlight); Assert.Equal(0, queue.Waiting);
+        Assert.True(queue.Schedule(match, 3));
+        queue.Stop();
+    }
+
+    [Fact]
     public async Task Queue_metrics_measure_wait_without_match_or_player_labels()
     {
         var values = new List<double>();

@@ -47,7 +47,8 @@ public sealed partial class MatchmakingService
     {
         code = code?.Trim().ToUpperInvariant();
         using var lease = _roomJoins.AttemptAcquire(playerId);
-        if (!lease.IsAcquired) throw new ApiException(429, "ROOM_JOIN_LIMIT", "Wait before trying another room code.");
+        if (!lease.IsAcquired) throw TrafficLimits.Rejected("ROOM_JOIN_LIMIT",
+            lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter) ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)) : 60);
         if (code is null || code.Length != RoomCodeLength || code.Any(c => !RoomAlphabet.Contains(c))) throw RoomNotFound();
         return MutateRoomAsync(async db =>
         {

@@ -342,14 +342,40 @@ BE chỉ áp patch 20 tự động khi chính nó vừa tạo schema mới; DB �
 
 ## 6. Đồng bộ thời gian thực
 
-REST polling đủ để làm bản demo; nếu cần cập nhật ngay giữa hai máy, dùng WebSocket:
+Ưu tiên WebSocket để nhận thay đổi, kết hợp REST polling dự phòng để tránh đọc bàn cờ liên tục:
 
 1. `POST /ws-ticket` với bearer token. Response `{ "ticket": "...", "expiresAt": "..." }`.
 2. Nối `wss://herochessbe.eastasia.cloudapp.azure.com/ws/v1?ticket=<ticket>` trong vòng 30 giây. Vé dùng **một lần**. Ngắt kết nối thì xin vé mới.
 3. Gửi `{"type":"match.subscribe","requestId":"<UUID>","payload":{"matchId":"<UUID>"}}`. Server trả `match.state` với snapshot.
-4. Khi nhận `match.changed`, gọi lại `GET /matches/{matchId}/state` và legal actions nếu cần. Có `match.ended`/`match.settled` thì cập nhật kết quả/số dư. Nếu `payload.skillUsed` có dữ liệu, hiện banner từ `side`, `skillName` và các trường `heroName`, `pieceClass` nếu có. Dùng `payload.matchId` và `payload.version` làm khóa chống trùng với `sequenceNo` trong phản hồi command. Replay lưu cùng sự kiện để dựng nhật ký, kể cả khi bỏ lỡ WebSocket.
+4. Áp dụng snapshot trong `match.state` ngay; không GET lại chỉ để lấy snapshot vừa nhận. Khi nhận `match.changed`, gộp yêu cầu theo version và chỉ cho một GET `/matches/{matchId}/state` đang chạy. Nếu event mới tới trong lúc GET, phải đọc tiếp khi phản hồi còn thấp hơn version cần lấy. Legal actions chỉ lấy lại khi bàn cờ/lượt/review thay đổi. Có `match.ended`/`match.settled` thì cập nhật kết quả/số dư dù version không tăng. Nếu `payload.skillUsed` có dữ liệu, hiện banner từ `side`, `skillName` và các trường `heroName`, `pieceClass` nếu có. Dùng `payload.matchId` và `payload.version` làm khóa chống trùng với `sequenceNo` trong phản hồi command. Replay lưu cùng sự kiện để dựng nhật ký, kể cả khi bỏ lỡ WebSocket.
 
-Có thể gửi `match.command` qua socket với payload `{ "matchId": "<UUID>", "commandId": "<UUID>", "expectedVersion": 0, "action": { ... } }`; server trả `match.command_accepted` hoặc `match.command_rejected`. Dùng REST `POST /commands` thường đơn giản hơn. Sau reconnect hoặc mất event, luôn GET `/state` để đồng bộ lại. WebSocket browser có kiểm tra Origin cùng host; FE chạy khác domain cần reverse proxy/same-origin hoặc cấu hình backend phù hợp. Client Unity native không cần tự gửi Origin header.
+Có thể gửi `match.command` qua socket với payload `{ "matchId": "<UUID>", "commandId": "<UUID>", "expectedVersion": 0, "action": { ... } }`; server trả `match.command_accepted` hoặc `match.command_rejected`. Dùng REST `POST /commands` thường đơn giản hơn. Sau reconnect hoặc mất event, đồng bộ lại bằng snapshot subscription hoặc GET `/state`. WebSocket browser có kiểm tra Origin cùng host; FE chạy khác domain cần reverse proxy/same-origin hoặc cấu hình backend phù hợp. Client Unity native không cần tự gửi Origin header.
+
+Khi socket đã subscribe thành công, GET dự phòng khoảng 10 giây/lần, có jitter; khi mất socket, poll khoảng 2 giây và backoff khi lỗi. Đồng hồ UI đếm theo `serverNow` và `deadlineAt`, không phụ thuộc nhịp polling. Snapshot trong ACK có thể thiếu `sides`; giữ metadata hiển thị đã biết của cùng trận, không trộn quân/effect cũ vào state mới. Chi tiết bàn giao: [Unity state sync](UNITY_STATE_SYNC_HANDOFF.md). Cấu hình worker và phép đo tải: [Capacity runbook](CAPACITY_1GB_RUNBOOK.md).
+
+### 6.1. Giới hạn tài nguyên và retry
+
+Quota được chia theo **account đã xác thực**, dùng chung giữa REST và các socket của account; thay token, match ID hoặc mở thêm socket không tạo quota mới. Bảng dưới là mặc định cho một API process. “Burst” là số token tối đa có thể tích lũy; các bucket nạp lại theo chu kỳ, không phải mỗi request được chạy ở nhịp tối đa riêng biệt.
+
+| Phạm vi | Mặc định |
+|---|---|
+| REST, handshake và message socket toàn API | Burst 400, nạp 200/giây |
+| Mỗi IP qua proxy tin cậy | Burst 300, nạp 150/giây |
+| `/auth/*` theo IP | Burst 12, nạp 2/giây; dùng chung cho register/login/refresh |
+| Mỗi account, REST + message socket | Burst 40, nạp 20/giây |
+| GET dưới `/matches` và `match.subscribe`, mỗi account | Burst 12, nạp 4/giây |
+| `POST /ws-ticket`, mỗi account | Burst 4, nạp 1 mỗi 5 giây |
+| Message socket, mỗi account | Burst 20, nạp 10/giây; vẫn có ngắt kết nối khi một socket vượt 60 message/10 giây |
+| Socket đang mở | 2/account, 256 toàn process |
+| Vé chưa dùng, chưa hết hạn | 4/account, 512 toàn process; TTL 30 giây |
+| Subscription | Tối đa 8 match/socket; subscribe lại cùng match không tăng số lượng |
+| Request đang xử lý | 32, dùng chung REST, readiness, handshake và xử lý message socket; không xếp hàng chờ |
+
+`/health/ready` dùng quota IP/toàn API và slot xử lý; `/health/live` không dùng limiter. Các giới hạn Lam Sơn và nhập mã phòng đã có vẫn được áp dụng thêm. REST command tối đa 64 KiB; quá kích thước trả `413 REQUEST_TOO_LARGE`. Message socket mặc định tối đa 64 KiB, chỉ nhận dạng text JSON. Browser Origin phải hợp lệ, cùng scheme/host; Unity native có thể không gửi Origin.
+
+Khi vượt giới hạn trước upgrade, server trả HTTP `429` với header `Retry-After` tính bằng giây. Mã lỗi gồm `RATE_LIMITED`, `SERVER_BUSY`, `SOCKET_LIMIT`, `TICKET_LIMIT`, `SUBSCRIPTION_LIMIT`; các limiter chuyên biệt giữ mã `FORECAST_RATE_LIMITED`, `FORECAST_BUSY`, `ROOM_JOIN_LIMIT`. Với socket đã upgrade, server trả `match.command_rejected` có `payload.details.retryAfterSeconds` thay vì HTTP header. Tôn trọng thời gian chờ trước khi retry; không spam reconnect hoặc đổi command ID để gửi lại nước đi chưa rõ kết quả. Sau lỗi handshake phải xin **vé mới**, vì vé cũ có thể đã tiêu thụ.
+
+Đóng socket khi rời màn; nếu đã subscribe 8 trận trong cùng kết nối, tạo kết nối mới trước khi subscribe trận tiếp theo. Khi mất mạng, ping/pong chuẩn WebSocket kiểm tra kết nối với interval 20 giây và timeout 20 giây; không cần heartbeat game tùy biến để trả pong. Client phải hỗ trợ pong tự động của thư viện WebSocket.
 
 ## 7. Lịch sử, replay và lỗi
 
